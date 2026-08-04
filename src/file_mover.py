@@ -17,15 +17,18 @@ class FileMover:
         return sha256.hexdigest()
 
     def determine_target_path(self, base_target_dir: str, category: str, original_path: str) -> str:
-        """Sharding logic: <base>/<category>/YYYY/MM/<filename>"""
+        """Logic: <base_target_dir>/<category>/YYYY-MM-DD_<filename>"""
         stat = os.stat(original_path)
-        # creation time (st_ctime on windows, fallback to mtime if needed, but python uses ctime for creation on windows)
+        # creation time
         dt = datetime.fromtimestamp(stat.st_ctime)
-        year_str = dt.strftime("%Y")
-        month_str = dt.strftime("%m")
+        date_str = dt.strftime("%Y-%m-%d")
         
         filename = Path(original_path).name
-        target_dir = Path(base_target_dir) / category / year_str / month_str
+        # Add date prefix if not already present (to prevent 2026-08-04_2026-08-04_img.png on re-runs)
+        if not filename.startswith(date_str):
+            filename = f"{date_str}_{filename}"
+            
+        target_dir = Path(base_target_dir) / category
         return str(target_dir / filename)
 
     async def safe_move(self, original_path: str, target_path: str) -> bool:

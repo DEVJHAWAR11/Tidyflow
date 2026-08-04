@@ -50,8 +50,10 @@ class RuleEngine:
                 if rule["contains"].lower() in filename.lower():
                     return rule["category"]
 
-        # 2. Fast Path Heuristics
+        # 2. Fast Path Heuristics (Partial: Disabled for Documents/Images to force AI)
         for category, exts in DEFAULT_HEURISTICS.items():
+            if category in ["Documents", "Images"]:
+                continue # Force AI to read these
             if ext in exts:
                 return category
 
