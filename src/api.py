@@ -40,6 +40,13 @@ async def get_files(limit: int = 50, offset: int = 0):
     # Convert Row objects to dict for JSON serialization
     return {"files": [dict(r) for r in rows]}
 
+@app.get("/costs")
+async def get_costs():
+    rows = await db.execute_read(
+        "SELECT date(timestamp) as day, sum(cost_usd) as total_cost FROM token_logs GROUP BY day ORDER BY day DESC"
+    )
+    return {"costs": [dict(r) for r in rows]}
+
 @app.post("/rules")
 async def update_rules(rules: RuleUpdate):
     rules_path = Path("rules.yaml")
