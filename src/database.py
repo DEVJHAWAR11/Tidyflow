@@ -36,6 +36,19 @@ class DatabaseManager:
                 )
             """)
             
+            # Create token_logs table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS token_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT,
+                    model TEXT,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    cost_usd REAL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             # Create FTS5 virtual table
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
@@ -172,3 +185,10 @@ class DatabaseManager:
             LIMIT 20
         """
         return await self.execute_read(sql, (query,))
+        
+    async def log_tokens(self, provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float):
+        """Logs token usage and cost."""
+        await self.execute_write(
+            "INSERT INTO token_logs (provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)",
+            (provider, model, prompt_tokens, completion_tokens, cost_usd)
+        )
