@@ -1,0 +1,11 @@
+langgraph
+fastapi
+uvicorn
+typer
+pymupdf
+pytesseract
+keyring
+rich
+python-dotenv
+httpx
+pydantic
