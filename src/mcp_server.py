@@ -6,7 +6,7 @@ from fastmcp import FastMCP
 
 app = FastMCP("tidyflow-mcp-fs")
 
-# Allow-list of paths that this server is permitted to touch
+# list of folders we're actually allowed to touch
 ALLOWED_DIRECTORIES: List[Path] = []
 
 def set_allowed_directories(dirs: List[str]):
@@ -30,7 +30,7 @@ def is_path_allowed(path_str: str) -> bool:
 
 @app.tool()
 def list_files(path: str) -> str:
-    """List files in a directory"""
+    # just grabs all the files in the folder you ask for
     if not is_path_allowed(path):
         return f"Error: Path {path} is not in the allow-list"
     try:
@@ -41,7 +41,7 @@ def list_files(path: str) -> str:
 
 @app.tool()
 def copy_file(source: str, destination: str) -> str:
-    """Copy a file to a new destination"""
+    # literally just copies a file, but we double check it's a safe path first
     # mcp server checks if the path is allowed before touching anything, this is the safety part
     if not is_path_allowed(source) or not is_path_allowed(destination):
         return "Error: One or both paths are not in the allow-list"
@@ -54,7 +54,7 @@ def copy_file(source: str, destination: str) -> str:
 
 @app.tool()
 def delete_file(path: str) -> str:
-    """Delete a file"""
+    # trashes the file, used after we safely copy it somewhere else
     if not is_path_allowed(path):
         return f"Error: Path {path} is not in the allow-list"
     try:
