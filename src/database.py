@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     def __init__(self, db_path: str = "data/tidyflow.db"):
         self.db_path = db_path
-        self.write_queue = asyncio.Queue()
+        self.write_queue = None
         self.writer_task = None
         self._init_db()
 
@@ -49,14 +49,18 @@ class DatabaseManager:
             
     async def start(self):
         """Starts the single-writer coroutine."""
+        if self.write_queue is None:
+            self.write_queue = asyncio.Queue()
         self.writer_task = asyncio.create_task(self._writer_loop())
         
     async def stop(self):
         """Stops the single-writer coroutine and ensures all pending writes are committed."""
         if self.writer_task:
-            await self.write_queue.put(None) # Poison pill
+            if self.write_queue:
+                await self.write_queue.put(None) # Poison pill
             await self.writer_task
             self.writer_task = None
+            self.write_queue = None
             
     async def _writer_loop(self):
         batch = []
@@ -110,6 +114,8 @@ class DatabaseManager:
 
     async def execute_write(self, query: str, params: tuple = ()):
         """Queues a write operation to be batched and executed by the single writer coroutine."""
+        if self.write_queue is None:
+            self.write_queue = asyncio.Queue()
         await self.write_queue.put((query, params))
 
     async def execute_read(self, query: str, params: tuple = ()) -> List[dict]:
