@@ -28,7 +28,7 @@ async def get_status():
 async def trigger_scan(request: Request):
     data = await request.json()
     path = data.get("path")
-    # Trigger scanner (In full integration, this adds to processor queue)
+    # this just pretends to scan for now, later it drops the folder into our queue
     return {"message": f"Scan triggered for {path}"}
 
 @app.get("/files")
@@ -37,7 +37,7 @@ async def get_files(limit: int = 50, offset: int = 0):
         "SELECT id, path, status, category FROM files LIMIT ? OFFSET ?",
         (limit, offset)
     )
-    # Convert Row objects to dict for JSON serialization
+    # turn the raw database rows into plain python dictionaries so fastapis json sender doesn't freak out
     return {"files": [dict(r) for r in rows]}
 
 @app.get("/costs")
@@ -55,7 +55,7 @@ async def update_rules(rules: RuleUpdate):
     return {"message": "Rules updated successfully"}
 
 async def event_generator():
-    # Mock event stream representing LangGraph processing logs
+    # this fakes a live stream of what the graph is doing for our ui
     for i in range(3):
         await asyncio.sleep(0.1)
         yield {"data": f"Processed file {i}"}

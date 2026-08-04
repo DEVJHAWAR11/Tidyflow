@@ -19,11 +19,11 @@ class Processor:
             file_path = await self.queue.get()
             try:
                 async with self.semaphore:
-                    # Run LangGraph pipeline
+                    # kick off the langgraph pipeline for this file
                     initial_state = {"file_path": file_path}
                     result = await app.ainvoke(initial_state)
                     
-                    # Store results in DB
+                    # stash what we figured out into the database
                     await self.db.execute_write(
                         "INSERT OR IGNORE INTO files (path, extracted_text, category) VALUES (?, ?, ?)",
                         (

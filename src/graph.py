@@ -16,11 +16,11 @@ class GraphState(TypedDict):
     retries: int
 
 def scan_node(state: GraphState):
-    # Initialize state
+    # just setting up our blank slate for a new file
     return {"retries": 0, "needs_review": False, "category": None, "extracted_text": "", "confidence": 0.0, "error": None}
 
 def route_node(state: GraphState):
-    # Stage 4 rules
+    # look at our fast path rules to see if we can skip the ai stuff
     file_path = state["file_path"]
     size = state.get("size", 0)
     
@@ -45,7 +45,7 @@ def extract_node(state: GraphState):
     elif path.endswith((".png", ".jpg", ".jpeg")):
         res = extract_text_from_image(state["file_path"])
     else:
-        # Unsupported for extraction, goes to needs_review
+        # we don't know how to read this file yet, so we tell a human to look at it
         return {"needs_review": True, "error": "Unsupported file type for extraction"}
         
     return {
@@ -89,15 +89,15 @@ def route_after_classify(state: GraphState):
     return "move"
 
 def needs_review_node(state: GraphState):
-    # Flag file for manual review
+    # marks the file so we can show it in a dashboard later for the user to decide
     return {"needs_review": True}
 
 def move_node(state: GraphState):
-    # In stage 7 we just mock the MCP move protocol until Stage 9 is fully integrated
+    # this pretends to move it for now until we hook up the real safe mover
     return state
 
 def checkpoint_node(state: GraphState):
-    # Save to database
+    # saves where we're at to the database so we dont lose progress
     return state
 
 # Build graph
