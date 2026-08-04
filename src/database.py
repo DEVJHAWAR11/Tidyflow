@@ -36,6 +36,36 @@ class DatabaseManager:
                 )
             """)
             
+            # Create FTS5 virtual table
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+                    path, extracted_text, category, 
+                    content='files', content_rowid='id'
+                )
+            """)
+            
+            # Triggers to keep FTS updated
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
+                    INSERT INTO files_fts(rowid, path, extracted_text, category) 
+                    VALUES (new.id, new.path, new.extracted_text, new.category);
+                END;
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
+                    INSERT INTO files_fts(files_fts, rowid, path, extracted_text, category) 
+                    VALUES('delete', old.id, old.path, old.extracted_text, old.category);
+                END;
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON files BEGIN
+                    INSERT INTO files_fts(files_fts, rowid, path, extracted_text, category) 
+                    VALUES('delete', old.id, old.path, old.extracted_text, old.category);
+                    INSERT INTO files_fts(rowid, path, extracted_text, category) 
+                    VALUES (new.id, new.path, new.extracted_text, new.category);
+                END;
+            """)
+            
             # Indexes for fast lookup
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fingerprint ON files(fingerprint)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON files(status)")
@@ -130,3 +160,15 @@ class DatabaseManager:
             finally:
                 conn.close()
         return await asyncio.to_thread(_read)
+
+    async def search(self, query: str) -> List[dict]:
+        """Full-text search across files."""
+        sql = """
+            SELECT files.id, files.path, files.category, snippet(files_fts, 1, '<b>', '</b>', '...', 10) as snippet
+            FROM files_fts
+            JOIN files ON files.id = files_fts.rowid
+            WHERE files_fts MATCH ?
+            ORDER BY rank
+            LIMIT 20
+        """
+        return await self.execute_read(sql, (query,))
