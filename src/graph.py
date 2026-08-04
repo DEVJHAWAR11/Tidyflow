@@ -7,6 +7,7 @@ from src.llm_provider import LLMProvider, load_settings
 
 class GraphState(TypedDict):
     file_path: str
+    size: int
     category: Optional[str]
     needs_review: bool
     extracted_text: str
@@ -20,6 +21,12 @@ def scan_node(state: GraphState):
 
 def route_node(state: GraphState):
     # Stage 4 rules
+    file_path = state["file_path"]
+    size = state.get("size", 0)
+    
+    if size > 50 * 1024 * 1024:
+        return {"category": "Large Files", "needs_review": False, "extracted_text": ""}
+
     engine = RuleEngine()
     category = engine.evaluate(state["file_path"])
     return {"category": category}
