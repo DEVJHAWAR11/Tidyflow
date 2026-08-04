@@ -14,7 +14,7 @@ def set_allowed_directories(dirs: List[str]):
     ALLOWED_DIRECTORIES = [Path(d).resolve() for d in dirs]
 
 def is_path_allowed(path_str: str) -> bool:
-    """Check if the path is within the allowed directories."""
+    # this just makes sure the path is actually in our allowed safe list
     # this just makes sure we have safe folders configured. if not, it blocks everything
     if not ALLOWED_DIRECTORIES:
         return False

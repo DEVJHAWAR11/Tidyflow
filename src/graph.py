@@ -3,10 +3,13 @@ from typing import TypedDict, Annotated, Optional, Dict, Any, List
 from langgraph.graph import StateGraph, END
 from src.rules import RuleEngine
 from src.extractor import extract_text_from_pdf, extract_text_from_image
+from pathlib import Path
 from src.llm_provider import LLMProvider, load_settings
+from src.file_mover import FileMover
 
 class GraphState(TypedDict):
     file_path: str
+    base_scan_dir: str
     size: int
     category: Optional[str]
     needs_review: bool
@@ -69,8 +72,7 @@ async def classify_llm_node(state: GraphState):
         
     llm = LLMProvider(provider, api_key, custom_url)
     try:
-        # test mode bypasses real network call for standard graph testing
-        res = await llm.classify(state["extracted_text"], is_test=True)
+        res = await llm.classify(state["extracted_text"], is_test=False)
         return {
             "category": res.get("category"),
             "confidence": res.get("confidence", 0.0),
@@ -92,9 +94,22 @@ def needs_review_node(state: GraphState):
     # marks the file so we can show it in a dashboard later for the user to decide
     return {"needs_review": True}
 
-def move_node(state: GraphState):
-    # this pretends to move it for now until we hook up the real safe mover
-    return state
+async def move_node(state: GraphState):
+    if not state.get("category") or state.get("needs_review") or state.get("error"):
+        return state
+        
+    mover = FileMover(db=None) 
+    target_path = mover.determine_target_path(
+        base_target_dir=state.get("base_scan_dir", str(Path(state["file_path"]).parent)),
+        category=state["category"],
+        original_path=state["file_path"]
+    )
+    
+    try:
+        await mover.safe_move(state["file_path"], target_path)
+        return {"error": None} # Successfully moved
+    except Exception as e:
+        return {"error": f"Move failed: {e}", "needs_review": True}
 
 def checkpoint_node(state: GraphState):
     # saves where we're at to the database so we dont lose progress
