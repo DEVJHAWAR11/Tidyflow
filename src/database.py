@@ -41,9 +41,27 @@ class DatabaseManager:
                     new_path TEXT,
                     confidence_score REAL,
                     extracted_text TEXT,
+                    thumbnail_b64 TEXT,
+                    file_size_bytes INTEGER DEFAULT 0,
+                    extension TEXT,
+                    suggested_filename TEXT,
+                    reason TEXT,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Auto-migrate columns if missing
+            for col, col_type in [
+                ("thumbnail_b64", "TEXT"),
+                ("file_size_bytes", "INTEGER DEFAULT 0"),
+                ("extension", "TEXT"),
+                ("suggested_filename", "TEXT"),
+                ("reason", "TEXT"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE files ADD COLUMN {col} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
 
             # Token logs table
             conn.execute("""
@@ -150,6 +168,91 @@ class DatabaseManager:
         finally:
             pass
 
+    def sync_index_records(self, records: Any) -> int:
+        """Synchronously batch insert or update FileRecord items into SQLite and sync FTS5."""
+        if not records:
+            return 0
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            batch = []
+            for r in records:
+                if getattr(r, "skipped", False):
+                    continue
+                file_id = getattr(r, "file_id", "")
+                path = str(getattr(r, "abs_path", getattr(r, "path", "")))
+                if not path:
+                    continue
+                fingerprint = getattr(r, "sha256", "")
+                status = "scanned"
+                classification = getattr(r, "classification", None)
+                category = classification.category if classification else getattr(r, "category", "Unknown")
+                confidence = classification.confidence if classification else getattr(r, "confidence", 0.0)
+                suggested_filename = (
+                    classification.suggested_filename
+                    if classification and hasattr(classification, "suggested_filename")
+                    else getattr(r, "suggested_filename", "")
+                )
+                reason = (
+                    classification.reason
+                    if classification and hasattr(classification, "reason")
+                    else getattr(r, "reason", "")
+                )
+                new_path = ""
+                extracted_text = (
+                    getattr(r, "extracted_text_normalized", None)
+                    or getattr(r, "extracted_text_raw", None)
+                    or getattr(r, "extracted_text", "")
+                    or ""
+                )
+                thumbnail_b64 = getattr(r, "thumbnail_b64", None)
+                file_size_bytes = getattr(r, "file_size_bytes", 0)
+                extension = getattr(r, "extension", "")
+                if not extension and path:
+                    extension = Path(path).suffix.lower()
+
+                batch.append((
+                    file_id, path, fingerprint, status, category, new_path,
+                    confidence, extracted_text, thumbnail_b64, file_size_bytes,
+                    extension, suggested_filename, reason
+                ))
+
+            if batch:
+                cursor.executemany("""
+                    INSERT INTO files (
+                        file_id, path, fingerprint, status, category, new_path,
+                        confidence_score, extracted_text, thumbnail_b64, file_size_bytes,
+                        extension, suggested_filename, reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                        file_id = excluded.file_id,
+                        fingerprint = excluded.fingerprint,
+                        status = excluded.status,
+                        category = excluded.category,
+                        new_path = excluded.new_path,
+                        confidence_score = excluded.confidence_score,
+                        extracted_text = excluded.extracted_text,
+                        thumbnail_b64 = COALESCE(excluded.thumbnail_b64, files.thumbnail_b64),
+                        file_size_bytes = excluded.file_size_bytes,
+                        extension = excluded.extension,
+                        suggested_filename = excluded.suggested_filename,
+                        reason = excluded.reason,
+                        last_updated = CURRENT_TIMESTAMP
+                """, batch)
+                conn.commit()
+            return len(batch)
+        except Exception as e:
+            logger.error("Failed to batch index records: %s", e)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    async def index_records(self, records: Any) -> int:
+        """Async wrapper to batch index records."""
+        return await asyncio.to_thread(self.sync_index_records, records)
+
     @staticmethod
     def _execute_batch(db_path: str, batch: List[Tuple[str, tuple]]):
         conn = sqlite3.connect(db_path)
@@ -195,16 +298,72 @@ class DatabaseManager:
         return await asyncio.to_thread(_read)
 
     async def search(self, query: str) -> List[dict]:
-        """Full-text search across indexed files."""
-        sql = """
-            SELECT files.id, files.path, files.category, snippet(files_fts, 1, '<b>', '</b>', '...', 10) as snippet
-            FROM files_fts
-            JOIN files ON files.id = files_fts.rowid
-            WHERE files_fts MATCH ?
-            ORDER BY rank
-            LIMIT 20
-        """
-        return await self.execute_read(sql, (query,))
+        """Full-text search across indexed files with FTS5 and LIKE fallback."""
+        clean_query = query.strip()
+        if not clean_query:
+            return []
+
+        def _search():
+            import re
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # 1. Sanitize query into FTS5 tokens
+                tokens = re.findall(r'[A-Za-z0-9_]+', clean_query)
+                results = []
+
+                if tokens:
+                    fts_syntax = " AND ".join(f'"{tok}"*' for tok in tokens)
+                    try:
+                        sql_fts = """
+                            SELECT files.id, files.file_id, files.path, files.category,
+                                   files.confidence_score, files.extracted_text,
+                                   files.thumbnail_b64, files.file_size_bytes, files.extension,
+                                   files.suggested_filename, files.reason,
+                                   snippet(files_fts, -1, '<b>', '</b>', '...', 12) as snippet
+                            FROM files_fts
+                            JOIN files ON files.id = files_fts.rowid
+                            WHERE files_fts MATCH ?
+                            ORDER BY rank
+                            LIMIT 30
+                        """
+                        cursor.execute(sql_fts, (fts_syntax,))
+                        rows = cursor.fetchall()
+                        for row in rows:
+                            d = dict(row)
+                            if not d.get("snippet") and d.get("extracted_text"):
+                                d["snippet"] = _make_like_snippet(d["extracted_text"], clean_query)
+                            results.append(d)
+                    except sqlite3.OperationalError as e:
+                        logger.warning("FTS MATCH error for '%s': %s", fts_syntax, e)
+
+                # 2. Fallback to LIKE search if FTS returned 0 results
+                if not results:
+                    like_param = f"%{clean_query}%"
+                    sql_like = """
+                        SELECT id, file_id, path, category, confidence_score, extracted_text,
+                               thumbnail_b64, file_size_bytes, extension, suggested_filename, reason,
+                               '' as snippet
+                        FROM files
+                        WHERE path LIKE ? OR category LIKE ? OR extracted_text LIKE ?
+                        ORDER BY id DESC
+                        LIMIT 30
+                    """
+                    cursor.execute(sql_like, (like_param, like_param, like_param))
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        d = dict(row)
+                        src_text = d.get("extracted_text") or d.get("path") or ""
+                        d["snippet"] = _make_like_snippet(src_text, clean_query)
+                        results.append(d)
+
+                return results
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_search)
 
     async def log_tokens(self, provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float):
         """Record LLM token usage and estimated cost."""
@@ -212,3 +371,27 @@ class DatabaseManager:
             "INSERT INTO token_logs (provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)",
             (provider, model, prompt_tokens, completion_tokens, cost_usd)
         )
+
+
+def _make_like_snippet(text: str, query: str, max_len: int = 160) -> str:
+    """Generate snippet with <b> highlighting for LIKE search fallback."""
+    import re
+    if not text or not query:
+        return ""
+    tokens = [re.escape(t) for t in re.findall(r'[A-Za-z0-9_]+', query) if t]
+    if not tokens:
+        return text[:max_len] + ("..." if len(text) > max_len else "")
+
+    pattern = re.compile(f"({'|'.join(tokens)})", re.IGNORECASE)
+    match = pattern.search(text)
+    if not match:
+        return text[:max_len] + ("..." if len(text) > max_len else "")
+
+    start = max(0, match.start() - 40)
+    end = min(len(text), match.end() + 80)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return pattern.sub(r"<b>\1</b>", snippet)

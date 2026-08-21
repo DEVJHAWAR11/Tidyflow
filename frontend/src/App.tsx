@@ -70,6 +70,7 @@ export default function App() {
   const [ftsQuery, setFtsQuery] = useState("");
   const [ftsResults, setFtsResults] = useState<FtsResultItem[]>([]);
   const [isSearchingFts, setIsSearchingFts] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
 
   // Settings state
   const [llmProvider, setLlmProvider] = useState("deepseek");
@@ -372,11 +373,16 @@ export default function App() {
 
   // --- FTS Search ---
 
-  const handleFtsSearch = async () => {
-    if (!ftsQuery.trim()) return;
+  const handleFtsSearch = async (queryOverride?: string) => {
+    const q = (queryOverride !== undefined ? queryOverride : ftsQuery).trim();
+    if (!q) return;
+    if (queryOverride !== undefined) {
+      setFtsQuery(queryOverride);
+    }
     setIsSearchingFts(true);
+    setHasSearched(true);
     try {
-      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(ftsQuery.trim())}`);
+      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
         const data = await res.json();
         setFtsResults(data.results || []);
@@ -386,6 +392,12 @@ export default function App() {
     } finally {
       setIsSearchingFts(false);
     }
+  };
+
+  const handleClearFts = () => {
+    setFtsQuery("");
+    setFtsResults([]);
+    setHasSearched(false);
   };
 
   return (
@@ -459,7 +471,9 @@ export default function App() {
             setFtsQuery={setFtsQuery}
             ftsResults={ftsResults}
             isSearching={isSearchingFts}
+            hasSearched={hasSearched}
             onSearch={handleFtsSearch}
+            onClear={handleClearFts}
           />
         )}
 

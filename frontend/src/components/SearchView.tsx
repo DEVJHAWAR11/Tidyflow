@@ -1,14 +1,29 @@
-import React from "react";
+import React, { useState } from "react";
 import { FtsResultItem } from "../types";
-import { getStickerStyle } from "../utils/stickerTheme";
-import { Search, FileText, CornerDownLeft } from "lucide-react";
+import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
+import {
+  Search,
+  FileText,
+  CornerDownLeft,
+  X,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  FileSearch,
+  Sparkles,
+  Layers,
+  Eye,
+} from "lucide-react";
 
 interface SearchViewProps {
   ftsQuery: string;
   setFtsQuery: (val: string) => void;
   ftsResults: FtsResultItem[];
   isSearching: boolean;
-  onSearch: () => void;
+  hasSearched: boolean;
+  onSearch: (queryOverride?: string) => void;
+  onClear: () => void;
 }
 
 export const SearchView: React.FC<SearchViewProps> = ({
@@ -16,13 +31,47 @@ export const SearchView: React.FC<SearchViewProps> = ({
   setFtsQuery,
   ftsResults,
   isSearching,
+  hasSearched,
   onSearch,
+  onClear,
 }) => {
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
+  const [previewItem, setPreviewItem] = useState<FtsResultItem | null>(null);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       onSearch();
     }
   };
+
+  const handleSampleClick = (sample: string) => {
+    setFtsQuery(sample);
+    onSearch(sample);
+  };
+
+  const handleCopyPath = (path: string) => {
+    navigator.clipboard.writeText(path);
+    setCopiedPath(path);
+    setTimeout(() => {
+      setCopiedPath(null);
+    }, 2000);
+  };
+
+  const toggleExpand = (key: string) => {
+    setExpandedFiles((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const sampleKeywords = [
+    "Invoice",
+    "Receipt",
+    "Tax",
+    "Statement",
+    "Agreement",
+    "React",
+    "Resume",
+    "Course",
+  ];
 
   return (
     <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
@@ -33,52 +82,86 @@ export const SearchView: React.FC<SearchViewProps> = ({
           <span>/</span>
           <span className="text-[#000000] dark:text-[#ffffff]">Search</span>
         </div>
-        <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
-          Search Index
-        </h2>
-        <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
-          Search indexed document body text, OCR transcriptions, and file paths.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
+              Search Index
+            </h2>
+            <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
+              Instant full-text OCR search across documents, receipts, invoices, and file paths.
+            </p>
+          </div>
+          {ftsResults.length > 0 && (
+            <span className="text-[12px] font-mono font-semibold px-2.5 py-1 rounded-full bg-[#0075de]/10 text-[#0075de] dark:bg-[#2383e2]/20 dark:text-[#58a6ff]">
+              {ftsResults.length} {ftsResults.length === 1 ? "match" : "matches"}
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Search Bar Card */}
-      <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] space-y-3">
-        <div className="flex gap-2.5">
+      {/* Search Input Card */}
+      <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] space-y-3.5">
+        <div className="flex gap-2.5 items-center">
           <div className="relative flex-1">
-            <Search className="w-4 h-4 text-[#a39e98] absolute left-3.5 top-3.5" />
+            <Search className="w-4 h-4 text-[#a39e98] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={ftsQuery}
               onChange={(e) => setFtsQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search across all extracted documents (e.g. invoice, total, React, resume)..."
-              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md pl-10 pr-4 py-2.5 text-[13px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919] shadow-2xs"
+              placeholder="Search across all extracted documents (e.g. invoice, total, React, resume, tax)..."
+              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-lg pl-10 pr-10 py-2.5 text-[13px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919] shadow-2xs transition"
             />
+            {ftsQuery && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#a39e98] hover:text-[#31302e] dark:hover:text-[#ffffff] p-1 rounded-md transition cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           <button
-            onClick={onSearch}
+            onClick={() => onSearch()}
             disabled={isSearching || !ftsQuery.trim()}
-            className={`px-5 py-2.5 rounded-full text-[13px] font-semibold flex items-center gap-2 transition cursor-pointer ${
+            className={`px-5 py-2.5 rounded-full text-[13px] font-semibold flex items-center gap-2 transition cursor-pointer shrink-0 ${
               isSearching || !ftsQuery.trim()
                 ? "bg-[#e6e6e6] dark:bg-[#333333] text-[#a39e98] cursor-not-allowed"
                 : "bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] text-white active:scale-97 shadow-xs"
             }`}
           >
-            <span>{isSearching ? "Searching..." : "Search Index"}</span>
-            <CornerDownLeft className="w-3.5 h-3.5" />
+            {isSearching ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Searching...</span>
+              </>
+            ) : (
+              <>
+                <span>Search Index</span>
+                <CornerDownLeft className="w-3.5 h-3.5" />
+              </>
+            )}
           </button>
         </div>
 
-        <div className="flex items-center gap-2 text-[12px] text-[#615d59] dark:text-[#9b9a97]">
-          <span className="font-medium">Sample queries:</span>
-          {["Invoice", "Receipt", "Statement", "Agreement", "Tax", "Draft"].map((sample) => (
+        {/* Sample Queries Chips */}
+        <div className="flex flex-wrap items-center gap-2 text-[12px] text-[#615d59] dark:text-[#9b9a97] pt-0.5">
+          <span className="font-medium flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-[#0075de] dark:text-[#2383e2]" />
+            Quick queries:
+          </span>
+          {sampleKeywords.map((sample) => (
             <button
               key={sample}
-              onClick={() => {
-                setFtsQuery(sample);
-              }}
-              className="px-2 py-0.5 rounded-sm bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#31302e] dark:text-[#d4d4d4] border border-[#e6e6e6] dark:border-[#383838] cursor-pointer"
+              onClick={() => handleSampleClick(sample)}
+              className={`px-2.5 py-1 rounded-md border text-[11px] font-medium transition cursor-pointer active:scale-95 ${
+                ftsQuery.toLowerCase() === sample.toLowerCase()
+                  ? "bg-[#0075de]/10 border-[#0075de]/40 text-[#0075de] dark:bg-[#2383e2]/20 dark:border-[#2383e2]/50 dark:text-[#58a6ff]"
+                  : "bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#31302e] dark:text-[#d4d4d4] border-[#e6e6e6] dark:border-[#383838]"
+              }`}
             >
               {sample}
             </button>
@@ -86,51 +169,353 @@ export const SearchView: React.FC<SearchViewProps> = ({
         </div>
       </div>
 
+      {/* Searching Skeleton / Loading */}
+      {isSearching && (
+        <div className="space-y-3 animate-pulse">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 space-y-3"
+            >
+              <div className="flex justify-between items-center">
+                <div className="h-4 bg-[#e6e6e6] dark:bg-[#333333] rounded w-1/3" />
+                <div className="h-4 bg-[#e6e6e6] dark:bg-[#333333] rounded w-20" />
+              </div>
+              <div className="h-3 bg-[#f0f0f0] dark:bg-[#282828] rounded w-2/3" />
+              <div className="h-16 bg-[#f6f5f4] dark:bg-[#191919] rounded-lg" />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Results Section */}
-      {ftsResults.length > 0 && (
-        <div className="space-y-3">
+      {!isSearching && ftsResults.length > 0 && (
+        <div className="space-y-3.5">
           <div className="flex items-center justify-between text-[12px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
             <span>Search Results ({ftsResults.length})</span>
+            <span className="text-[11px] lowercase text-[#a39e98] font-normal">
+              ranked by FTS relevance
+            </span>
           </div>
 
           <div className="space-y-3">
             {ftsResults.map((item, idx) => {
               const fileName = item.path.split("/").pop() || item.path;
               const catStyle = getStickerStyle(item.category || "");
+              const isCopied = copiedPath === item.path;
+              const itemKey = `${item.id || idx}_${item.path}`;
+              const isExpanded = !!expandedFiles[itemKey];
+              const snippetHtml = item.snippet || item.extracted_text || "";
+              const hasLongText = (item.extracted_text || "").length > 250;
+              const extension = item.extension || (fileName.includes(".") ? "." + fileName.split(".").pop() : "");
+
               return (
                 <div
-                  key={idx}
-                  className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-4.5 space-y-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] hover:border-[#a39e98] dark:hover:border-[#4a4a4a] transition"
+                  key={itemKey}
+                  className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-4.5 space-y-3 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] hover:border-[#a39e98] dark:hover:border-[#4a4a4a] transition duration-150"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-4 h-4 text-[#0075de] dark:text-[#2383e2] shrink-0" />
-                      <span className="font-semibold text-[13px] text-[#000000] dark:text-[#ffffff] font-mono truncate">
-                        {fileName}
-                      </span>
+                  {/* File Header */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {/* Thumbnail or File Badge with Preview Trigger */}
+                      {item.thumbnail_b64 ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewItem(item)}
+                          className="relative group shrink-0 cursor-pointer"
+                          title="Click to view large preview"
+                        >
+                          <img
+                            src={`data:image/jpeg;base64,${item.thumbnail_b64}`}
+                            alt="thumbnail"
+                            className="w-11 h-11 object-cover rounded-lg border border-[#e6e6e6] dark:border-[#383838] shadow-2xs group-hover:opacity-85 transition"
+                          />
+                          <div className="absolute inset-0 bg-black/30 rounded-lg opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                            <Eye className="w-3.5 h-3.5" />
+                          </div>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewItem(item)}
+                          className="w-11 h-11 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 border border-[#e6e6e6] dark:border-[#383838] flex flex-col items-center justify-center shrink-0 hover:bg-[#0075de]/20 transition cursor-pointer"
+                          title="Click to inspect file text"
+                        >
+                          <FileText className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+                          <span className="font-mono text-[9px] font-bold text-[#615d59] dark:text-[#9b9a97] uppercase mt-0.5">
+                            {extension ? extension.replace(".", "").slice(0, 4) : "FILE"}
+                          </span>
+                        </button>
+                      )}
+
+                      <div className="min-w-0">
+                        <h4 className="font-semibold text-[13.5px] text-[#000000] dark:text-[#ffffff] font-mono truncate">
+                          {fileName}
+                        </h4>
+                        <div className="flex items-center gap-1.5 text-[11px] text-[#615d59] dark:text-[#9b9a97] font-mono mt-0.5">
+                          {item.file_size_bytes ? (
+                            <span>{formatBytes(item.file_size_bytes)} · </span>
+                          ) : null}
+                          <span className="truncate max-w-md">{item.path}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyPath(item.path)}
+                            className="p-0.5 hover:text-[#000000] dark:hover:text-[#ffffff] rounded transition cursor-pointer"
+                            title="Copy full file path"
+                          >
+                            {isCopied ? (
+                              <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
+                          {isCopied && (
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-sans font-medium">
+                              Copied!
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    {item.category && (
-                      <span
-                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border font-mono ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {item.confidence_score !== undefined && (
+                        <span className="text-[11px] font-mono text-[#615d59] dark:text-[#9b9a97]">
+                          {(item.confidence_score * 100).toFixed(0)}%
+                        </span>
+                      )}
+                      {item.category && (
+                        <span
+                          className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-md border font-mono ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}
+                        >
+                          {item.category}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setPreviewItem(item)}
+                        className="p-1 text-[#a39e98] hover:text-[#0075de] dark:hover:text-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 rounded-md transition cursor-pointer ml-1"
+                        title="Inspect file & preview"
                       >
-                        {item.category}
-                      </span>
-                    )}
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
-                  <p className="text-[11px] text-[#615d59] dark:text-[#9b9a97] font-mono truncate">
-                    {item.path}
-                  </p>
+                  {/* Highlighted Match Snippet */}
+                  {snippetHtml ? (
+                    <div className="space-y-1.5">
+                      <div
+                        className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] font-mono text-[12px] text-[#31302e] dark:text-[#d4d4d4] leading-relaxed whitespace-pre-wrap fts-snippet"
+                        dangerouslySetInnerHTML={{
+                          __html: isExpanded ? item.extracted_text || snippetHtml : snippetHtml,
+                        }}
+                      />
 
-                  {item.extracted_text && (
-                    <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] font-mono text-[12px] text-[#31302e] dark:text-[#d4d4d4] line-clamp-3 leading-relaxed whitespace-pre-wrap">
-                      {item.extracted_text}
+                      {hasLongText && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(itemKey)}
+                          className="flex items-center gap-1 text-[11px] text-[#0075de] dark:text-[#2383e2] hover:underline font-medium pt-0.5 cursor-pointer"
+                        >
+                          {isExpanded ? (
+                            <>
+                              <ChevronUp className="w-3 h-3" />
+                              <span>Show less</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="w-3 h-3" />
+                              <span>Show full extracted text ({item.extracted_text?.length} chars)</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-[#a39e98] italic font-mono">
+                      Matched by file path or category taxonomy.
                     </div>
                   )}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Empty State after search */}
+      {!isSearching && hasSearched && ftsResults.length === 0 && (
+        <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-10 text-center space-y-4 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)]">
+          <div className="w-12 h-12 rounded-full bg-[#f6f5f4] dark:bg-[#282828] border border-[#e6e6e6] dark:border-[#383838] flex items-center justify-center mx-auto text-[#615d59] dark:text-[#9b9a97]">
+            <FileSearch className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold text-[#000000] dark:text-[#ffffff]">
+              No matching documents found
+            </h3>
+            <p className="text-[13px] text-[#615d59] dark:text-[#9b9a97] max-w-md mx-auto">
+              No results found for <span className="font-semibold text-[#000000] dark:text-[#ffffff]">"{ftsQuery}"</span>.
+              Try searching with partial words, different keywords, or check that documents have been processed in the Organize tab.
+            </p>
+          </div>
+          <div className="flex justify-center gap-2 pt-1">
+            {sampleKeywords.slice(0, 4).map((sample) => (
+              <button
+                key={sample}
+                onClick={() => handleSampleClick(sample)}
+                className="px-3 py-1 text-[11px] font-medium rounded-md bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] cursor-pointer"
+              >
+                Try "{sample}"
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Discovery / Initial State before search */}
+      {!isSearching && !hasSearched && ftsResults.length === 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 space-y-2 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+            <div className="w-8 h-8 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center text-[#0075de] dark:text-[#2383e2]">
+              <Search className="w-4 h-4" />
+            </div>
+            <h4 className="font-semibold text-[13px] text-[#000000] dark:text-[#ffffff]">
+              Full-Text OCR Index
+            </h4>
+            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] leading-relaxed">
+              Search inside receipts, invoices, PDF documents, and screenshots using native OCR text extraction.
+            </p>
+          </div>
+
+          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 space-y-2 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+            <div className="w-8 h-8 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center text-[#0075de] dark:text-[#2383e2]">
+              <FileText className="w-4 h-4" />
+            </div>
+            <h4 className="font-semibold text-[13px] text-[#000000] dark:text-[#ffffff]">
+              File Names & Paths
+            </h4>
+            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] leading-relaxed">
+              Query file extensions, nested directories, dates, and names instantly using tokenized FTS5 matching.
+            </p>
+          </div>
+
+          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-5 space-y-2 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+            <div className="w-8 h-8 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center text-[#0075de] dark:text-[#2383e2]">
+              <Layers className="w-4 h-4" />
+            </div>
+            <h4 className="font-semibold text-[13px] text-[#000000] dark:text-[#ffffff]">
+              Category Filtering
+            </h4>
+            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] leading-relaxed">
+              Quickly find classified items by category name, tax tags, finance groups, or custom user taxonomies.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Document & Image Preview Modal */}
+      {previewItem && (
+        <div className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-2xl w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.25)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-4 animate-fade-in max-h-[85vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#333333] pb-3.5">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center shrink-0">
+                  <FileText className="w-5 h-5 text-[#0075de] dark:text-[#2383e2]" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff] font-mono truncate">
+                    {previewItem.path.split("/").pop() || previewItem.path}
+                  </h3>
+                  <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] truncate mt-0.5">
+                    {previewItem.file_size_bytes ? `${formatBytes(previewItem.file_size_bytes)} · ` : ""}
+                    Category: <strong className="text-[#000000] dark:text-[#ffffff]">{previewItem.category || "Unknown"}</strong>
+                    {previewItem.confidence_score !== undefined && ` (${(previewItem.confidence_score * 100).toFixed(0)}%)`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewItem(null)}
+                className="p-1.5 rounded-lg text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] hover:bg-[#f6f5f4] dark:hover:bg-[#282828] transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+              {/* Visual Image/PDF Thumbnail Preview */}
+              {previewItem.thumbnail_b64 && (
+                <div className="bg-[#f6f5f4] dark:bg-[#191919] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-center">
+                  <img
+                    src={`data:image/jpeg;base64,${previewItem.thumbnail_b64}`}
+                    alt="File Preview"
+                    className="max-h-64 max-w-full object-contain rounded-lg shadow-sm border border-[#e6e6e6] dark:border-[#383838]"
+                  />
+                </div>
+              )}
+
+              {/* Full File Path Card */}
+              <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-between gap-2">
+                <span className="font-mono text-[11.5px] text-[#615d59] dark:text-[#9b9a97] truncate">
+                  {previewItem.path}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyPath(previewItem.path)}
+                  className="px-2.5 py-1 text-[11px] font-semibold bg-[#ffffff] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#31302e] dark:text-[#d4d4d4] rounded border border-[#e6e6e6] dark:border-[#383838] shrink-0 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedPath === previewItem.path ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy Path</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Classification Reason */}
+              {previewItem.reason && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
+                    Classification Details
+                  </h4>
+                  <p className="text-[12.5px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
+                    {previewItem.reason}
+                  </p>
+                </div>
+              )}
+
+              {/* Extracted Text / OCR */}
+              {previewItem.extracted_text && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
+                    Extracted Text & OCR Content ({previewItem.extracted_text.length} chars)
+                  </h4>
+                  <div className="font-mono text-[12px] text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3.5 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed fts-snippet">
+                    {previewItem.extracted_text}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
+              <button
+                type="button"
+                onClick={() => setPreviewItem(null)}
+                className="px-5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer transition"
+              >
+                Close Preview
+              </button>
+            </div>
           </div>
         </div>
       )}

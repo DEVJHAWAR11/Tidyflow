@@ -48,10 +48,19 @@ export interface ApplyDecisionItem {
 }
 
 export interface FtsResultItem {
+  id?: number;
+  file_id?: string;
   path: string;
   category?: string;
+  confidence_score?: number;
   confidence?: number;
   extracted_text?: string;
+  snippet?: string;
+  thumbnail_b64?: string;
+  file_size_bytes?: number;
+  extension?: string;
+  suggested_filename?: string;
+  reason?: string;
   ocr_text?: string;
   summary?: string;
 }
