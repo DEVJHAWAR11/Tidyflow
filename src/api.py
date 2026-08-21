@@ -286,6 +286,187 @@ async def update_settings(payload: SettingsPayload):
     return {"status": "success", "message": "Settings updated"}
 
 
+# ---------------------------------------------------------------------------
+# File System & Directory Picker Endpoints
+# ---------------------------------------------------------------------------
+
+class CreateDirRequest(BaseModel):
+    parent_path: str
+    name: str
+
+
+class BrowseNativeRequest(BaseModel):
+    prompt: Optional[str] = "Select Folder"
+    initial_dir: Optional[str] = None
+
+
+def pick_native_directory(prompt: str = "Select Folder", initial_dir: Optional[str] = None) -> Optional[str]:
+    """Trigger OS-native folder chooser dialog across macOS, Windows, and Linux."""
+    import subprocess
+    import sys
+
+    if sys.platform == "darwin":
+        init_clause = f'default location POSIX file "{initial_dir}"' if initial_dir and os.path.exists(initial_dir) else ""
+        script = f'''
+        tell application "System Events"
+            activate
+            try
+                set chosenFolder to choose folder with prompt "{prompt}" {init_clause}
+                return POSIX path of chosenFolder
+            on error number -128
+                return "CANCELLED"
+            end try
+        end tell
+        '''
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120)
+            out = res.stdout.strip()
+            if out == "CANCELLED" or res.returncode != 0:
+                return None
+            return out.rstrip("/")
+        except Exception as e:
+            logger.warning("macOS native folder picker error: %s", e)
+            return None
+
+    elif sys.platform.startswith("win"):
+        init = f"$f.SelectedPath = '{initial_dir}';" if initial_dir and os.path.exists(initial_dir) else ""
+        script = f'''
+        Add-Type -AssemblyName System.Windows.Forms
+        $f = New-Object System.Windows.Forms.FolderBrowserDialog
+        $f.Description = "{prompt}"
+        {init}
+        if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+            Write-Output $f.SelectedPath
+        }} else {{
+            Write-Output "CANCELLED"
+        }}
+        '''
+        try:
+            res = subprocess.run(["powershell", "-Command", script], capture_output=True, text=True, timeout=120)
+            out = res.stdout.strip()
+            if out == "CANCELLED" or res.returncode != 0:
+                return None
+            return out
+        except Exception as e:
+            logger.warning("Windows native folder picker error: %s", e)
+            return None
+
+    else:
+        # Linux - try zenity first, then tkinter
+        try:
+            cmd = ["zenity", "--file-selection", "--directory", f"--title={prompt}"]
+            if initial_dir and os.path.exists(initial_dir):
+                cmd.append(f"--filename={initial_dir}")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip()
+        except Exception:
+            pass
+
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(title=prompt, initialdir=initial_dir)
+            root.destroy()
+            return folder if folder else None
+        except Exception as e:
+            logger.warning("Linux native folder picker error: %s", e)
+            return None
+
+
+@app.get("/fs/quick-locations")
+async def get_quick_locations():
+    """Return user's primary system directories."""
+    home = Path.home()
+    candidates = [
+        {"name": "Downloads", "path": str(home / "Downloads"), "icon": "download"},
+        {"name": "Desktop", "path": str(home / "Desktop"), "icon": "desktop"},
+        {"name": "Documents", "path": str(home / "Documents"), "icon": "file-text"},
+        {"name": "Pictures", "path": str(home / "Pictures"), "icon": "image"},
+        {"name": "Home", "path": str(home), "icon": "home"},
+    ]
+    locs = [c for c in candidates if os.path.exists(c["path"])]
+    return {"locations": locs, "home": str(home)}
+
+
+@app.get("/fs/list-directory")
+async def list_directory(path: Optional[str] = None, show_hidden: bool = False):
+    """List subdirectories of a given path for in-browser directory browsing."""
+    target = Path(path).resolve() if path and path.strip() else Path.home()
+    if not target.exists():
+        target = Path.home()
+
+    if not target.is_dir():
+        target = target.parent
+
+    parent = str(target.parent) if target.parent != target else None
+
+    subdirs = []
+    try:
+        for entry in os.scandir(target):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if not show_hidden and entry.name.startswith("."):
+                        continue
+                    if entry.name in ("$RECYCLE.BIN", "System Volume Information"):
+                        continue
+                    if entry.name == "Library" and target == Path.home():
+                        continue
+                    subdirs.append({
+                        "name": entry.name,
+                        "path": entry.path,
+                        "is_dir": True,
+                    })
+            except (PermissionError, OSError):
+                continue
+    except (PermissionError, OSError) as e:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {str(e)}")
+
+    subdirs.sort(key=lambda x: x["name"].lower())
+
+    return {
+        "current_path": str(target),
+        "parent_path": parent,
+        "directories": subdirs,
+        "exists": True,
+    }
+
+
+@app.post("/fs/create-directory")
+async def create_directory(req: CreateDirRequest):
+    """Create a new folder inside parent_path."""
+    parent = Path(req.parent_path).resolve()
+    if not parent.exists() or not parent.is_dir():
+        raise HTTPException(status_code=400, detail="Parent directory does not exist")
+
+    clean_name = req.name.strip().replace("/", "_").replace("\\", "_")
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Invalid directory name")
+
+    new_dir = parent / clean_name
+    try:
+        new_dir.mkdir(parents=False, exist_ok=True)
+        return {"status": "success", "path": str(new_dir), "name": clean_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create directory: {str(e)}")
+
+
+@app.post("/fs/browse-native")
+async def browse_native_directory(req: BrowseNativeRequest):
+    """Trigger native OS folder picker popup."""
+    chosen = await asyncio.to_thread(
+        pick_native_directory,
+        prompt=req.prompt or "Select Folder",
+        initial_dir=req.initial_dir,
+    )
+    if chosen:
+        return {"status": "success", "path": chosen, "cancelled": False}
+    return {"status": "cancelled", "path": None, "cancelled": True}
+
+
 @app.post("/pipeline/run")
 async def run_pipeline_endpoint(req: PipelineRunRequest):
     """Run full TidyFlow pipeline and return rich structured JSON results."""

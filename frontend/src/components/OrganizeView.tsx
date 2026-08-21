@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { CategoryItem, RunSummary } from "../types";
 import { getStickerStyle } from "../utils/stickerTheme";
 import { AiStructureAssistant } from "./AiStructureAssistant";
+import { DirectoryPickerModal } from "./DirectoryPickerModal";
 import {
+  Folder,
   FolderOpen,
   FolderDown,
   FileSearch,
@@ -10,7 +12,6 @@ import {
   ShieldCheck,
   Terminal,
   Layers,
-  ChevronRight,
   Loader2,
   Sparkles,
   SlidersHorizontal,
@@ -37,13 +38,6 @@ interface OrganizeViewProps {
   onNavigateToCategories: () => void;
 }
 
-const PRESET_FOLDERS = [
-  "/Users/arpan/test files",
-  "/Users/arpan/Downloads",
-  "/Users/arpan/Documents",
-  "/Users/arpan/Desktop",
-];
-
 export const OrganizeView: React.FC<OrganizeViewProps> = ({
   inputFolder,
   setInputFolder,
@@ -64,53 +58,96 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
   onNavigateToReview,
   onNavigateToCategories,
 }) => {
-  const [organizeMode, setOrganizeMode] = useState<"ai_custom" | "standard">("ai_custom");
+  const [organizeMode, setOrganizeMode] = useState<"ai_architect" | "standard">("ai_architect");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTarget, setPickerTarget] = useState<"source" | "destination">("source");
+  const [quickLocations, setQuickLocations] = useState<Array<{ name: string; path: string }>>([]);
+
+  // Fetch system quick locations for preset pills
+  useEffect(() => {
+    fetch("http://localhost:8000/fs/quick-locations")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.locations) {
+          setQuickLocations(data.locations);
+        }
+      })
+      .catch((err) => console.error("Failed to load quick locations:", err));
+  }, []);
+
+  const handleSelectDirectory = (path: string) => {
+    if (pickerTarget === "source") {
+      setInputFolder(path);
+      // Auto-set destination if empty or defaulted
+      if (!outputFolder || outputFolder.endsWith("/Organized_Output")) {
+        setOutputFolder(`${path}/Organized_Output`);
+      }
+    } else {
+      setOutputFolder(path);
+    }
+  };
+
   const activeCategoryCount = Object.values(categories).filter((c) => c.active).length;
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
-        <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
-          <span>Workspace</span>
-          <ChevronRight className="w-3.5 h-3.5" />
-          <span className="text-[#000000] dark:text-[#ffffff]">Pipeline Runner</span>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-6">
+      {/* Directory Picker Modal */}
+      <DirectoryPickerModal
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={handleSelectDirectory}
+        initialPath={pickerTarget === "source" ? inputFolder : outputFolder}
+        title={pickerTarget === "source" ? "Select Source Directory" : "Select Destination Directory"}
+        description={
+          pickerTarget === "source"
+            ? "Choose the messy folder you want TidyFlow to scan and organize."
+            : "Choose where organized category folders and reports should be created."
+        }
+      />
+
+      {/* Mode Switcher Banner */}
+      <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-3 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/15 flex items-center justify-center text-[#0075de] dark:text-[#8bc5f8]">
+            <Sparkles className="w-4 h-4" />
+          </div>
           <div>
-            <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
-              Organize Folders
-            </h2>
-            <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
-              Describe your custom file organization rules with AI, or run standard taxonomy pipelines.
+            <h3 className="text-[13px] font-semibold text-[#000000] dark:text-[#ffffff]">
+              Organization Strategy
+            </h3>
+            <p className="text-[11px] text-[#615d59] dark:text-[#9b9a97]">
+              Choose how you want to build and command your folder taxonomy
             </p>
           </div>
+        </div>
 
-          {/* Mode Switcher Pill */}
-          <div className="flex items-center bg-[#eae8e5] dark:bg-[#282828] p-1 rounded-full border border-[#e6e6e6] dark:border-[#383838] shadow-2xs">
-            <button
-              onClick={() => setOrganizeMode("ai_custom")}
-              className={`px-4 py-1.5 rounded-full text-[12px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                organizeMode === "ai_custom"
-                  ? "bg-[#0075de] text-white shadow-xs"
-                  : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Custom Control</span>
-            </button>
-            <button
-              onClick={() => setOrganizeMode("standard")}
-              className={`px-4 py-1.5 rounded-full text-[12px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                organizeMode === "standard"
-                  ? "bg-[#ffffff] dark:bg-[#191919] text-[#000000] dark:text-[#ffffff] shadow-xs"
-                  : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Standard Presets</span>
-            </button>
-          </div>
+        <div className="flex items-center bg-[#f6f5f4] dark:bg-[#191919] p-1 rounded-lg border border-[#e6e6e6] dark:border-[#333333]">
+          <button
+            onClick={() => setOrganizeMode("ai_architect")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+              organizeMode === "ai_architect"
+                ? "bg-[#ffffff] dark:bg-[#2c2c2c] text-[#0075de] dark:text-[#8bc5f8] shadow-2xs"
+                : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
+            <span>AI Organization Architect</span>
+            <span className="text-[9px] bg-[#0075de]/15 text-[#0075de] dark:text-[#8bc5f8] px-1 py-0.2 rounded font-bold uppercase">
+              New
+            </span>
+          </button>
+
+          <button
+            onClick={() => setOrganizeMode("standard")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+              organizeMode === "standard"
+                ? "bg-[#ffffff] dark:bg-[#2c2c2c] text-[#000000] dark:text-[#ffffff] shadow-2xs"
+                : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Standard Presets</span>
+          </button>
         </div>
       </div>
 
@@ -126,37 +163,53 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
               </label>
               <span className="text-[10px] text-[#a39e98] uppercase font-bold tracking-wider">Required</span>
             </div>
-            <input
-              type="text"
-              value={inputFolder}
-              onChange={(e) => setInputFolder(e.target.value)}
-              placeholder="/Users/username/Downloads"
-              className="w-full bg-[#ffffff] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3 py-2 text-[12px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] shadow-2xs"
-            />
-            {/* Quick Presets */}
-            <div className="flex flex-wrap items-center gap-1 mt-2">
-              <span className="text-[11px] text-[#615d59] dark:text-[#9b9a97] mr-1">Presets:</span>
-              {PRESET_FOLDERS.map((preset) => {
-                const isSelected = inputFolder === preset;
-                const folderName = preset.split("/").pop();
-                return (
-                  <button
-                    key={preset}
-                    onClick={() => {
-                      setInputFolder(preset);
-                      setOutputFolder(`${preset}/Organized_Output`);
-                    }}
-                    className={`text-[11px] px-2 py-0.5 rounded font-mono border transition-all cursor-pointer ${
-                      isSelected
-                        ? "bg-[#0075de] text-white border-[#0075de] font-semibold"
-                        : "bg-[#f6f5f4] dark:bg-[#282828] text-[#31302e] dark:text-[#d4d4d4] border-[#e6e6e6] dark:border-[#383838] hover:bg-[#eae8e5]"
-                    }`}
-                  >
-                    {folderName}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={inputFolder}
+                onChange={(e) => setInputFolder(e.target.value)}
+                placeholder="/Users/username/Downloads"
+                className="flex-1 bg-[#ffffff] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3 py-2 text-[12px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] shadow-2xs"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerTarget("source");
+                  setPickerOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] rounded-md text-[12px] font-semibold text-[#31302e] dark:text-[#d4d4d4] transition cursor-pointer shadow-2xs shrink-0"
+                title="Browse folder via popup or native Finder"
+              >
+                <Folder className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
+                <span>Browse...</span>
+              </button>
             </div>
+
+            {/* Quick Location Presets */}
+            {quickLocations.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 mt-2">
+                <span className="text-[11px] text-[#615d59] dark:text-[#9b9a97] mr-1">Bookmarks:</span>
+                {quickLocations.map((loc) => {
+                  const isSelected = inputFolder === loc.path;
+                  return (
+                    <button
+                      key={loc.path}
+                      onClick={() => {
+                        setInputFolder(loc.path);
+                        setOutputFolder(`${loc.path}/Organized_Output`);
+                      }}
+                      className={`text-[11px] px-2 py-0.5 rounded font-mono border transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-[#0075de] text-white border-[#0075de] font-semibold shadow-2xs"
+                          : "bg-[#f6f5f4] dark:bg-[#282828] text-[#31302e] dark:text-[#d4d4d4] border-[#e6e6e6] dark:border-[#383838] hover:bg-[#eae8e5] dark:hover:bg-[#333333]"
+                      }`}
+                    >
+                      {loc.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Output Destination Folder */}
@@ -168,13 +221,27 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
               </label>
               <span className="text-[10px] text-[#a39e98] uppercase font-bold tracking-wider">Auto-Created</span>
             </div>
-            <input
-              type="text"
-              value={outputFolder}
-              onChange={(e) => setOutputFolder(e.target.value)}
-              placeholder="/Users/username/Organized_Output"
-              className="w-full bg-[#ffffff] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3 py-2 text-[12px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] shadow-2xs"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={outputFolder}
+                onChange={(e) => setOutputFolder(e.target.value)}
+                placeholder="/Users/username/Organized_Output"
+                className="flex-1 bg-[#ffffff] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3 py-2 text-[12px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] shadow-2xs"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerTarget("destination");
+                  setPickerOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] rounded-md text-[12px] font-semibold text-[#31302e] dark:text-[#d4d4d4] transition cursor-pointer shadow-2xs shrink-0"
+                title="Browse destination directory"
+              >
+                <FolderDown className="w-3.5 h-3.5 text-[#9b51e0] dark:text-[#d8b4fe]" />
+                <span>Browse...</span>
+              </button>
+            </div>
             <p className="text-[11px] text-[#615d59] dark:text-[#9b9a97] mt-2">
               Organized subfolders and review reports will be generated here.
             </p>
@@ -183,7 +250,7 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
       </div>
 
       {/* Main Workspace Body based on Mode */}
-      {organizeMode === "ai_custom" ? (
+      {organizeMode === "ai_architect" ? (
         /* AI Conversational Assistant Mode */
         <AiStructureAssistant
           inputFolder={inputFolder}

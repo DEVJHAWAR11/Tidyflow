@@ -42,9 +42,23 @@ export default function App() {
 
   const toggleDarkMode = () => setDarkMode((prev) => !prev);
 
-  // Organize tab state
-  const [inputFolder, setInputFolder] = useState("/Users/arpan/test files");
-  const [outputFolder, setOutputFolder] = useState("/Users/arpan/test files/Organized_Output");
+  // Organize tab state — restored from localStorage or fetched from quick locations
+  const [inputFolder, setInputFolderState] = useState<string>(() => {
+    return localStorage.getItem("tidyflow_input_folder") || "";
+  });
+  const [outputFolder, setOutputFolderState] = useState<string>(() => {
+    return localStorage.getItem("tidyflow_output_folder") || "";
+  });
+
+  const setInputFolder = (path: string) => {
+    setInputFolderState(path);
+    if (path) localStorage.setItem("tidyflow_input_folder", path);
+  };
+
+  const setOutputFolder = (path: string) => {
+    setOutputFolderState(path);
+    if (path) localStorage.setItem("tidyflow_output_folder", path);
+  };
   const [useLlm, setUseLlm] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("");
@@ -158,6 +172,22 @@ export default function App() {
     fetchCategories();
     fetchSettings();
     fetchLatestReport();
+
+    // If no folder stored in localStorage, set default from system locations
+    if (!inputFolder) {
+      fetch(`${API_BASE}/fs/quick-locations`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.locations && data.locations.length > 0) {
+            const downloads = data.locations.find((l: any) => l.name === "Downloads");
+            const defPath = downloads ? downloads.path : data.locations[0].path;
+            setInputFolder(defPath);
+            setOutputFolder(`${defPath}/Organized_Output`);
+          }
+        })
+        .catch((err) => console.error("Could not fetch default location:", err));
+    }
+
     const interval = setInterval(checkStatus, 6000);
     return () => clearInterval(interval);
   }, []);
