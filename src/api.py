@@ -442,26 +442,40 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
 
     set_allowed_directories([out_dir])
 
+    # Load FileRecords from cache or disk
+    records = latest_pipeline_data.get("records")
+    if not records:
+        candidate_paths = [
+            out_dir,
+            Path("/Users/arpan/test files/Organized_Output"),
+            Path("./Organized_Output"),
+        ]
+        for cp in candidate_paths:
+            records_file = cp / "file_records.jsonl"
+            if records_file.exists():
+                records = load_records_jsonl(records_file)
+                break
+        if not records:
+            raise HTTPException(status_code=400, detail="No active file records found to apply decisions.")
+
+    id_to_record = {r.file_id: r for r in records}
+
     # Convert incoming UI decision items to ReviewDecision models
     decisions: list[ReviewDecision] = []
     for item in req.decisions:
+        rec = id_to_record.get(item.file_id)
+        orig_cat = (rec.classification.category if rec and rec.classification else "Unknown")
+        orig_conf = (rec.classification.confidence if rec and rec.classification else 0.0)
         decisions.append(
             ReviewDecision(
                 file_id=item.file_id,
                 approved=item.approved,
                 override_category=item.override_category,
-                target_filename=item.target_filename,
+                override_filename=item.target_filename,
+                original_category=orig_cat,
+                original_confidence=orig_conf,
             )
         )
-
-    # Load FileRecords from cache or disk
-    records = latest_pipeline_data.get("records")
-    if not records:
-        records_file = out_dir / "file_records.jsonl"
-        if records_file.exists():
-            records = load_records_jsonl(records_file)
-        else:
-            raise HTTPException(status_code=400, detail="No active file records found to apply decisions.")
 
     manifest = apply_decisions(
         decisions=decisions,

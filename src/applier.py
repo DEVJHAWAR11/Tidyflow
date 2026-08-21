@@ -98,13 +98,14 @@ def apply_decisions(
             continue
 
         # Final category & filename
-        category = dec.override_category or dec.original_category
+        rec_cat = rec.classification.category if rec.classification else "Unknown"
+        category = dec.override_category or (rec_cat if rec_cat != "Unknown" else dec.original_category)
         if category == "Unknown" and dec.override_category is None:
             logger.info("Skipping Unknown file %s", rec.filename)
             skipped_count += 1
             continue
 
-        filename = dec.override_filename or rec.filename
+        filename = dec.override_filename or getattr(dec, "target_filename", None) or rec.filename
 
         # Security check: do not copy unverified unsafe files (e.g. raw shell scripts or executables)
         if not is_safe_to_copy(rec.abs_path):
