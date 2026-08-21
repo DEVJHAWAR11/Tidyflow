@@ -95,6 +95,18 @@ def inventory(
     _display_summary_table(summary, cfg.output_dir)
 
 
+@app.command(name="scan")
+def scan(
+    input_path: Optional[str] = typer.Argument(None, help="Input directory to scan"),
+    input_dir: Optional[str] = typer.Option(None, "--input-dir", "-i", help="Input directory to scan"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Target output directory"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+):
+    """Scan and index files in a directory (shortcut for inventory)."""
+    target = input_path or input_dir
+    inventory(config_path=config_path, input_dir=target, output_dir=output_dir)
+
+
 @app.command()
 def report(
     output_dir: str = typer.Option("./organized_output", "--output-dir", "-o", help="Directory containing file_records.jsonl"),

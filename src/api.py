@@ -108,11 +108,13 @@ app.add_middleware(
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+    from fastapi.responses import FileResponse
+
+    if (frontend_dist / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
 
     @app.get("/")
     async def serve_frontend():
-        from fastapi.responses import FileResponse
         return FileResponse(frontend_dist / "index.html")
 
 
@@ -242,6 +244,7 @@ async def save_categories(req: CategoriesUpdateRequest):
 
 
 @app.get("/settings")
+@app.get("/api/settings")
 async def get_settings():
     """Get current configuration and masked API key."""
     cfg = load_config()
@@ -262,6 +265,7 @@ async def get_settings():
 
 
 @app.post("/settings")
+@app.post("/api/settings")
 async def update_settings(payload: SettingsPayload):
     """Save LLM credentials and configuration settings."""
     if payload.api_key and payload.api_key.strip():
@@ -860,3 +864,13 @@ async def message_stream(request: Request):
             clients.discard(q)
 
     return EventSourceResponse(event_generator())
+
+
+# Catch-all route for static assets in dist root and SPA routing
+if frontend_dist.exists():
+    @app.get("/{full_path:path}")
+    async def serve_spa_catchall(full_path: str):
+        file_path = frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(frontend_dist / "index.html")
