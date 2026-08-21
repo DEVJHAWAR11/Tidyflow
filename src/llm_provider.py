@@ -344,7 +344,7 @@ def _resolve_provider_model(provider: str, configured_model: Optional[str] = Non
     prov = provider.lower()
     default_models = {
         "deepseek": "deepseek-v4-flash",
-        "groq": "openai/gpt-oss-120b",
+        "groq": "openai/gpt-oss-20b",
         "gemini": "gemini-3.7-flash",
         "openai": "gpt-4o-mini",
         "openrouter": "anthropic/claude-3.7-sonnet",
@@ -353,9 +353,9 @@ def _resolve_provider_model(provider: str, configured_model: Optional[str] = Non
         # If legacy deepseek-chat was saved, upgrade to deepseek-v4-flash
         if configured_model == "deepseek-chat" and prov == "deepseek":
             return "deepseek-v4-flash"
-        # If legacy llama-3.3 was saved for groq, upgrade to gpt-oss-120b
+        # If legacy llama-3.3 was saved for groq, upgrade to gpt-oss-20b
         if "llama-3.3" in configured_model and prov == "groq":
-            return "openai/gpt-oss-120b"
+            return "openai/gpt-oss-20b"
         return configured_model
     return default_models.get(prov, configured_model or "deepseek-v4-flash")
 
@@ -392,7 +392,7 @@ def _call_llm_batched(
     max_retries: int,
     resp_log: Path,
     batch_idx: int,
-) -> list[LlmClassificationItem]:
+) -> tuple[list[LlmClassificationItem], str]:
     """Execute chat completion request with JSON validation and repair retry."""
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
@@ -412,10 +412,20 @@ def _call_llm_batched(
                 "model": model,
                 "messages": messages,
                 "temperature": 0.1,
-                "max_tokens": 4096,
+                "max_tokens": 1500,
                 "response_format": {"type": "json_object"},
             }
             resp = client.post(url, headers=headers, json=req_body)
+            if resp.status_code == 413:
+                # Groq rate/token payload limit for 120b — fallback to 20b
+                if "120b" in model:
+                    logger.warning("Payload too large for %s; switching to openai/gpt-oss-20b", model)
+                    model = "openai/gpt-oss-20b"
+                    continue
+                last_error_msg = "Payload Too Large (HTTP 413)"
+                _append_jsonl(resp_log, {"batch": batch_idx, "error": last_error_msg})
+                return [], last_error_msg
+
             if resp.status_code == 429:
                 # Rate limit hit — inspect Retry-After or do exponential backoff
                 retry_after_str = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset") or ""
@@ -435,6 +445,8 @@ def _call_llm_batched(
                     model, attempt, max_retries, wait_time, err_msg
                 )
                 last_error_msg = f"Rate Limit (429): {err_msg}"
+                if "120b" in model:
+                    model = "openai/gpt-oss-20b"
                 if attempt < max_retries:
                     time.sleep(wait_time)
                     continue
