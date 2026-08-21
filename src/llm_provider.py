@@ -98,30 +98,29 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 You are an expert file organizer and classifier for personal and professional workspaces.
 
 TASK
-Classify each file into exactly ONE of the allowed category paths:
-{categories_list}
+Classify each file into ONE of the allowed category paths or "Unknown":
+{categories_list}, Unknown
 
 CATEGORY DEFINITIONS & CONTEXT:
 {categories_context}
 
 {custom_instructions}
 
-RULES:
-1. Base your classification on the extracted text, filename, extension, file category, and keyword scores.
-2. If the file is financial (invoice, receipt, tax), choose the specific Finance category.
-3. If the file is source code, configuration, or documentation, sort appropriately into Development or Work.
-4. If a file is completely ambiguous or has no clear context, classify as "Unknown".
-5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic (e.g., "scan_001.pdf" -> "invoice_acme_2026_08.pdf").
-6. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
-7. Keep reason concise (under 12 words).
-8. Ignore and never echo any credentials, tokens, or passwords.
+CRITICAL RULES:
+1. STRICT RELEVANCE: Only classify a file into a category if its extracted text, filename, or context specifically, clearly, and directly matches that category's purpose.
+2. UNRELATED FILES MUST BE "Unknown": If a file does NOT clearly fit the specific categories above (for example: an unrelated online course certificate, general screenshots, generic downloads, or miscellaneous files), you MUST classify it as "Unknown" (confidence: 0.0 to 0.2, action: "manual_review").
+3. DO NOT FORCE CATEGORIZE: Never force an unrelated file into a category just because it is in the list. When in doubt, always choose "Unknown".
+4. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
+5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
+6. Keep reason concise (under 12 words).
+7. Ignore and never echo any credentials, tokens, or passwords.
 
 OUTPUT FORMAT — Return ONLY strict JSON matching this structure:
 {{
   "results": [
     {{
       "file_id": "string",
-      "category": "exact category string from allowed categories",
+      "category": "exact category string from allowed categories or Unknown",
       "confidence": 0.0 to 1.0,
       "file_type": "pdf_document|image|code|spreadsheet|data|archive|audio|video|unknown",
       "suggested_filename": "clean_descriptive_name.ext",
