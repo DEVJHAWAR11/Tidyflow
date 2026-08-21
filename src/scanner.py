@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_IGNORED_NAMES: set[str] = {
     ".git", ".svn", ".hg", "__pycache__", ".pytest_cache", ".venv", "venv",
     "node_modules", ".DS_Store", "Thumbs.db", ".tidyflow",
+    "Organized_Output", "organized_output", "Organized", "organized", "Staging", "staging",
 }
 
 
@@ -90,6 +91,10 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
 
     max_bytes = int(config.max_file_size_mb * 1_048_576)
     ignore_patterns = load_ignore_patterns(input_dir)
+    if hasattr(config, "output_dir") and config.output_dir:
+        ignore_patterns.add(config.output_dir.name)
+    if hasattr(config, "staging_dir") and config.staging_dir:
+        ignore_patterns.add(config.staging_dir.name)
 
     all_candidate_paths: list[Path] = []
     for root, dirs, files in os.walk(input_dir):

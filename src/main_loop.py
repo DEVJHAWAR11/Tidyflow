@@ -36,6 +36,7 @@ def run_pipeline(
     auto_apply: bool = False,
     move_mode: bool = False,
     dry_run: bool = True,
+    db: Optional[Any] = None,
 ) -> tuple[list[FileRecord], RunSummary]:
     """
     Execute the complete universal file organization pipeline.
@@ -162,6 +163,24 @@ def run_pipeline(
                 summary.moved_files = len(manifest)
             else:
                 summary.copied_files = len(manifest)
+
+    if db:
+        try:
+            for rec in records:
+                if not rec.skipped:
+                    text_snip = rec.extracted_text_normalized or rec.extracted_text_raw or ""
+                    cat = rec.classification.category if rec.classification else "Unknown"
+                    conf = rec.classification.confidence if rec.classification else 0.0
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(db.execute_write(
+                            "INSERT OR REPLACE INTO files (id, path, status, category, confidence_score, extracted_text) VALUES (?, ?, ?, ?, ?, ?)",
+                            (rec.file_id, str(rec.abs_path), "scanned", cat, conf, text_snip[:2000])
+                        ))
+                    except RuntimeError:
+                        pass
+        except Exception:
+            pass
 
     logger.info("Pipeline run complete! Outputs available in %s", config.output_dir)
     return records, summary
