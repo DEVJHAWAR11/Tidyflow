@@ -166,21 +166,9 @@ def run_pipeline(
 
     if db:
         try:
-            for rec in records:
-                if not rec.skipped:
-                    text_snip = rec.extracted_text_normalized or rec.extracted_text_raw or ""
-                    cat = rec.classification.category if rec.classification else "Unknown"
-                    conf = rec.classification.confidence if rec.classification else 0.0
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(db.execute_write(
-                            "INSERT OR REPLACE INTO files (id, path, status, category, confidence_score, extracted_text) VALUES (?, ?, ?, ?, ?, ?)",
-                            (rec.file_id, str(rec.abs_path), "scanned", cat, conf, text_snip[:2000])
-                        ))
-                    except RuntimeError:
-                        pass
-        except Exception:
-            pass
+            db.sync_index_records(records)
+        except Exception as e:
+            logger.warning("Failed to sync records into database: %s", e)
 
     logger.info("Pipeline run complete! Outputs available in %s", config.output_dir)
     return records, summary

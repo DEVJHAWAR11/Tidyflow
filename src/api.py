@@ -52,6 +52,29 @@ async def broadcast_event(event_type: str, data: Any):
 async def lifespan(app: FastAPI):
     await db.start()
     await processor.start()
+
+    # Seed / index existing records from disk if database has 0 files
+    try:
+        count_res = await db.execute_read("SELECT count(*) as count FROM files")
+        current_count = count_res[0]["count"] if count_res else 0
+        if current_count == 0:
+            candidate_paths = [
+                Path("/Users/arpan/test files/Organized_Output"),
+                Path("./Organized_Output"),
+                Path.home() / "Desktop" / "Organized_Output",
+                Path.home() / "Downloads" / "Organized_Output",
+            ]
+            for cand in candidate_paths:
+                rec_file = cand / "file_records.jsonl"
+                if rec_file.exists():
+                    loaded = load_records_jsonl(rec_file)
+                    if loaded:
+                        indexed_count = await db.index_records(loaded)
+                        logger.info("Auto-indexed %d records into database from %s", indexed_count, rec_file)
+                        break
+    except Exception as e:
+        logger.warning("Error auto-indexing records on startup: %s", e)
+
     yield
     await processor.stop()
     await db.stop()
@@ -355,6 +378,10 @@ async def get_latest_pipeline_results():
                 if loaded:
                     records = loaded
                     out_path = str(cand)
+                    try:
+                        await db.index_records(records)
+                    except Exception:
+                        pass
                     break
 
     file_list = []
