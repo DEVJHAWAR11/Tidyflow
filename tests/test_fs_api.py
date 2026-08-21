@@ -53,3 +53,18 @@ def test_create_directory_and_list(client, tmp_path):
     assert res2.status_code == 200
     dirs = [d["name"] for d in res2.json()["directories"]]
     assert "Test_Organized_Folder" in dirs
+
+
+def test_open_path_nonexistent(client):
+    """Verify 404 on nonexistent path."""
+    res = client.post("/fs/open-path", json={"path": "/nonexistent/random/folder/12345"})
+    assert res.status_code == 404
+
+
+def test_open_path_existing(client, tmp_path):
+    """Verify 200 on existing directory."""
+    test_file = tmp_path / "sample.txt"
+    test_file.write_text("hello world")
+    res = client.post("/fs/open-path", json={"path": str(test_file), "reveal": False})
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"

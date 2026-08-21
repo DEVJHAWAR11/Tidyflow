@@ -467,6 +467,62 @@ async def browse_native_directory(req: BrowseNativeRequest):
     return {"status": "cancelled", "path": None, "cancelled": True}
 
 
+class OpenPathRequest(BaseModel):
+    path: str
+    reveal: bool = True
+
+
+@app.post("/fs/open-path")
+async def open_path_endpoint(req: OpenPathRequest):
+    """Open or reveal a file/folder in the OS native File Explorer or Finder."""
+    target = Path(req.path).resolve()
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {req.path}")
+
+    import sys
+    import subprocess
+
+    try:
+        if sys.platform == "darwin":
+            # On macOS, `open -R` reveals and highlights the specific file in Finder
+            if req.reveal and target.is_file():
+                cmd = ["open", "-R", str(target)]
+            else:
+                cmd = ["open", str(target if target.is_dir() else target.parent)]
+            subprocess.Popen(cmd)
+            return {"status": "success", "message": f"Revealed in Finder: {target.name}"}
+
+        elif sys.platform.startswith("win"):
+            if req.reveal and target.is_file():
+                cmd = ["explorer.exe", f"/select,{str(target)}"]
+            else:
+                cmd = ["explorer.exe", str(target if target.is_dir() else target.parent)]
+            subprocess.Popen(cmd)
+            return {"status": "success", "message": "Opened in File Explorer"}
+
+        else:
+            # Linux (freedesktop / xdg-open)
+            try:
+                if req.reveal and target.is_file():
+                    subprocess.Popen([
+                        "dbus-send", "--session", "--dest=org.freedesktop.FileManager1",
+                        "--type=method_call", "/org/freedesktop/FileManager1",
+                        "org.freedesktop.FileManager1.ShowItems",
+                        f"array:string:file://{target}", "string:"
+                    ])
+                    return {"status": "success", "message": "Revealed in File Manager"}
+            except Exception:
+                pass
+
+            folder = target if target.is_dir() else target.parent
+            subprocess.Popen(["xdg-open", str(folder)])
+            return {"status": "success", "message": "Opened in File Manager"}
+
+    except Exception as e:
+        logger.error("Failed to open path in file explorer: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to open in file manager: {str(e)}")
+
+
 @app.post("/pipeline/run")
 async def run_pipeline_endpoint(req: PipelineRunRequest):
     """Run full TidyFlow pipeline and return rich structured JSON results."""
