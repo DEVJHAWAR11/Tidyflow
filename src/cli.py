@@ -166,10 +166,11 @@ def apply(
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Host address"),
     port: int = typer.Option(8000, "--port", help="Port number"),
+    reload: bool = typer.Option(True, "--reload", help="Enable auto-reload on code changes"),
 ):
     """Launch the TidyFlow FastAPI backend server."""
     console.print(f"[bold green]Launching TidyFlow API Server on http://{host}:{port}...[/bold green]")
-    uvicorn.run("src.api:app", host=host, port=port, reload=False)
+    uvicorn.run("src.api:app", host=host, port=port, reload=reload)
 
 
 @app.command(name="config-set-llm")

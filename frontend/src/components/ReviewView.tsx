@@ -8,6 +8,9 @@ import {
   FileText,
   Eye,
   X,
+  Sparkles,
+  Send,
+  Loader2,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -49,6 +52,54 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterConfidence, setFilterConfidence] = useState<"all" | "high" | "review">("all");
   const [previewFile, setPreviewFile] = useState<ClassifiedFile | null>(null);
+  const [aiCommand, setAiCommand] = useState("");
+  const [isExecutingAi, setIsExecutingAi] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+
+  const handleRunAiEdit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cmd = aiCommand.trim();
+    if (!cmd || isExecutingAi) return;
+
+    setIsExecutingAi(true);
+    setAiFeedback(null);
+
+    try {
+      const res = await fetch("http://localhost:8000/ai/review-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: cmd,
+          files: files.map((f) => ({
+            file_id: f.file_id,
+            filename: f.filename,
+            extension: f.extension,
+            category: categoryOverrides[f.file_id] || f.category,
+            reason: f.reason,
+          })),
+          categories: Object.keys(categories),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to process command");
+      }
+
+      const data = await res.json();
+      if (data.category_overrides && Object.keys(data.category_overrides).length > 0) {
+        setCategoryOverrides((prev) => ({
+          ...prev,
+          ...data.category_overrides,
+        }));
+      }
+      setAiFeedback(data.message || "Updated files successfully.");
+      setAiCommand("");
+    } catch (err: any) {
+      setAiFeedback(`Error: ${err.message}`);
+    } finally {
+      setIsExecutingAi(false);
+    }
+  };
 
   // Filtered files memo
   const filteredFiles = useMemo(() => {
@@ -156,6 +207,62 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             {files.filter((f) => f.confidence < autoThreshold).length}
           </p>
         </div>
+      </div>
+
+      {/* AI Quick Edit Command Bar */}
+      <div className="bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#0075de]/30 dark:border-[#2383e2]/40 shadow-[0_2px_8px_rgba(0,117,222,0.06)] space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+          <span className="text-[13px] font-bold text-[#000000] dark:text-[#ffffff]">
+            AI Edit Assistant
+          </span>
+          <span className="text-[11px] text-[#615d59] dark:text-[#9b9a97]">
+            Ask AI in natural language to adjust categories or rename files in bulk
+          </span>
+        </div>
+
+        <form onSubmit={handleRunAiEdit} className="flex gap-2 items-center">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={aiCommand}
+              onChange={(e) => setAiCommand(e.target.value)}
+              placeholder="e.g. 'Move all invoice PDFs to Finance/Invoices', 'Set files containing tax to Taxes/2026'..."
+              disabled={isExecutingAi}
+              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3.5 py-2 text-[12px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919]"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!aiCommand.trim() || isExecutingAi}
+            className="px-4 py-2 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] text-white text-[12px] font-semibold rounded-md shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40 active:scale-97 transition"
+          >
+            {isExecutingAi ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Applying...</span>
+              </>
+            ) : (
+              <>
+                <Send className="w-3.5 h-3.5" />
+                <span>Apply Edit</span>
+              </>
+            )}
+          </button>
+        </form>
+
+        {aiFeedback && (
+          <div className="text-[12px] text-[#166534] dark:text-[#4ade80] bg-[#dcfce7] dark:bg-[#052e16] px-3 py-1.5 rounded-md border border-[#86efac] dark:border-[#166534] flex items-center justify-between animate-fade-in">
+            <span>{aiFeedback}</span>
+            <button
+              onClick={() => setAiFeedback(null)}
+              className="text-xs hover:underline cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Toolbar Bar */}
