@@ -37,6 +37,7 @@ def run_pipeline(
     move_mode: bool = False,
     dry_run: bool = True,
     db: Optional[Any] = None,
+    strict_mode: bool = False,
 ) -> tuple[list[FileRecord], RunSummary]:
     """
     Execute the complete universal file organization pipeline.
@@ -124,6 +125,7 @@ def run_pipeline(
             config.classification,
             config.categories,
             config.output_dir,
+            strict_mode=strict_mode,
         )
         summary.llm_classified = llm_count
     else:

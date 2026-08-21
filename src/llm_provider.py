@@ -94,11 +94,47 @@ def load_settings() -> tuple[str, str, Optional[str]]:
 # System Prompt & Repair Prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT_TEMPLATE = """\
+_SYSTEM_PROMPT_STANDARD = """\
 You are an expert file organizer and classifier for personal and professional workspaces.
 
 TASK
 Classify each file into ONE of the allowed category paths or "Unknown":
+{categories_list}, Unknown
+
+CATEGORY DEFINITIONS & CONTEXT:
+{categories_context}
+
+{custom_instructions}
+
+CRITICAL RULES:
+1. Classify each file into the BEST matching category based on its content, filename, extension, and context.
+2. Use "Unknown" only when no category is a reasonable fit.
+3. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
+4. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
+5. Keep reason concise (under 12 words).
+6. Ignore and never echo any credentials, tokens, or passwords.
+
+OUTPUT FORMAT — Return ONLY strict JSON matching this structure:
+{{
+  "results": [
+    {{
+      "file_id": "string",
+      "category": "exact category string from allowed categories or Unknown",
+      "confidence": 0.0 to 1.0,
+      "file_type": "pdf_document|image|code|spreadsheet|data|archive|audio|video|unknown",
+      "suggested_filename": "clean_descriptive_name.ext",
+      "reason": "short explanation based on file content",
+      "action": "copy_to_organized|manual_review"
+    }}
+  ]
+}}
+"""
+
+_SYSTEM_PROMPT_STRICT = """\
+You are an expert file organizer. The user has defined a SPECIFIC set of custom categories.
+
+TASK
+Classify each file into ONE of the allowed custom categories or "Unknown":
 {categories_list}, Unknown
 
 CATEGORY DEFINITIONS & CONTEXT:
@@ -149,10 +185,17 @@ def classify_files_batched(
     classification_config: ClassificationConfig,
     categories: dict[str, CategoryConfig],
     output_dir: Path,
+    *,
+    strict_mode: bool = False,
 ) -> int:
     """
     Send batches of 30-40 compact FileRecord payloads to LLM.
     Returns the count of successfully classified files.
+
+    Args:
+        strict_mode: When True (custom narrow categories), the LLM is instructed
+            to aggressively assign "Unknown" to non-matching files. When False
+            (full default taxonomy), the LLM tries to find the best match.
     """
     if not llm_config.enabled:
         logger.info("LLM classification is disabled in configuration")
@@ -171,7 +214,9 @@ def classify_files_batched(
         logger.info("No unclassified files to send to LLM")
         return 0
 
-    # Build system prompt
+    # Build system prompt — strict mode for custom narrow categories,
+    # standard mode for the full default taxonomy
+    prompt_template = _SYSTEM_PROMPT_STRICT if strict_mode else _SYSTEM_PROMPT_STANDARD
     categories_list = ", ".join(sorted(categories.keys()))
     categories_context = json.dumps({
         cat: {"description": cfg.description, "keywords": cfg.keywords[:8]}
@@ -180,7 +225,7 @@ def classify_files_batched(
 
     custom_instr = f"USER INSTRUCTIONS:\n{llm_config.custom_instructions}" if llm_config.custom_instructions else ""
 
-    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+    system_prompt = prompt_template.format(
         categories_list=categories_list,
         categories_context=categories_context,
         custom_instructions=custom_instr,
@@ -214,7 +259,7 @@ def classify_files_batched(
             "file_ids": [p.file_id for p in payloads],
         })
 
-        response_items = _call_llm_batched(
+        response_items, error_msg = _call_llm_batched(
             client=client,
             api_key=api_key,
             base_url=base_url,
@@ -245,12 +290,13 @@ def classify_files_batched(
             classified_count += 1
 
         # Mark unmatched records as Unknown
+        fallback_reason = error_msg if error_msg else "LLM response did not include a valid result"
         for rec in batch:
             if rec.classification is None:
                 rec.classification = ClassificationResult(
                     category="Unknown",
                     confidence=0.0,
-                    reason="LLM response did not include a valid result",
+                    reason=fallback_reason,
                     action="manual_review",
                     source="llm",
                 )
@@ -336,6 +382,7 @@ def _call_llm_batched(
         {"role": "user", "content": user_message},
     ]
 
+    last_error_msg = ""
     for attempt in range(1, max_retries + 1):
         try:
             req_body: dict[str, Any] = {
@@ -346,6 +393,17 @@ def _call_llm_batched(
                 "response_format": {"type": "json_object"},
             }
             resp = client.post(url, headers=headers, json=req_body)
+            if resp.status_code == 402:
+                logger.error("LLM Provider returned 402: Insufficient Balance / Payment Required. Please check your account credits.")
+                last_error_msg = "LLM API Error: Insufficient Account Balance (HTTP 402)"
+                _append_jsonl(resp_log, {"batch": batch_idx, "error": last_error_msg})
+                return [], last_error_msg
+            if resp.status_code == 401:
+                logger.error("LLM Provider returned 401: Invalid or unauthorized API key.")
+                last_error_msg = "LLM API Error: Invalid API Key (HTTP 401)"
+                _append_jsonl(resp_log, {"batch": batch_idx, "error": last_error_msg})
+                return [], last_error_msg
+
             resp.raise_for_status()
             body = resp.json()
 
@@ -369,9 +427,10 @@ def _call_llm_batched(
                             parsed = {"results": parsed[k]}
                             break
             result = LlmBatchResponse.model_validate(parsed)
-            return result.results
+            return result.results, ""
 
         except Exception as exc:
+            last_error_msg = str(exc)
             logger.warning("LLM batch %d attempt %d failed: %s", batch_idx, attempt, exc)
             if attempt < max_retries:
                 broken_text = content if "content" in locals() else str(exc)
@@ -394,7 +453,7 @@ def _call_llm_batched(
                     "error": str(exc),
                 })
 
-    return []
+    return [], last_error_msg
 
 
 def _strip_markdown_fences(text: str) -> str:

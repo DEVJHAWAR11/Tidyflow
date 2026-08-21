@@ -79,6 +79,31 @@ OUTPUT FORMAT — Return ONLY strict JSON:
 }
 """
 
+_CLUSTER_UNRECOGNIZED_SYSTEM_PROMPT = """\
+You are TidyFlow AI, an intelligent workspace organization and file clustering engine.
+You are given a list of unclassified or unrecognized files.
+
+TASK:
+1. Examine the unclassified files (filename, extension, extracted text/OCR excerpt, reason).
+2. Discover common themes and group these files into clean, descriptive cluster categories (e.g. "React_Course", "Invoice_Screenshots", "Configs_and_Data", "Media_Wallpapers", "Archives").
+3. Assign each file to the most appropriate cluster category.
+4. If a file is completely solitary, assign it to a category like "Misc_Documents" or "Misc_Images".
+
+OUTPUT FORMAT — Return ONLY strict JSON:
+{
+  "message": "Friendly summary of the clusters discovered (e.g., 'Grouped 18 files into 3 new categories: React_Course, Mobile_Invoices, and Configs.').",
+  "clusters": {
+    "React_Course": ["file_id_1", "file_id_2"],
+    "Mobile_Invoices": ["file_id_3"]
+  },
+  "category_overrides": {
+    "file_id_1": "React_Course",
+    "file_id_2": "React_Course",
+    "file_id_3": "Mobile_Invoices"
+  }
+}
+"""
+
 
 # ---------------------------------------------------------------------------
 # Conversational Category Structure Planner
@@ -294,6 +319,146 @@ def apply_review_command(
     except Exception as exc:
         logger.warning("LLM review edit command failed (%s), using heuristic matching", exc)
         return _fallback_heuristic_review_command(command, files, cat_list)
+
+
+# ---------------------------------------------------------------------------
+# Unrecognized Files Auto-Clustering
+# ---------------------------------------------------------------------------
+
+def cluster_unrecognized_files(
+    files: list[dict[str, Any]],
+    existing_categories: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Use LLM to cluster unrecognized files and propose categories.
+    Returns:
+        {
+            "message": str,
+            "clusters": dict[str, list[str]],
+            "category_overrides": dict[str, str],
+        }
+    """
+    provider, api_key, custom_url = load_settings()
+
+    if not api_key or not files:
+        return _fallback_heuristic_clustering(files, existing_categories)
+
+    base_url = custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    files_payload = [
+        {
+            "file_id": f.get("file_id"),
+            "filename": f.get("filename"),
+            "extension": f.get("extension"),
+            "file_category": f.get("file_category"),
+            "extracted_text": (f.get("extracted_text") or "")[:250],
+            "reason": f.get("reason", "")[:60],
+        }
+        for f in files[:80]
+    ]
+
+    user_payload = (
+        f"EXISTING CATEGORIES: {json.dumps(existing_categories or [])}\n\n"
+        f"UNCLASSIFIED FILES ({len(files_payload)} items):\n{json.dumps(files_payload, indent=2)}"
+    )
+
+    try:
+        with httpx.Client(timeout=45.0) as client:
+            resp = client.post(
+                url,
+                headers=headers,
+                json={
+                    "model": "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": _CLUSTER_UNRECOGNIZED_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_payload},
+                    ],
+                    "temperature": 0.2,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_content = data["choices"][0]["message"]["content"]
+            cleaned = _strip_markdown_fences(raw_content)
+            parsed = json.loads(cleaned)
+
+            clusters = parsed.get("clusters", {})
+            overrides = parsed.get("category_overrides", {})
+
+            # Build overrides from clusters if overrides was empty
+            if not overrides and clusters:
+                for cat_name, f_ids in clusters.items():
+                    for fid in f_ids:
+                        overrides[str(fid)] = cat_name
+
+            # Build clusters from overrides if clusters was empty
+            if not clusters and overrides:
+                for fid, cat_name in overrides.items():
+                    clusters.setdefault(cat_name, []).append(str(fid))
+
+            msg = parsed.get(
+                "message",
+                f"Discovered {len(clusters)} cluster categories across {len(overrides)} files."
+            )
+
+            return {
+                "message": msg,
+                "clusters": clusters,
+                "category_overrides": {str(k): str(v) for k, v in overrides.items()},
+            }
+
+    except Exception as exc:
+        logger.warning("LLM auto-clustering failed (%s), using heuristic clustering", exc)
+        return _fallback_heuristic_clustering(files, existing_categories)
+
+
+def _fallback_heuristic_clustering(
+    files: list[dict[str, Any]],
+    existing_categories: list[str] | None = None,
+) -> dict[str, Any]:
+    """Group unrecognized files by extension or filename keywords when LLM is unavailable."""
+    clusters: dict[str, list[str]] = {}
+    overrides: dict[str, str] = {}
+
+    for f in files:
+        file_id = f.get("file_id")
+        fname = f.get("filename", "").lower()
+        ext = f.get("extension", "").lower()
+
+        if not file_id:
+            continue
+
+        if any(w in fname for w in ["screenshot", "screen shot", "capture"]):
+            cat = "Screenshots"
+        elif any(w in fname for w in ["course", "module", "lecture", "assignment"]):
+            cat = "Course_Materials"
+        elif any(w in fname for w in ["invoice", "receipt", "bill", "payment"]):
+            cat = "Financial_Receipts"
+        elif ext in [".py", ".js", ".ts", ".html", ".css", ".sql", ".sh"]:
+            cat = "Developer_Files"
+        elif ext in [".zip", ".tar", ".gz", ".7z", ".dmg", ".pkg"]:
+            cat = "Archives_and_Installers"
+        elif ext in [".jpg", ".jpeg", ".png", ".webp", ".heic"]:
+            cat = "Unsorted_Images"
+        elif ext in [".pdf", ".docx", ".doc", ".txt", ".md"]:
+            cat = "Unsorted_Documents"
+        else:
+            cat = "Other_Items"
+
+        clusters.setdefault(cat, []).append(file_id)
+        overrides[file_id] = cat
+
+    return {
+        "message": f"Organized {len(files)} unclassified files into {len(clusters)} categories.",
+        "clusters": clusters,
+        "category_overrides": overrides,
+    }
 
 
 # ---------------------------------------------------------------------------
