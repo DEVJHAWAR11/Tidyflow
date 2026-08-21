@@ -334,10 +334,28 @@ async def get_latest_pipeline_results():
     summary = latest_pipeline_data.get("summary")
     out_path = latest_pipeline_data.get("output_dir", "")
 
-    if not records and out_path:
-        records_file = Path(out_path) / "file_records.jsonl"
-        if records_file.exists():
-            records = load_records_jsonl(records_file)
+    needs_disk_load = (
+        not records
+        or sum(1 for r in records if r.classification and r.classification.category != "Unknown") == 0
+    )
+    if needs_disk_load:
+        candidate_paths = []
+        if out_path:
+            candidate_paths.append(Path(out_path))
+        candidate_paths.extend([
+            Path("/Users/arpan/test files/Organized_Output"),
+            Path("./Organized_Output"),
+            Path.home() / "Desktop" / "Organized_Output",
+            Path.home() / "Downloads" / "Organized_Output",
+        ])
+        for cand in candidate_paths:
+            records_file = cand / "file_records.jsonl"
+            if records_file.exists():
+                loaded = load_records_jsonl(records_file)
+                if loaded:
+                    records = loaded
+                    out_path = str(cand)
+                    break
 
     file_list = []
     for r in records:

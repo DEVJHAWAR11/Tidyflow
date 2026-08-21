@@ -3,11 +3,15 @@ import os
 from src.llm_provider import LLMProvider, load_settings, save_settings
 
 def test_settings_storage():
-    save_settings("dummy", "secret123", "http://localhost:8000")
-    provider, api_key, custom_url = load_settings()
-    assert provider == "dummy"
-    assert api_key == "secret123"
-    assert custom_url == "http://localhost:8000"
+    orig_prov, orig_key, orig_url = load_settings()
+    try:
+        save_settings("custom", "test_key_123", "http://localhost:8000")
+        provider, api_key, custom_url = load_settings()
+        assert provider == "custom"
+        assert api_key == "test_key_123"
+        assert custom_url == "http://localhost:8000"
+    finally:
+        save_settings(orig_prov, orig_key, orig_url)
     
 @pytest.mark.asyncio
 async def test_llm_provider_deepseek():

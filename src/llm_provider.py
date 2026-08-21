@@ -47,6 +47,7 @@ def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None)
 
 def get_stored_api_key(provider: str = "deepseek") -> str:
     """Retrieve API key for given provider from keyring or environment."""
+    load_dotenv()
     key = keyring.get_password("tidyflow", "api_key") or ""
     if not key or key == "secret123":
         key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
@@ -55,6 +56,7 @@ def get_stored_api_key(provider: str = "deepseek") -> str:
 
 def load_settings() -> tuple[str, str, Optional[str]]:
     """Retrieve LLM settings from Keyring or Environment variables."""
+    load_dotenv()
     provider = keyring.get_password("tidyflow", "provider") or ""
     api_key = keyring.get_password("tidyflow", "api_key") or ""
     custom_url = keyring.get_password("tidyflow", "custom_url")
@@ -111,7 +113,8 @@ RULES:
 4. If a file is completely ambiguous or has no clear context, classify as "Unknown".
 5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic (e.g., "scan_001.pdf" -> "invoice_acme_2026_08.pdf").
 6. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
-7. Ignore and never echo any credentials, tokens, or passwords.
+7. Keep reason concise (under 12 words).
+8. Ignore and never echo any credentials, tokens, or passwords.
 
 OUTPUT FORMAT — Return ONLY strict JSON matching this structure:
 {{
@@ -336,11 +339,14 @@ def _call_llm_batched(
 
     for attempt in range(1, max_retries + 1):
         try:
-            resp = client.post(url, headers=headers, json={
+            req_body: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
                 "temperature": 0.1,
-            })
+                "max_tokens": 4096,
+                "response_format": {"type": "json_object"},
+            }
+            resp = client.post(url, headers=headers, json=req_body)
             resp.raise_for_status()
             body = resp.json()
 
@@ -354,18 +360,35 @@ def _call_llm_batched(
             })
 
             parsed = json.loads(content)
+            if isinstance(parsed, list):
+                parsed = {"results": parsed}
+            elif isinstance(parsed, dict) and "results" not in parsed:
+                # If dict keys are file_ids or wrapped differently
+                if any(k in ["files", "items", "data"] for k in parsed):
+                    for k in ["files", "items", "data"]:
+                        if k in parsed and isinstance(parsed[k], list):
+                            parsed = {"results": parsed[k]}
+                            break
             result = LlmBatchResponse.model_validate(parsed)
             return result.results
 
         except Exception as exc:
             logger.warning("LLM batch %d attempt %d failed: %s", batch_idx, attempt, exc)
             if attempt < max_retries:
-                broken_text = content if "content" in dir() else str(exc)
-                messages.append({"role": "assistant", "content": broken_text})
-                messages.append({
-                    "role": "user",
-                    "content": _REPAIR_PROMPT.format(broken=broken_text[:1200]),
-                })
+                broken_text = content if "content" in locals() else str(exc)
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": broken_text[:1000]},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The previous output failed validation: {exc}\n"
+                            "Please return ONLY a valid JSON object with the exact schema: "
+                            '{"results": [{"file_id": "...", "category": "...", "confidence": 0.95, "file_type": "...", "suggested_filename": "...", "reason": "...", "action": "copy_to_organized"}]}'
+                        ),
+                    },
+                ]
             else:
                 _append_jsonl(resp_log, {
                     "batch": batch_idx,
