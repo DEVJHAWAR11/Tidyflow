@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { ClassifiedFile, RunSummary, CategoryItem } from "../types";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
+import { QuickTriageModal } from "./QuickTriageModal";
 import {
   Search,
   CheckCircle2,
@@ -11,6 +12,8 @@ import {
   Sparkles,
   Send,
   Loader2,
+  Zap,
+  FolderCheck,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -55,6 +58,89 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const [aiCommand, setAiCommand] = useState("");
   const [isExecutingAi, setIsExecutingAi] = useState(false);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const [isTriageOpen, setIsTriageOpen] = useState(false);
+  const [isClustering, setIsClustering] = useState(false);
+  const [clusterModalData, setClusterModalData] = useState<{
+    message: string;
+    clusters: Record<string, string[]>;
+    category_overrides: Record<string, string>;
+  } | null>(null);
+
+  // Unrecognized or low confidence files queue
+  const unrecognizedFiles = useMemo(() => {
+    return files.filter((f) => {
+      const activeCat = categoryOverrides[f.file_id] || f.category;
+      return activeCat === "Unknown" || f.confidence < autoThreshold;
+    });
+  }, [files, categoryOverrides, autoThreshold]);
+
+  const handleRunAiCluster = async () => {
+    if (unrecognizedFiles.length === 0 || isClustering) return;
+    setIsClustering(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/ai/cluster-unrecognized", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          files: unrecognizedFiles.map((f) => ({
+            file_id: f.file_id,
+            filename: f.filename,
+            extension: f.extension,
+            file_category: f.file_category,
+            extracted_text: f.extracted_text,
+            reason: f.reason,
+          })),
+          existing_categories: Object.keys(categories),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to auto-cluster files");
+      }
+
+      const data = await res.json();
+      setClusterModalData(data);
+    } catch (err: any) {
+      alert(`Auto-clustering error: ${err.message}`);
+    } finally {
+      setIsClustering(false);
+    }
+  };
+
+  const handleApplyClusters = () => {
+    if (!clusterModalData) return;
+    const overrides = clusterModalData.category_overrides || {};
+    setCategoryOverrides((prev) => ({
+      ...prev,
+      ...overrides,
+    }));
+
+    // Auto-select clustered files
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      Object.keys(overrides).forEach((fid) => next.add(fid));
+      return next;
+    });
+
+    setAiFeedback(
+      `✓ Applied ${Object.keys(clusterModalData.clusters || {}).length} cluster categories to ${
+        Object.keys(overrides).length
+      } files!`
+    );
+    setClusterModalData(null);
+  };
+
+  const handleAssignInTriage = (fileId: string, category: string, autoSelect = true) => {
+    setCategoryOverrides((prev) => ({ ...prev, [fileId]: category }));
+    if (autoSelect) {
+      setSelectedFileIds((prev) => {
+        const next = new Set(prev);
+        next.add(fileId);
+        return next;
+      });
+    }
+  };
 
   const handleRunAiEdit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -208,6 +294,58 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Unrecognized Files Action Banner */}
+      {unrecognizedFiles.length > 0 && (
+        <div className="bg-gradient-to-r from-[#fffbeb] via-[#fef3c7] to-[#fffbeb] dark:from-[#2e230b] dark:via-[#3d2e0b] dark:to-[#2e230b] p-4 rounded-xl border border-[#f59e0b]/40 dark:border-[#92400e] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-[#f59e0b]/20 dark:bg-[#f59e0b]/30 text-[#b45309] dark:text-[#fcd34d] shrink-0">
+              <Zap className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-[#92400e] dark:text-[#fef3c7]">
+                  {unrecognizedFiles.length} Unrecognized File{unrecognizedFiles.length > 1 ? "s" : ""} Need Review
+                </h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#f59e0b]/20 text-[#b45309] dark:text-[#fcd34d]">
+                  Action Needed
+                </span>
+              </div>
+              <p className="text-[12px] text-[#b45309] dark:text-[#fde68a]/90 mt-0.5">
+                These files didn't match your active categories. Use AI Auto-Clustering or Quick Triage to organize them in seconds.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 w-full md:w-auto shrink-0">
+            <button
+              onClick={handleRunAiCluster}
+              disabled={isClustering}
+              className="flex-1 md:flex-none px-4 py-2 bg-[#f59e0b] hover:bg-[#d97706] text-white text-[12px] font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition disabled:opacity-50"
+            >
+              {isClustering ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Clustering with AI...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>✨ Auto-Cluster with AI</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => setIsTriageOpen(true)}
+              className="flex-1 md:flex-none px-4 py-2 bg-[#ffffff] dark:bg-[#202020] hover:bg-[#f8f8f8] dark:hover:bg-[#2a2a2a] text-[#92400e] dark:text-[#fcd34d] border border-[#f59e0b]/50 dark:border-[#78350f] text-[12px] font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>⚡ Quick Triage Queue</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* AI Quick Edit Command Bar */}
       <div className="bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#0075de]/30 dark:border-[#2383e2]/40 shadow-[0_2px_8px_rgba(0,117,222,0.06)] space-y-3">
@@ -651,6 +789,107 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               >
                 Done
               </button>
+            </div>
+          </div>,
+          document.body
+        )}
+      {/* Quick Triage Modal */}
+      {isTriageOpen && (
+        <QuickTriageModal
+          files={unrecognizedFiles}
+          categories={Object.keys(categories)}
+          categoryOverrides={categoryOverrides}
+          onAssignCategory={handleAssignInTriage}
+          onClose={() => setIsTriageOpen(false)}
+        />
+      )}
+
+      {/* AI Cluster Proposal Modal */}
+      {clusterModalData &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 bg-[#000000]/70 backdrop-blur-md z-[99999] flex items-center justify-center p-4"
+            onClick={() => setClusterModalData(null)}
+          >
+            <div
+              className="bg-[#ffffff] dark:bg-[#1a1a1a] rounded-2xl border border-[#e6e6e6] dark:border-[#303030] max-w-2xl w-full p-6 shadow-2xl space-y-5 animate-scale-in text-left"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#303030] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-[#f59e0b]/10 text-[#f59e0b]">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#000000] dark:text-[#ffffff]">
+                      AI Discovered Cluster Folders
+                    </h3>
+                    <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
+                      {clusterModalData.message}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setClusterModalData(null)}
+                  className="p-1.5 rounded-lg text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] hover:bg-[#f0eee9] dark:hover:bg-[#282828] cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Cluster Groups List */}
+              <div className="max-h-80 overflow-y-auto space-y-3 pr-1">
+                {Object.entries(clusterModalData.clusters || {}).map(([catName, fileIds]) => (
+                  <div
+                    key={catName}
+                    className="p-3.5 rounded-xl bg-[#f6f5f4] dark:bg-[#222222] border border-[#e6e6e6] dark:border-[#333333] space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FolderCheck className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+                        <span className="text-sm font-bold text-[#000000] dark:text-[#ffffff]">
+                          {catName}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#e8f4fd] dark:bg-[#0c3966]/40 text-[#0075de] dark:text-[#2383e2]">
+                        {fileIds.length} file{fileIds.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {fileIds.map((fid) => {
+                        const fileObj = files.find((f) => f.file_id === fid);
+                        return (
+                          <span
+                            key={fid}
+                            className="px-2 py-1 rounded-md bg-[#ffffff] dark:bg-[#181818] border border-[#e6e6e6] dark:border-[#383838] text-[11px] text-[#615d59] dark:text-[#b0b0b0] truncate max-w-xs"
+                            title={fileObj?.filename || fid}
+                          >
+                            {fileObj?.filename || fid}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#e6e6e6] dark:border-[#303030]">
+                <button
+                  onClick={() => setClusterModalData(null)}
+                  className="px-4 py-2 rounded-lg border border-[#e6e6e6] dark:border-[#333333] text-[12px] font-medium text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f6f5f4] dark:hover:bg-[#282828] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApplyClusters}
+                  className="px-5 py-2 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] text-white text-[12px] font-bold rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-97 transition"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Apply Categories & Select All</span>
+                </button>
+              </div>
             </div>
           </div>,
           document.body

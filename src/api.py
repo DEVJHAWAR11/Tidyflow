@@ -14,7 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from .ai_assistant import apply_review_command, chat_generate_structure
+from .ai_assistant import (
+    apply_review_command,
+    chat_generate_structure,
+    cluster_unrecognized_files,
+)
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
@@ -141,6 +145,11 @@ class AiReviewChatRequest(BaseModel):
     command: str
     files: list[dict[str, Any]]
     categories: Optional[list[str]] = None
+
+
+class AiClusterRequest(BaseModel):
+    files: list[dict[str, Any]]
+    existing_categories: Optional[list[str]] = None
 
 
 class CategoryPayload(BaseModel):
@@ -298,6 +307,9 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     if req.custom_instructions:
         cfg.llm.custom_instructions = req.custom_instructions
 
+    # Determine if user passed custom narrow categories (strict LLM mode)
+    is_custom_categories = bool(req.custom_categories)
+
     if req.custom_categories:
         cats = {}
         for k, v in req.custom_categories.items():
@@ -320,6 +332,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
         auto_apply=req.auto_apply,
         dry_run=req.dry_run,
         db=db,
+        strict_mode=is_custom_categories,
     )
 
     # Transform records into JSON serializable format for UI
@@ -567,6 +580,17 @@ async def ai_review_chat_endpoint(req: AiReviewChatRequest):
         command=req.command,
         files=req.files,
         categories=req.categories,
+    )
+    return result
+
+
+@app.post("/ai/cluster-unrecognized")
+async def ai_cluster_endpoint(req: AiClusterRequest):
+    """Analyze unrecognized files and discover cluster categories with AI."""
+    result = await asyncio.to_thread(
+        cluster_unrecognized_files,
+        files=req.files,
+        existing_categories=req.existing_categories,
     )
     return result
 

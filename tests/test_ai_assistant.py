@@ -55,3 +55,33 @@ def test_chat_generate_structure_execution():
     assert "message" in res
     assert "categories" in res
     assert len(res["categories"]) > 0
+
+
+def test_fallback_heuristic_clustering():
+    from src.ai_assistant import _fallback_heuristic_clustering
+    files = [
+        {"file_id": "f1", "filename": "Screenshot_123.jpg", "extension": ".jpg"},
+        {"file_id": "f2", "filename": "react_module_01.mp4", "extension": ".mp4"},
+        {"file_id": "f3", "filename": "data_dump.sql", "extension": ".sql"},
+    ]
+    res = _fallback_heuristic_clustering(files)
+    assert "clusters" in res
+    assert "category_overrides" in res
+    assert "f1" in res["category_overrides"]
+    assert "f2" in res["category_overrides"]
+    assert "f3" in res["category_overrides"]
+    assert res["category_overrides"]["f1"] == "Screenshots"
+    assert res["category_overrides"]["f2"] == "Course_Materials"
+    assert res["category_overrides"]["f3"] == "Developer_Files"
+
+
+def test_cluster_unrecognized_files_fallback():
+    from src.ai_assistant import cluster_unrecognized_files
+    files = [
+        {"file_id": "f1", "filename": "invoice_998.pdf", "extension": ".pdf"},
+        {"file_id": "f2", "filename": "backup.zip", "extension": ".zip"},
+    ]
+    res = cluster_unrecognized_files(files, existing_categories=["KIIT"])
+    assert "clusters" in res
+    assert "category_overrides" in res
+    assert len(res["category_overrides"]) == 2
