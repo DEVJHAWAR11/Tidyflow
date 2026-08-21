@@ -14,6 +14,7 @@ import { CategoriesView } from "./components/CategoriesView";
 import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
+import { DEFAULT_STANDARD_CATEGORIES } from "./utils/presetCategories";
 import "./App.css";
 
 const API_BASE = "http://localhost:8000";
@@ -117,10 +118,17 @@ export default function App() {
       const res = await fetch(`${API_BASE}/categories`);
       if (res.ok) {
         const data = await res.json();
-        setCategories(data.categories || {});
+        if (data.categories && Object.keys(data.categories).length > 0) {
+          setCategories(data.categories);
+        } else {
+          setCategories(DEFAULT_STANDARD_CATEGORIES);
+        }
+      } else {
+        setCategories(DEFAULT_STANDARD_CATEGORIES);
       }
     } catch (e) {
       console.error("Failed to load categories:", e);
+      setCategories(DEFAULT_STANDARD_CATEGORIES);
     }
   };
 
@@ -260,6 +268,19 @@ export default function App() {
       });
     } catch (e) {
       console.error("Failed to delete category:", e);
+    }
+  };
+
+  const handleLoadPreset = async (presetCats: Record<string, CategoryItem>) => {
+    setCategories(presetCats);
+    try {
+      await fetch(`${API_BASE}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: presetCats }),
+      });
+    } catch (e) {
+      console.error("Failed to save preset categories:", e);
     }
   };
 
@@ -497,6 +518,7 @@ export default function App() {
             onToggleCategory={handleToggleCategory}
             onAddCategory={handleAddCategory}
             onDeleteCategory={handleDeleteCategory}
+            onLoadPreset={handleLoadPreset}
           />
         )}
 

@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { CategoryItem, ChatMessage } from "../types";
 import { getStickerStyle } from "../utils/stickerTheme";
 import {
+  PRESET_PACKS,
+  DEFAULT_STANDARD_CATEGORIES,
+} from "../utils/presetCategories";
+import {
   Sparkles,
   Send,
   Loader2,
@@ -13,6 +17,7 @@ import {
   ArrowRight,
   Bot,
   User,
+  Layers,
 } from "lucide-react";
 
 interface AiStructureAssistantProps {
@@ -25,33 +30,6 @@ interface AiStructureAssistantProps {
   isRunning: boolean;
   backendStatus: string;
 }
-
-const PRESET_PROMPTS = [
-  {
-    label: "💼 Freelancer & Client Work",
-    prompt: "I am a freelancer. Group client contracts and NDAs into Client_Work/Contracts, invoices and receipts into Client_Work/Finances, project deliverables and assets into Client_Work/Deliverables, and general notes into Work/Notes.",
-  },
-  {
-    label: "🎓 Student & Academic",
-    prompt: "Organize my academic files: lecture slides into Academic/Lecture_Notes, assignments and essays into Academic/Assignments, research papers and PDFs into Academic/Research, and study guides into Academic/Study_Guides.",
-  },
-  {
-    label: "📊 Tax & Finance Archiver",
-    prompt: "Sort all financial files: invoices into Finance/Invoices, receipts into Finance/Receipts, tax documents (W2, 1099, IRS forms) into Finance/Tax_2026, and bank statements into Finance/Bank_Statements.",
-  },
-  {
-    label: "💻 Developer Workspace",
-    prompt: "Group my programming files: code and scripts into Development/Source_Code, JSON/YAML/SQL datasets into Development/Data, technical documentation into Development/Docs, and zip archives into Cold_Storage/Archives.",
-  },
-  {
-    label: "🎨 Creative Media & Photos",
-    prompt: "Organize media files: photos and RAW images into Media/Photos, graphic design assets and SVGs into Media/Design_Assets, screen recordings into Media/Recordings, and audio files into Media/Audio.",
-  },
-  {
-    label: "🧹 Declutter Downloads",
-    prompt: "Clean up my Downloads folder: route screenshots to Temp/Screenshots, PDF documents to Documents/PDFs, software installers (.dmg, .pkg, .zip) to Installers, and keep everything else in Misc.",
-  },
-];
 
 export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
   inputFolder,
@@ -70,7 +48,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
       id: "welcome",
       role: "assistant",
       content:
-        "Tell me how you'd like your workspace organized! You can specify exact folders, file types, or use one of the quick templates below. I'll propose a custom structure for you to verify before organizing.",
+        "Tell me how you'd like your workspace organized! You can pick one of the predefined category templates below or describe your custom structure in plain English. I'll propose a structure for you to verify before organizing.",
     },
   ]);
   const [hasProposedStructure, setHasProposedStructure] = useState(false);
@@ -87,7 +65,33 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
     scrollToBottom();
   }, [messages, isGenerating]);
 
-  const handleSendPrompt = async (promptToSend?: string) => {
+  // Load preset categories immediately (optimistic UI) and send prompt to AI
+  const handleSelectPreset = async (_presetId: string, promptText: string, presetCats: Record<string, CategoryItem>) => {
+    // 1. Immediately apply categories to the workspace state
+    setActiveCategories(presetCats);
+    setHasProposedStructure(true);
+
+    // 2. Add assistant message & run chat
+    await handleSendPrompt(promptText, presetCats);
+  };
+
+  const handleLoadStandardDefaults = () => {
+    setActiveCategories(DEFAULT_STANDARD_CATEGORIES);
+    setHasProposedStructure(true);
+    const msgId = Date.now().toString();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: msgId,
+        role: "assistant",
+        content: `Loaded the full standard 18-folder predefined taxonomy covering Finance, Legal, Work, Personal, Development, Media, and Archives. You can tweak any folder or click "Approve & Start Organizing" below.`,
+        categories: DEFAULT_STANDARD_CATEGORIES,
+        isReady: true,
+      },
+    ]);
+  };
+
+  const handleSendPrompt = async (promptToSend?: string, overrideCats?: Record<string, CategoryItem>) => {
     const text = (promptToSend || inputText).trim();
     if (!text || isGenerating) return;
 
@@ -101,11 +105,12 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
     setIsGenerating(true);
 
     try {
+      const currentCats = overrideCats || activeCategories;
       const payload = {
         message: text,
         history: newHistory.map((m) => ({ role: m.role, content: m.content })),
         input_dir: inputFolder || undefined,
-        current_categories: Object.keys(activeCategories).length > 0 ? activeCategories : undefined,
+        current_categories: Object.keys(currentCats).length > 0 ? currentCats : undefined,
       };
 
       const res = await fetch("http://localhost:8000/ai/chat-structure", {
@@ -115,13 +120,13 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
       });
 
       if (!res.ok) {
-        throw new Error("Failed to generate structure");
+        throw new Error("Failed to generate structure from AI");
       }
 
       const data = await res.json();
       const generatedCats: Record<string, CategoryItem> = {};
 
-      if (data.categories) {
+      if (data.categories && Object.keys(data.categories).length > 0) {
         Object.entries(data.categories).forEach(([name, c]: [string, any]) => {
           generatedCats[name] = {
             name: c.name || name,
@@ -131,9 +136,9 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
             active: c.active !== false,
           };
         });
+        setActiveCategories(generatedCats);
       }
 
-      setActiveCategories(generatedCats);
       if (data.custom_instructions) {
         setCustomInstructions(data.custom_instructions);
       }
@@ -146,18 +151,20 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           id: aiMsgId,
           role: "assistant",
           content: data.message || "I've structured your workspace. Please verify below.",
-          categories: generatedCats,
+          categories: Object.keys(generatedCats).length > 0 ? generatedCats : overrideCats,
           customInstructions: data.custom_instructions,
           isReady: data.is_ready,
         },
       ]);
     } catch (err: any) {
+      // Fallback: If AI call failed but we already had preset categories, keep them!
+      setHasProposedStructure(true);
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: `Sorry, there was an issue creating the structure: ${err.message}. Please try again or adjust your prompt.`,
+          content: `Applied template structure below (${Object.keys(overrideCats || activeCategories).length} folders). Note: AI connection notice: ${err.message}`,
         },
       ]);
     } finally {
@@ -218,7 +225,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
               </span>
             </div>
             <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mt-0.5">
-              Command custom folder layouts, verify proposed rules, and refine anytime via chat.
+              Command custom folder layouts, select predefined category packs, and refine anytime via chat.
             </p>
           </div>
         </div>
@@ -227,30 +234,74 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-[#166534] dark:text-[#4ade80] font-medium flex items-center gap-1.5 bg-[#dcfce7] dark:bg-[#052e16] px-2.5 py-1 rounded-full border border-[#86efac] dark:border-[#166534]">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{activeCount} Custom Folders Ready</span>
+              <span>{activeCount} Folders Configured</span>
             </span>
           </div>
         )}
       </div>
 
-      {/* Preset Inspiration Pills */}
-      <div className="p-4 bg-[#fbfbfa] dark:bg-[#1c1c1c] border-b border-[#e6e6e6] dark:border-[#2e2e2e]">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#a39e98] mb-2">
-          <span>Inspiration Templates (Click to apply)</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {PRESET_PROMPTS.map((preset) => (
+      {/* Preset Inspiration Pills Bar */}
+      <div className="p-4 bg-[#fbfbfa] dark:bg-[#1c1c1c] border-b border-[#e6e6e6] dark:border-[#2e2e2e] space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#a39e98]">
+            Predefined Category Packs & Templates (Click to apply)
+          </span>
+          {!hasProposedStructure && (
             <button
-              key={preset.label}
-              onClick={() => handleSendPrompt(preset.prompt)}
+              onClick={handleLoadStandardDefaults}
+              className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline cursor-pointer flex items-center gap-1"
+            >
+              <Layers className="w-3 h-3" />
+              <span>Load Full Standard Taxonomy (18 Folders)</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {/* Default 18 Categories Action */}
+          <button
+            onClick={handleLoadStandardDefaults}
+            disabled={isGenerating || isRunning}
+            className="text-[12px] px-3 py-1.5 rounded-full border border-[#0075de]/30 dark:border-[#2383e2]/40 bg-[#e8f4fd] dark:bg-[#0c3966]/30 text-[#0075de] dark:text-[#8bc5f8] hover:bg-[#0075de] hover:text-white dark:hover:bg-[#2383e2] dark:hover:text-white transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 active:scale-97 disabled:opacity-50 font-semibold"
+          >
+            <span>🌟</span>
+            <span>All 18 Standard Categories</span>
+          </button>
+
+          {PRESET_PACKS.filter((p) => p.id !== "standard").map((preset) => (
+            <button
+              key={preset.id}
+              onClick={() => handleSelectPreset(preset.id, preset.prompt, preset.categories)}
               disabled={isGenerating || isRunning}
               className="text-[12px] px-3 py-1.5 rounded-full border border-[#e6e6e6] dark:border-[#383838] bg-[#ffffff] dark:bg-[#252525] hover:border-[#0075de] dark:hover:border-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/30 text-[#31302e] dark:text-[#d4d4d4] transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 active:scale-97 disabled:opacity-50"
             >
-              <span>{preset.label}</span>
+              <span>{preset.emoji}</span>
+              <span>{preset.name}</span>
+              <span className="text-[10px] opacity-70 font-mono">
+                ({Object.keys(preset.categories).length})
+              </span>
             </button>
           ))}
         </div>
       </div>
+
+      {/* Helpful Predefined Categories Callout if not yet expanded */}
+      {!hasProposedStructure && Object.keys(activeCategories).length > 0 && (
+        <div className="px-5 py-3 bg-[#e8f4fd]/50 dark:bg-[#0c3966]/20 border-b border-[#e6e6e6] dark:border-[#2e2e2e] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-[12px] text-[#31302e] dark:text-[#d4d4d4]">
+            <Layers className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+            <span>
+              <strong>{Object.keys(activeCategories).length} predefined categories</strong> are configured in your workspace.
+            </span>
+          </div>
+          <button
+            onClick={() => setHasProposedStructure(true)}
+            className="text-[12px] font-semibold text-[#0075de] dark:text-[#8bc5f8] bg-[#ffffff] dark:bg-[#252525] hover:bg-[#0075de] hover:text-white px-3 py-1 rounded-md border border-[#0075de]/30 transition cursor-pointer shadow-2xs"
+          >
+            View & Customize Categories
+          </button>
+        </div>
+      )}
 
       {/* Chat Thread Container */}
       <div className="p-5 max-h-[380px] overflow-y-auto space-y-4 bg-[#ffffff] dark:bg-[#1f1f1f]">
@@ -352,7 +403,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           )}
 
           {/* Interactive Category Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
             {Object.entries(activeCategories).map(([name, cat]) => {
               const style = getStickerStyle(name);
               return (
