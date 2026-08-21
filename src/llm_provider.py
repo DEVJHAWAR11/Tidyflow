@@ -36,7 +36,7 @@ def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None)
     """Save LLM credentials to OS Keyring."""
     keyring.set_password("tidyflow", "provider", provider)
     keyring.set_password("tidyflow", "api_key", api_key)
-    if custom_url:
+    if custom_url and provider.lower() == "custom":
         keyring.set_password("tidyflow", "custom_url", custom_url)
     else:
         try:
@@ -45,29 +45,47 @@ def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None)
             pass
 
 
+def get_stored_api_key(provider: str = "deepseek") -> str:
+    """Retrieve API key for given provider from keyring or environment."""
+    key = keyring.get_password("tidyflow", "api_key") or ""
+    if not key or key == "secret123":
+        key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
+    return key
+
+
 def load_settings() -> tuple[str, str, Optional[str]]:
     """Retrieve LLM settings from Keyring or Environment variables."""
     provider = keyring.get_password("tidyflow", "provider") or ""
     api_key = keyring.get_password("tidyflow", "api_key") or ""
     custom_url = keyring.get_password("tidyflow", "custom_url")
 
-    if not api_key:
-        # Check environment variables
-        for env_var, prov in [
-            ("TIDYFLOW_API_KEY", provider or "deepseek"),
-            ("DEEPSEEK_API_KEY", "deepseek"),
-            ("OPENAI_API_KEY", "openai"),
-            ("GROQ_API_KEY", "groq"),
-            ("OPENROUTER_API_KEY", "openrouter"),
-            ("GEMINI_API_KEY", "gemini"),
-        ]:
-            val = os.getenv(env_var)
-            if val:
-                api_key = val
-                provider = prov
-                break
+    # If keyring contains dummy test values, ignore them
+    if provider in ("dummy", "test", "") or api_key in ("secret123", ""):
+        provider = ""
+        api_key = ""
+        custom_url = None
 
-    return provider or "deepseek", api_key, custom_url
+    # Check environment variables
+    for env_var, prov in [
+        ("DEEPSEEK_API_KEY", "deepseek"),
+        ("TIDYFLOW_API_KEY", provider or "deepseek"),
+        ("OPENAI_API_KEY", "openai"),
+        ("GROQ_API_KEY", "groq"),
+        ("OPENROUTER_API_KEY", "openrouter"),
+        ("GEMINI_API_KEY", "gemini"),
+    ]:
+        val = os.getenv(env_var)
+        if val and not api_key:
+            api_key = val
+            if not provider:
+                provider = prov
+
+    resolved_provider = provider or "deepseek"
+    # custom_url is only valid if provider is custom
+    if resolved_provider.lower() != "custom":
+        custom_url = None
+
+    return resolved_provider, api_key, custom_url
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +200,7 @@ def classify_files_batched(
     base_url = custom_url or _resolve_provider_url(provider, llm_config.api_base_url)
     model = llm_config.model
 
-    client = httpx.Client(timeout=llm_config.timeout_seconds)
+    client = httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0, read=180.0))
 
     for batch_idx, batch in enumerate(tqdm(batches, desc="LLM batches", unit="batch")):
         payloads = [_make_payload(r) for r in batch]
@@ -263,7 +281,7 @@ def _resolve_provider_url(provider: str, default_url: str) -> str:
     """Map provider name to API base URL."""
     prov = provider.lower()
     urls = {
-        "deepseek": "https://api.deepseek.com",
+        "deepseek": "https://api.deepseek.com/v1",
         "openai": "https://api.openai.com/v1",
         "groq": "https://api.groq.com/openai/v1",
         "openrouter": "https://openrouter.ai/api/v1",
