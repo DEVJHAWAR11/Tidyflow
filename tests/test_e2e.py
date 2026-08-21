@@ -1,35 +1,43 @@
-import pytest
 import tempfile
-import asyncio
 from pathlib import Path
-from src.database import DatabaseManager
-from src.main_loop import Processor
-from src.mcp_server import set_allowed_directories
+import fitz
+from src.config import TidyConfig
+from src.main_loop import run_pipeline
 
-@pytest.fixture(autouse=True)
-def setup_teardown():
-    # Make sure we use a test db for tests
-    db = DatabaseManager(db_path=":memory:")
-    yield
-    if hasattr(db, 'conn') and db.conn:
-        db.conn.close()
 
-@pytest.mark.asyncio
-async def test_e2e_flow():
+def test_end_to_end_pipeline_inventory():
     with tempfile.TemporaryDirectory() as temp_dir:
-        db_path = str(Path(temp_dir) / "test.db")
-        
-        processor = Processor(max_concurrent=2)
-        processor.db = DatabaseManager(db_path=db_path)
-        await processor.start()
-        
-        test_file = Path(temp_dir) / "test.pdf"
-        test_file.write_text("dummy pdf")
-        set_allowed_directories([temp_dir])
-        
-        await processor.add_file(str(test_file))
-        await asyncio.wait_for(processor.queue.join(), timeout=5.0)
-        
-        assert processor.processed_count == 1
-        
-        await processor.stop()
+        input_dir = Path(temp_dir) / "input"
+        output_dir = Path(temp_dir) / "output"
+        input_dir.mkdir()
+
+        # 1. Create a PDF invoice
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text(fitz.Point(50, 50), "ACME INVOICE #1024. Due Date: 2026-09-01. Total Amount: $1,250.00.")
+        doc.save(str(input_dir / "invoice_1024.pdf"))
+        doc.close()
+
+        # 2. Create a source code file
+        code_file = input_dir / "script.py"
+        code_file.write_text("import sys\n\ndef main():\n    print('test')\n")
+
+        # 3. Run pipeline
+        cfg = TidyConfig(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            staging_dir=output_dir / "Staging",
+        )
+
+        records, summary = run_pipeline(
+            cfg,
+            use_llm=False,
+            auto_apply=True,
+            dry_run=False,
+        )
+
+        assert summary.total_scanned == 2
+        assert summary.text_extracted >= 1
+        assert (output_dir / "file_inventory.csv").exists()
+        assert (output_dir / "review_report.html").exists()
+        assert (output_dir / "file_records.jsonl").exists()

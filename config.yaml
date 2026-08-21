@@ -1,0 +1,273 @@
+# ─── TidyFlow Configuration ──────────────────────────────────
+# Universal Personal & Work File Organizer
+
+input_dir: "./sample_data"
+output_dir: "./organized_output"
+staging_dir: "./organized_output/Staging"
+
+max_file_size_mb: 200.0
+thumbnail_max_dim: 200
+max_files: null
+
+# ── OCR Engine ───────────────────────────────────────────────
+ocr:
+  enabled: true
+  languages: ["en"]
+  max_image_dimension: 768
+  use_textline_orientation: false
+  text_detection_model_name: "PP-OCRv5_mobile_det"
+  text_recognition_model_name: "en_PP-OCRv4_mobile_rec"
+  skip_images_smaller_than: 120  # px — skip tiny icons
+
+# ── Batched LLM Engine ──────────────────────────────────────
+llm:
+  enabled: true
+  provider: "deepseek"                          # deepseek | openai | groq | openrouter | gemini | custom
+  api_base_url: "https://api.deepseek.com"       # OpenAI-compatible endpoint
+  model: "deepseek-chat"
+  batch_size: 40
+  max_retries: 3
+  timeout_seconds: 90
+  custom_instructions: "Prioritize sorting financial documents by type (Invoices, Receipts, Tax) and work documents by project or topic."
+
+# ── Classification & Heuristics ──────────────────────────────
+classification:
+  auto_copy_threshold: 0.85
+  heuristic_bypass_enabled: true                # Fast-path for strong keyword/rule matches
+  heuristic_high_threshold: 88.0
+  heuristic_low_second: 50.0
+  default_category: "Unknown"
+
+# ── Duplicates Detection ─────────────────────────────────────
+duplicates:
+  hamming_distance_threshold: 8                 # Perceptual hash distance threshold for images
+
+# ── Categories & Rules Taxonomy ──────────────────────────────
+categories:
+  Finance/Invoices:
+    description: "Invoices, bills, and purchase requests from vendors or services"
+    keywords:
+      - invoice
+      - bill
+      - billing
+      - due date
+      - amount due
+      - invoice number
+      - total amount
+      - payment terms
+      - vendor
+      - remit payment
+    extensions: [".pdf", ".png", ".jpg", ".docx"]
+
+  Finance/Receipts:
+    description: "Receipts, proof of purchase, order confirmations, and payment acknowledgments"
+    keywords:
+      - receipt
+      - order confirmation
+      - payment received
+      - transaction id
+      - subtotal
+      - merchant
+      - store
+      - checkout
+      - paid
+      - cash
+      - visa
+      - mastercard
+    extensions: [".pdf", ".png", ".jpg", ".jpeg", ".webp"]
+
+  Finance/Tax:
+    description: "Tax returns, W2, 1099, tax deductions, and government revenue filings"
+    keywords:
+      - tax
+      - w-2
+      - 1099
+      - irs
+      - tax return
+      - deduction
+      - revenue service
+      - form 1040
+      - fiscal year
+    extensions: [".pdf", ".xlsx", ".csv"]
+
+  Finance/Statements:
+    description: "Bank statements, credit card statements, and investment summaries"
+    keywords:
+      - statement
+      - account summary
+      - ending balance
+      - beginning balance
+      - deposits
+      - withdrawals
+      - checking account
+      - savings account
+    extensions: [".pdf", ".csv", ".xlsx"]
+
+  Legal/Contracts:
+    description: "Legal agreements, NDA, master service agreements, and terms of service"
+    keywords:
+      - agreement
+      - contract
+      - non-disclosure
+      - nda
+      - terms and conditions
+      - hereby agree
+      - signature
+      - governing law
+      - confidentiality
+    extensions: [".pdf", ".docx", ".doc"]
+
+  Legal/IDs_and_Certificates:
+    description: "Passports, identity cards, driving licenses, certificates, and diplomas"
+    keywords:
+      - passport
+      - identity card
+      - driving license
+      - drivers license
+      - certificate of
+      - identification
+      - date of birth
+      - nationality
+      - valid until
+    extensions: [".pdf", ".png", ".jpg", ".jpeg"]
+
+  Work/Documents:
+    description: "Work reports, research documents, meeting notes, memos, and proposals"
+    keywords:
+      - report
+      - meeting notes
+      - executive summary
+      - project plan
+      - roadmap
+      - proposal
+      - memorandum
+      - agenda
+    extensions: [".pdf", ".docx", ".doc", ".md", ".txt"]
+
+  Work/Resumes_and_CVs:
+    description: "Curriculum Vitae, resumes, portfolio documents, and job applications"
+    keywords:
+      - resume
+      - curriculum vitae
+      - cv
+      - work experience
+      - education
+      - skills
+      - employment history
+      - professional summary
+    extensions: [".pdf", ".docx", ".doc"]
+
+  Work/Spreadsheets:
+    description: "Financial models, data sheets, tables, and tracking sheets"
+    keywords:
+      - spreadsheet
+      - workbook
+      - budget
+      - forecast
+      - tracking
+      - inventory
+      - calculation
+      - metrics
+    extensions: [".xlsx", ".xls", ".csv", ".tsv"]
+
+  Work/Presentations:
+    description: "Slide decks, pitch decks, and presentations"
+    keywords:
+      - presentation
+      - slide deck
+      - keynote
+      - pitch deck
+      - overview
+      - agenda
+    extensions: [".pptx", ".ppt", ".pdf", ".key"]
+
+  Personal/Photos:
+    description: "Personal photography, camera shots, family pictures, and wallpapers"
+    keywords:
+      - photo
+      - picture
+      - camera
+      - portrait
+      - landscape
+      - dsc_
+      - img_
+    extensions: [".jpg", ".jpeg", ".png", ".heic", ".raw", ".tiff"]
+
+  Personal/Notes:
+    description: "Personal notes, journals, quick thoughts, and drafts"
+    keywords:
+      - journal
+      - diary
+      - personal note
+      - thoughts
+      - ideas
+      - todo
+      - checklist
+    extensions: [".txt", ".md"]
+
+  Development/Code:
+    description: "Source code files and scripts"
+    keywords:
+      - import
+      - function
+      - class
+      - def
+      - const
+      - let
+      - var
+      - package
+      - namespace
+      - return
+    extensions: [".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".rs", ".go", ".cpp", ".c", ".h", ".java", ".kt", ".dart", ".sh", ".rb", ".php"]
+
+  Development/Data:
+    description: "Data files, database exports, and configuration files"
+    keywords:
+      - json
+      - yaml
+      - schema
+      - database
+      - dump
+      - export
+      - dataset
+    extensions: [".json", ".yaml", ".yml", ".xml", ".sql", ".db", ".sqlite"]
+
+  Media/Audio:
+    description: "Audio recordings, podcasts, voice memos, and music tracks"
+    keywords:
+      - audio
+      - podcast
+      - recording
+      - soundtrack
+      - music
+    extensions: [".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"]
+
+  Media/Video:
+    description: "Video recordings, screen captures, movies, and clips"
+    keywords:
+      - video
+      - movie
+      - screen recording
+      - screencast
+      - clip
+    extensions: [".mp4", ".mov", ".mkv", ".avi", ".webm"]
+
+  Archives:
+    description: "Compressed archive files"
+    keywords:
+      - archive
+      - zip
+      - backup
+      - tar
+      - compressed
+    extensions: [".zip", ".tar", ".gz", ".tar.gz", ".bz2", ".7z", ".rar"]
+
+  Large_Files:
+    description: "Very large files exceeding 50 MB"
+    keywords: []
+    extensions: []
+
+  Unknown:
+    description: "Unclassified or miscellaneous files requiring review"
+    keywords: []
+    extensions: []

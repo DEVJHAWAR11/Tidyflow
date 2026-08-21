@@ -1,36 +1,44 @@
+"""Secure filesystem operations tool with dynamic path allow-lists."""
+
+from __future__ import annotations
+
 import os
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Union
+
 from fastmcp import FastMCP
 
 app = FastMCP("tidyflow-mcp-fs")
 
-# list of folders we're actually allowed to touch
+# Dynamically configured allow-list of directories
 ALLOWED_DIRECTORIES: List[Path] = []
 
-def set_allowed_directories(dirs: List[str]):
+
+def set_allowed_directories(dirs: List[Union[str, Path]]) -> None:
+    """Set the list of allowed root directories for filesystem operations."""
     global ALLOWED_DIRECTORIES
     ALLOWED_DIRECTORIES = [Path(d).resolve() for d in dirs]
 
-def is_path_allowed(path_str: str) -> bool:
-    # this just makes sure the path is actually in our allowed safe list
-    # this just makes sure we have safe folders configured. if not, it blocks everything
+
+def is_path_allowed(path_str: Union[str, Path]) -> bool:
+    """Check if a path falls within the configured allowed directories."""
     if not ALLOWED_DIRECTORIES:
         return False
-        
-    path = Path(path_str).resolve()
-    for allowed in ALLOWED_DIRECTORIES:
-        try:
-            if allowed in path.parents or allowed == path:
+
+    try:
+        path = Path(path_str).resolve()
+        for allowed in ALLOWED_DIRECTORIES:
+            if allowed == path or allowed in path.parents:
                 return True
-        except Exception:
-            pass
+    except Exception:
+        return False
     return False
+
 
 @app.tool()
 def list_files(path: str) -> str:
-    # just grabs all the files in the folder you ask for
+    """List directory contents within allowed paths."""
     if not is_path_allowed(path):
         return f"Error: Path {path} is not in the allow-list"
     try:
@@ -39,10 +47,10 @@ def list_files(path: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+
 @app.tool()
 def copy_file(source: str, destination: str) -> str:
-    # literally just copies a file, but we double check it's a safe path first
-    # mcp server checks if the path is allowed before touching anything, this is the safety part
+    """Copy a file from source to destination within allowed directories."""
     if not is_path_allowed(source) or not is_path_allowed(destination):
         return "Error: One or both paths are not in the allow-list"
     try:
@@ -52,16 +60,32 @@ def copy_file(source: str, destination: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+
 @app.tool()
 def delete_file(path: str) -> str:
-    # trashes the file, used after we safely copy it somewhere else
+    """Delete a file within allowed directories."""
     if not is_path_allowed(path):
         return f"Error: Path {path} is not in the allow-list"
     try:
-        os.remove(path)
+        if os.path.exists(path):
+            os.remove(path)
         return "Success"
     except Exception as e:
         return f"Error: {e}"
+
+
+@app.tool()
+def move_file(source: str, destination: str) -> str:
+    """Move a file within allowed directories."""
+    if not is_path_allowed(source) or not is_path_allowed(destination):
+        return "Error: One or both paths are not in the allow-list"
+    try:
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(source, destination)
+        return "Success"
+    except Exception as e:
+        return f"Error: {e}"
+
 
 if __name__ == "__main__":
     app.run()

@@ -1,33 +1,33 @@
-import os
-import pytest
-import tempfile
 from pathlib import Path
-from src.scanner import profile_directory, scan_files, generate_fingerprint
+from src.config import TidyConfig
+from src.scanner import scan_directory, scan_files, determine_file_category
 
-def test_profile_and_scan():
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create some dummy files
-        file1_path = Path(temp_dir) / "file1.txt"
-        file1_path.write_text("Hello")
-        
-        file2_path = Path(temp_dir) / "sub" / "file2.txt"
-        file2_path.parent.mkdir()
-        file2_path.write_text("World!")
-        
-        # Profile
-        profile = profile_directory(temp_dir)
-        assert profile["total_files"] == 2
-        assert profile["total_size"] == 5 + 6 # "Hello" is 5, "World!" is 6
-        assert profile["mode"] == "light_mode"
-        
-        # Scan
-        scanned_files = list(scan_files(temp_dir))
-        assert len(scanned_files) == 2
-        
-        # Check that paths and fingerprints are correctly generated
-        paths = [f["path"] for f in scanned_files]
-        assert str(file1_path) in paths
-        assert str(file2_path) in paths
-        
-        for f in scanned_files:
-            assert f["fingerprint"] == generate_fingerprint(f["path"], f["size"], f["mtime"])
+
+def test_scan_directory(tmp_path):
+    f1 = tmp_path / "invoice.pdf"
+    f1.write_text("dummy invoice")
+
+    f2 = tmp_path / "sub" / "code.py"
+    f2.parent.mkdir(parents=True, exist_ok=True)
+    f2.write_text("print('hello')")
+
+    cfg = TidyConfig(input_dir=tmp_path)
+    records = scan_directory(cfg)
+
+    assert len(records) == 2
+    filenames = {r.filename for r in records}
+    assert "invoice.pdf" in filenames
+    assert "code.py" in filenames
+
+    for r in records:
+        assert r.sha256 != ""
+        assert r.file_id != ""
+
+
+def test_determine_file_category():
+    assert determine_file_category(".pdf") == "document"
+    assert determine_file_category(".png") == "image"
+    assert determine_file_category(".py") == "code"
+    assert determine_file_category(".json") == "data"
+    assert determine_file_category(".zip") == "archive"
+    assert determine_file_category(".mp3") == "media"

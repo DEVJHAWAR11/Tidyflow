@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TidyFlow — Universal Review & Classification Report</title>
+<style>
+/* ── Reset & Variables ──────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#232736;--border:#2e3348;
+  --text:#e2e4ed;--text2:#9498ad;--accent:#6c5ce7;--accent2:#a29bfe;
+  --green:#00cec9;--red:#ff7675;--yellow:#ffeaa7;--orange:#fab1a0;
+  --radius:10px;--shadow:0 4px 24px rgba(0,0,0,.35);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;
+}
+html{font-size:14px}
+body{background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.5}
+a{color:var(--accent2);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ── Header ─────────────────────────────────────────────── */
+.header{
+  background:linear-gradient(135deg,#1a1d27 0%,#2d1f5e 100%);
+  padding:1.5rem 2rem;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;
+}
+.header h1{font-size:1.6rem;font-weight:700;letter-spacing:-.02em}
+.header .meta{font-size:.85rem;color:var(--text2)}
+.header .stats{display:flex;gap:1.2rem}
+.stat{text-align:center}
+.stat .num{font-size:1.3rem;font-weight:700;color:var(--accent2)}
+.stat .lbl{font-size:.7rem;text-transform:uppercase;color:var(--text2);letter-spacing:.04em}
+
+/* ── Toolbar ────────────────────────────────────────────── */
+.toolbar{
+  background:var(--surface);padding:.8rem 2rem;
+  border-bottom:1px solid var(--border);
+  display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;
+  position:sticky;top:0;z-index:100;backdrop-filter:blur(12px);
+}
+.toolbar input[type=text]{
+  flex:1 1 220px;padding:.45rem .7rem;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--surface2);color:var(--text);
+  font-size:.85rem;outline:none;transition:border .2s;
+}
+.toolbar input:focus{border-color:var(--accent)}
+.toolbar select{
+  padding:.45rem .5rem;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--surface2);color:var(--text);
+  font-size:.82rem;cursor:pointer;
+}
+.btn{
+  padding:.45rem 1rem;border-radius:var(--radius);border:none;cursor:pointer;
+  font-size:.82rem;font-weight:600;transition:all .15s;
+}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent2);transform:translateY(-1px)}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:hover{border-color:var(--accent);color:var(--text)}
+.btn-success{background:var(--green);color:#0f1117}
+.btn-success:hover{filter:brightness(1.1)}
+
+/* ── Table ──────────────────────────────────────────────── */
+.table-wrap{overflow-x:auto;padding:0 1rem 2rem}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+thead{position:sticky;top:52px;z-index:50}
+th{
+  background:var(--surface2);color:var(--text2);font-weight:600;
+  padding:.55rem .5rem;text-align:left;cursor:pointer;
+  border-bottom:2px solid var(--border);white-space:nowrap;user-select:none;
+}
+th:hover{color:var(--accent2)}
+td{padding:.5rem;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:var(--surface)}
+.thumb{width:52px;height:52px;object-fit:contain;border-radius:6px;background:var(--surface2)}
+.no-thumb{width:52px;height:52px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:.7rem;font-weight:bold}
+
+/* ── Badges ─────────────────────────────────────────────── */
+.badge{
+  display:inline-block;padding:.15rem .45rem;border-radius:20px;
+  font-size:.72rem;font-weight:600;white-space:nowrap;
+}
+.badge-cat{background:rgba(108,92,231,.2);color:var(--accent2)}
+.badge-conf{font-weight:700;font-size:.78rem}
+.conf-high{color:var(--green)}
+.conf-med{color:var(--yellow)}
+.conf-low{color:var(--red)}
+.badge-dup{background:rgba(250,177,160,.15);color:var(--orange);font-size:.68rem}
+.badge-review{background:rgba(255,118,117,.15);color:var(--red)}
+.badge-copy{background:rgba(0,206,201,.15);color:var(--green)}
+
+/* ── Text Excerpt ────────────────────────────────────────── */
+.text-excerpt{
+  max-width:240px;max-height:3.2em;overflow:hidden;font-size:.75rem;
+  color:var(--text2);cursor:pointer;position:relative;
+}
+.text-excerpt.expanded{max-height:none;color:var(--text)}
+
+/* ── Override Select ────────────────────────────────────── */
+.override-select{
+  background:var(--surface2);color:var(--text);border:1px solid var(--border);
+  border-radius:6px;padding:.25rem .4rem;font-size:.78rem;max-width:180px;
+}
+.override-select:focus{border-color:var(--accent);outline:none}
+
+.chk-select{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>TidyFlow Review Report</h1>
+    <div class="meta">Generated: {{ generated_at }} • {{ total_count }} total files discovered</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="num" id="stat-total">{{ total_count }}</div><div class="lbl">Files</div></div>
+    <div class="stat"><div class="num" id="stat-approved">0</div><div class="lbl">Approved</div></div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" id="filter-search" placeholder="Search filename, text excerpt, reason..." oninput="filterTable()">
+  <select id="filter-category" onchange="filterTable()">
+    <option value="">All Categories</option>
+    {% for cat in categories %}
+    <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <select id="filter-action" onchange="filterTable()">
+    <option value="">All Statuses</option>
+    <option value="copy_to_organized">Ready to Organize</option>
+    <option value="manual_review">Needs Review</option>
+    <option value="dup">Duplicates</option>
+  </select>
+  <button class="btn btn-outline" onclick="selectAll(true)">Select All</button>
+  <button class="btn btn-outline" onclick="selectHighConfidence()">Select Confident (&ge;85%)</button>
+  <button class="btn btn-outline" onclick="selectAll(false)">Deselect All</button>
+  <button class="btn btn-success" onclick="exportDecisionsCsv()">Export Decisions CSV</button>
+</div>
+
+<div class="table-wrap">
+  <table id="files-table">
+    <thead>
+      <tr>
+        <th style="width:30px"><input type="checkbox" id="chk-header" class="chk-select" onchange="toggleHeaderChk(this)"></th>
+        <th>Preview</th>
+        <th>Filename & Details</th>
+        <th>Size</th>
+        <th>Category</th>
+        <th>Confidence</th>
+        <th>Override Category</th>
+        <th>Reason / Notes</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in files %}
+      <tr class="file-row"
+          data-file-id="{{ f.file_id }}"
+          data-category="{{ f.predicted_category }}"
+          data-confidence="{{ f.confidence }}"
+          data-action="{{ f.action }}"
+          data-dup="{{ f.duplicate_group_id or f.near_duplicate_group_id }}">
+        <td>
+          <input type="checkbox" class="chk-select row-chk" data-file-id="{{ f.file_id }}"
+                 {% if f.confidence >= 0.85 and f.predicted_category != 'Unknown' %}checked{% endif %}
+                 onchange="updateApprovedCount()">
+        </td>
+        <td>
+          {% if f.thumbnail_b64 %}
+            <img class="thumb" src="data:image/jpeg;base64,{{ f.thumbnail_b64 }}" alt="thumb" loading="lazy">
+          {% else %}
+            <div class="no-thumb">{{ f.extension | upper | replace('.', '') }}</div>
+          {% endif %}
+        </td>
+        <td>
+          <div style="font-weight:600">{{ f.filename }}</div>
+          {% if f.text_excerpt %}
+            <div class="text-excerpt" title="Click to expand" onclick="this.classList.toggle('expanded')">
+              {{ f.text_excerpt }}
+            </div>
+          {% endif %}
+          {% if f.duplicate_group_id %}
+            <span class="badge badge-dup">Exact Dup</span>
+          {% elif f.near_duplicate_group_id %}
+            <span class="badge badge-dup">Near Dup</span>
+          {% endif %}
+        </td>
+        <td>{{ f.file_size_display }}</td>
+        <td><span class="badge badge-cat">{{ f.predicted_category }}</span></td>
+        <td>
+          <span class="badge-conf {% if f.confidence >= 0.85 %}conf-high{% elif f.confidence >= 0.6 %}conf-med{% else %}conf-low{% endif %}">
+            {{ (f.confidence * 100) | round(1) }}%
+          </span>
+        </td>
+        <td>
+          <select class="override-select" data-file-id="{{ f.file_id }}">
+            <option value="">(Keep {{ f.predicted_category }})</option>
+            {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td style="color:var(--text2);font-size:.76rem;max-width:200px">{{ f.reason }}</td>
+        <td>
+          {% if f.action == 'copy_to_organized' %}
+            <span class="badge badge-copy">Organize</span>
+          {% else %}
+            <span class="badge badge-review">Review</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function updateApprovedCount() {
+  const chks = document.querySelectorAll('.row-chk');
+  let count = 0;
+  chks.forEach(c => { if (c.checked) count++; });
+  document.getElementById('stat-approved').innerText = count;
+}
+
+function filterTable() {
+  const query = document.getElementById('filter-search').value.toLowerCase();
+  const catFilter = document.getElementById('filter-category').value;
+  const actFilter = document.getElementById('filter-action').value;
+  const rows = document.querySelectorAll('.file-row');
+
+  rows.forEach(r => {
+    const text = r.innerText.toLowerCase();
+    const cat = r.dataset.category;
+    const act = r.dataset.action;
+    const dup = r.dataset.dup;
+
+    let match = true;
+    if (query && !text.includes(query)) match = false;
+    if (catFilter && cat !== catFilter) match = false;
+    if (actFilter) {
+      if (actFilter === 'dup' && !dup) match = false;
+      else if (actFilter !== 'dup' && act !== actFilter) match = false;
+    }
+    r.style.display = match ? '' : 'none';
+  });
+  updateApprovedCount();
+}
+
+function toggleHeaderChk(header) {
+  const visible = Array.from(document.querySelectorAll('.file-row'))
+    .filter(r => r.style.display !== 'none')
+    .map(r => r.querySelector('.row-chk'));
+  visible.forEach(c => { c.checked = header.checked; });
+  updateApprovedCount();
+}
+
+function selectAll(val) {
+  document.querySelectorAll('.row-chk').forEach(c => { c.checked = val; });
+  updateApprovedCount();
+}
+
+function selectHighConfidence() {
+  document.querySelectorAll('.file-row').forEach(r => {
+    const conf = parseFloat(r.dataset.confidence || '0');
+    const cat = r.dataset.category;
+    const chk = r.querySelector('.row-chk');
+    chk.checked = (conf >= 0.85 && cat !== 'Unknown');
+  });
+  updateApprovedCount();
+}
+
+function exportDecisionsCsv() {
+  const rows = document.querySelectorAll('.file-row');
+  let csv = 'file_id,approved,override_category,override_filename,original_category,original_confidence\n';
+
+  rows.forEach(r => {
+    const fid = r.dataset.fileId;
+    const chk = r.querySelector('.row-chk');
+    const sel = r.querySelector('.override-select');
+    const origCat = r.dataset.category;
+    const origConf = r.dataset.confidence;
+    const override = sel ? sel.value : '';
+
+    csv += `"${fid}","${chk.checked}","${override}","","${origCat}","${origConf}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'review_decisions.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.addEventListener('DOMContentLoaded', updateApprovedCount);
+</script>
+</body>
+</html>
