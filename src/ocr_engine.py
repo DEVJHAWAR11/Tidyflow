@@ -52,6 +52,15 @@ def is_macos_ocr_available() -> bool:
     return False
 
 
+def is_rapidocr_available() -> bool:
+    """Check if RapidOCR ONNX engine can be imported."""
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def is_paddleocr_available() -> bool:
     """Check if PaddleOCR can be imported and initialized."""
     global _ocr_available
@@ -59,14 +68,39 @@ def is_paddleocr_available() -> bool:
         try:
             import paddleocr  # noqa: F401
             _ocr_available = True
-        except ImportError:
+        except (ImportError, Exception):
             _ocr_available = False
     return _ocr_available
 
 
+def is_pytesseract_available() -> bool:
+    """Check if pytesseract is available and configured."""
+    try:
+        import pytesseract
+        if sys.platform == "win32":
+            common_paths = [
+                Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+                Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Tesseract-OCR" / "tesseract.exe",
+            ]
+            for p in common_paths:
+                if p.exists():
+                    pytesseract.pytesseract.tesseract_cmd = str(p)
+                    break
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
 def is_ocr_engine_available() -> bool:
-    """Return True if either macOS native OCR or PaddleOCR is available."""
-    return is_macos_ocr_available() or is_paddleocr_available()
+    """Return True if macOS native OCR, RapidOCR, PaddleOCR, or PyTesseract is available."""
+    return (
+        is_macos_ocr_available()
+        or is_rapidocr_available()
+        or is_paddleocr_available()
+        or is_pytesseract_available()
+    )
 
 
 def _run_macos_vision_ocr(file_path: Path) -> tuple[str, float]:
@@ -90,30 +124,46 @@ def _run_macos_vision_ocr(file_path: Path) -> tuple[str, float]:
 
 
 def _get_engine(ocr_config: OcrConfig) -> Any:
-    """Lazily initialise PaddleOCR engine."""
+    """Lazily initialise OCR engine (RapidOCR ONNX, PaddleOCR, or PyTesseract)."""
     global _ocr_engine
-    if not is_paddleocr_available():
-        return None
+    if _ocr_engine is not None:
+        return _ocr_engine
 
-    if _ocr_engine is None:
-        from paddleocr import PaddleOCR
+    # 1. Try RapidOCR (high performance, pure ONNX, robust on Windows/Linux/macOS)
+    if is_rapidocr_available():
         try:
+            from rapidocr_onnxruntime import RapidOCR
+            _ocr_engine = RapidOCR()
+            logger.info("Initialized RapidOCR (ONNX) engine")
+            return _ocr_engine
+        except Exception as exc:
+            logger.warning("Could not initialize RapidOCR: %s", exc)
+
+    # 2. Fallback to PaddleOCR
+    if is_paddleocr_available():
+        try:
+            from paddleocr import PaddleOCR
             _ocr_engine = PaddleOCR(
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=ocr_config.use_textline_orientation,
-                text_detection_model_name=ocr_config.text_detection_model_name,
-                text_recognition_model_name=ocr_config.text_recognition_model_name,
+                use_textline_orientation=False,
                 lang=ocr_config.languages[0] if ocr_config.languages else "en",
             )
-        except Exception:
-            try:
-                _ocr_engine = PaddleOCR(
-                    lang=ocr_config.languages[0] if ocr_config.languages else "en",
-                )
-            except Exception as exc:
-                logger.warning("Could not initialize PaddleOCR engine: %s", exc)
-                _ocr_engine = None
+            logger.info("Initialized PaddleOCR engine")
+            return _ocr_engine
+        except Exception as exc:
+            logger.warning("Could not initialize PaddleOCR engine: %s", exc)
+
+    # 3. Fallback to PyTesseract
+    if is_pytesseract_available():
+        try:
+            import pytesseract
+            _ocr_engine = pytesseract
+            logger.info("Initialized PyTesseract engine")
+            return _ocr_engine
+        except Exception as exc:
+            logger.warning("Could not initialize PyTesseract: %s", exc)
+
     return _ocr_engine
 
 
@@ -292,38 +342,68 @@ def _ocr_single(engine: Any, rec: FileRecord, ocr_config: OcrConfig) -> None:
     finally:
         img.close()
 
-    if callable(getattr(engine, "predict", None)):
-        ocr_result = engine.predict(arr)
-    else:
-        ocr_result = engine.ocr(arr)
-
     lines: list[str] = []
     confidences: list[float] = []
 
-    if ocr_result:
-        for item in ocr_result:
-            if not item:
-                continue
+    # Check for PyTesseract
+    if getattr(engine, "__name__", "") == "pytesseract" or hasattr(engine, "image_to_data"):
+        try:
+            data = engine.image_to_data(arr, output_type=engine.Output.DICT)
+            for text, conf in zip(data.get("text", []), data.get("conf", [])):
+                if text and str(text).strip() and int(conf) > 0:
+                    lines.append(str(text).strip())
+                    confidences.append(float(conf) / 100.0)
+        except Exception as exc:
+            logger.debug("PyTesseract OCR failed: %s", exc)
+    else:
+        ocr_result = None
+        try:
+            if callable(getattr(engine, "predict", None)):
+                ocr_result = engine.predict(arr)
+            elif callable(engine):
+                res = engine(arr)
+                # RapidOCR returns (result, elapse)
+                if isinstance(res, tuple) and len(res) >= 1:
+                    ocr_result = res[0]
+                else:
+                    ocr_result = res
+            elif hasattr(engine, "ocr"):
+                ocr_result = engine.ocr(arr)
+        except Exception as exc:
+            logger.warning("OCR inference error for %s: %s", rec.filename, exc)
+            ocr_result = None
 
-            if isinstance(item, dict):
-                texts = item.get("rec_texts", []) or []
-                scores = item.get("rec_scores", []) or []
-                for t, s in zip(texts, scores):
-                    if t and str(t).strip():
-                        lines.append(str(t).strip())
-                        try:
-                            confidences.append(float(s))
-                        except (ValueError, TypeError):
-                            pass
+        if ocr_result:
+            for item in ocr_result:
+                if not item:
+                    continue
 
-            elif isinstance(item, (list, tuple)):
-                for page_item in item:
-                    if isinstance(page_item, (list, tuple)) and len(page_item) >= 2:
-                        text_conf = page_item[1] if isinstance(page_item[1], (list, tuple)) else page_item[-1]
-                        if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
-                            text, conf = str(text_conf[0]), float(text_conf[1])
-                            lines.append(text)
-                            confidences.append(conf)
+                if isinstance(item, dict):
+                    texts = item.get("rec_texts", []) or []
+                    scores = item.get("rec_scores", []) or []
+                    for t, s in zip(texts, scores):
+                        if t and str(t).strip():
+                            lines.append(str(t).strip())
+                            try:
+                                confidences.append(float(s))
+                            except (ValueError, TypeError):
+                                pass
+
+                elif isinstance(item, (list, tuple)):
+                    # RapidOCR format: [bbox, text, score]
+                    if len(item) == 3 and isinstance(item[1], str) and isinstance(item[2], (int, float)):
+                        if item[1].strip():
+                            lines.append(item[1].strip())
+                            confidences.append(float(item[2]))
+                    else:
+                        for page_item in item:
+                            if isinstance(page_item, (list, tuple)) and len(page_item) >= 2:
+                                text_conf = page_item[1] if isinstance(page_item[1], (list, tuple)) else page_item[-1]
+                                if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
+                                    text, conf = str(text_conf[0]), float(text_conf[1])
+                                    if text.strip():
+                                        lines.append(text.strip())
+                                        confidences.append(conf)
 
     raw_text = " ".join(lines)
     rec.extracted_text_raw = raw_text
