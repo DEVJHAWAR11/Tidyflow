@@ -15,11 +15,41 @@ from .config import OcrConfig
 from .models import FileRecord
 from .utils import normalize_ocr_text
 
+import os
+import shutil
+import subprocess
+import sys
+
 logger = logging.getLogger(__name__)
 
-# Lazy-initialised PaddleOCR engine
+# Lazy-initialised OCR engines
 _ocr_engine: Any = None
 _ocr_available: bool | None = None
+_MACOS_OCR_BIN = Path(__file__).resolve().parent.parent / "bin" / "macos_ocr"
+
+
+def is_macos_ocr_available() -> bool:
+    """Check if Apple Vision OCR binary is available or can be compiled."""
+    if sys.platform != "darwin":
+        return False
+    if _MACOS_OCR_BIN.exists() and os.access(_MACOS_OCR_BIN, os.X_OK):
+        return True
+    swiftc = shutil.which("swiftc")
+    if swiftc:
+        swift_src = Path(__file__).resolve().parent / "native" / "macos_ocr.swift"
+        if swift_src.exists():
+            try:
+                _MACOS_OCR_BIN.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    [swiftc, "-O", str(swift_src), "-o", str(_MACOS_OCR_BIN)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                return _MACOS_OCR_BIN.exists()
+            except Exception as e:
+                logger.warning("Failed to compile native macos_ocr: %s", e)
+    return False
 
 
 def is_paddleocr_available() -> bool:
@@ -31,8 +61,32 @@ def is_paddleocr_available() -> bool:
             _ocr_available = True
         except ImportError:
             _ocr_available = False
-            logger.info("PaddleOCR package not installed; OCR will run in fallback mode")
     return _ocr_available
+
+
+def is_ocr_engine_available() -> bool:
+    """Return True if either macOS native OCR or PaddleOCR is available."""
+    return is_macos_ocr_available() or is_paddleocr_available()
+
+
+def _run_macos_vision_ocr(file_path: Path) -> tuple[str, float]:
+    """Run native Apple Vision OCR on macOS."""
+    if not is_macos_ocr_available():
+        return "", 0.0
+    try:
+        proc = subprocess.run(
+            [str(_MACOS_OCR_BIN), str(file_path)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+            text = "\n".join(lines)
+            return text, 0.95 if text else 0.0
+    except Exception as exc:
+        logger.debug("macOS Vision OCR failed for %s: %s", file_path, exc)
+    return "", 0.0
 
 
 def _get_engine(ocr_config: OcrConfig) -> Any:
@@ -169,18 +223,25 @@ def run_ocr(
             cached += 1
             continue
 
-        if engine is None:
-            # Engine not available (no paddleocr installed); keep record as is
-            continue
-
+        # Execute OCR via native macOS Vision or PaddleOCR
         try:
-            _ocr_single(engine, rec, ocr_config)
-            cache.put(rec.sha256, {
-                "raw": rec.extracted_text_raw or "",
-                "normalized": rec.extracted_text_normalized or "",
-                "confidence": rec.ocr_confidence,
-            })
-            processed += 1
+            if is_macos_ocr_available():
+                raw_text, conf = _run_macos_vision_ocr(rec.abs_path)
+                if raw_text:
+                    rec.extracted_text_raw = raw_text
+                    rec.extracted_text_normalized = normalize_ocr_text(raw_text)
+                    rec.ocr_confidence = conf
+                    rec.extraction_source = "ocr"
+            elif engine is not None:
+                _ocr_single(engine, rec, ocr_config)
+
+            if rec.extracted_text_raw:
+                cache.put(rec.sha256, {
+                    "raw": rec.extracted_text_raw or "",
+                    "normalized": rec.extracted_text_normalized or "",
+                    "confidence": rec.ocr_confidence or 0.9,
+                })
+                processed += 1
         except Exception as exc:
             msg = f"OCR error for {rec.filename}: {exc}"
             logger.warning(msg)
