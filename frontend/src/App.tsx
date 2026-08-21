@@ -89,6 +89,7 @@ export default function App() {
 
   // Settings state
   const [llmProvider, setLlmProvider] = useState("deepseek");
+  const [selectedModel, setSelectedModel] = useState("deepseek-v4-flash");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [autoThreshold, setAutoThreshold] = useState(0.85);
   const [maskedKey, setMaskedKey] = useState("");
@@ -129,6 +130,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setLlmProvider(data.provider || "deepseek");
+        setSelectedModel(data.model || "deepseek-chat");
         setMaskedKey(data.masked_key || "");
         setAutoThreshold(data.auto_copy_threshold || 0.85);
       }
@@ -405,6 +407,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: llmProvider,
+          model: selectedModel,
           api_key: apiKeyInput.trim() || undefined,
           auto_copy_threshold: autoThreshold,
         }),
@@ -534,6 +537,8 @@ export default function App() {
           <SettingsView
             llmProvider={llmProvider}
             setLlmProvider={setLlmProvider}
+            selectedModel={selectedModel}
+            setSelectedModel={setSelectedModel}
             apiKeyInput={apiKeyInput}
             setApiKeyInput={setApiKeyInput}
             maskedKey={maskedKey}

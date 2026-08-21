@@ -12,6 +12,7 @@ from typing import Any, Optional
 import httpx
 
 from .llm_provider import (
+    _resolve_provider_model,
     _resolve_provider_url,
     _strip_markdown_fences,
     load_settings,
@@ -167,7 +168,7 @@ def chat_generate_structure(
                 url,
                 headers=headers,
                 json={
-                    "model": "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+                    "model": _resolve_provider_model(provider),
                     "messages": messages,
                     "temperature": 0.2,
                     "response_format": {"type": "json_object"},
@@ -283,7 +284,7 @@ def apply_review_command(
                 url,
                 headers=headers,
                 json={
-                    "model": "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+                    "model": _resolve_provider_model(provider),
                     "messages": [
                         {"role": "system", "content": _REVIEW_COMMAND_SYSTEM_PROMPT},
                         {"role": "user", "content": user_payload},
@@ -373,7 +374,7 @@ def cluster_unrecognized_files(
                 url,
                 headers=headers,
                 json={
-                    "model": "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+                    "model": _resolve_provider_model(provider),
                     "messages": [
                         {"role": "system", "content": _CLUSTER_UNRECOGNIZED_SYSTEM_PROMPT},
                         {"role": "user", "content": user_payload},

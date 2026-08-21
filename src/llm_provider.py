@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -243,9 +244,9 @@ def classify_files_batched(
     resp_log = output_dir / "llm_responses.jsonl"
     classified_count = 0
 
-    # Configure endpoint URL
+    # Configure endpoint URL and model
     base_url = custom_url or _resolve_provider_url(provider, llm_config.api_base_url)
-    model = llm_config.model
+    model = _resolve_provider_model(provider, llm_config.model)
 
     client = httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0, read=180.0))
 
@@ -333,8 +334,30 @@ def _resolve_provider_url(provider: str, default_url: str) -> str:
         "openai": "https://api.openai.com/v1",
         "groq": "https://api.groq.com/openai/v1",
         "openrouter": "https://openrouter.ai/api/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     }
     return urls.get(prov, default_url)
+
+
+def _resolve_provider_model(provider: str, configured_model: Optional[str] = None) -> str:
+    """Resolve the appropriate default model for the chosen provider."""
+    prov = provider.lower()
+    default_models = {
+        "deepseek": "deepseek-v4-flash",
+        "groq": "openai/gpt-oss-120b",
+        "gemini": "gemini-3.7-flash",
+        "openai": "gpt-4o-mini",
+        "openrouter": "anthropic/claude-3.7-sonnet",
+    }
+    if configured_model and configured_model.strip():
+        # If legacy deepseek-chat was saved, upgrade to deepseek-v4-flash
+        if configured_model == "deepseek-chat" and prov == "deepseek":
+            return "deepseek-v4-flash"
+        # If legacy llama-3.3 was saved for groq, upgrade to gpt-oss-120b
+        if "llama-3.3" in configured_model and prov == "groq":
+            return "openai/gpt-oss-120b"
+        return configured_model
+    return default_models.get(prov, configured_model or "deepseek-v4-flash")
 
 
 def _resolve_category(cat_candidate: str, categories: dict[str, CategoryConfig]) -> str:
@@ -393,6 +416,32 @@ def _call_llm_batched(
                 "response_format": {"type": "json_object"},
             }
             resp = client.post(url, headers=headers, json=req_body)
+            if resp.status_code == 429:
+                # Rate limit hit — inspect Retry-After or do exponential backoff
+                retry_after_str = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset") or ""
+                try:
+                    wait_time = float(retry_after_str) if retry_after_str else min(2 ** attempt * 2.5, 30.0)
+                except ValueError:
+                    wait_time = min(2 ** attempt * 2.5, 30.0)
+
+                try:
+                    err_json = resp.json()
+                    err_msg = err_json.get("error", {}).get("message", "Rate limit exceeded (HTTP 429)")
+                except Exception:
+                    err_msg = "Rate limit exceeded (HTTP 429)"
+
+                logger.warning(
+                    "LLM Rate limit reached on %s (attempt %d/%d). Pausing for %.1fs: %s",
+                    model, attempt, max_retries, wait_time, err_msg
+                )
+                last_error_msg = f"Rate Limit (429): {err_msg}"
+                if attempt < max_retries:
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    _append_jsonl(resp_log, {"batch": batch_idx, "error": last_error_msg})
+                    return [], last_error_msg
+
             if resp.status_code == 402:
                 logger.error("LLM Provider returned 402: Insufficient Balance / Payment Required. Please check your account credits.")
                 last_error_msg = "LLM API Error: Insufficient Account Balance (HTTP 402)"
