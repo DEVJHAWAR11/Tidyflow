@@ -1,4 +1,5 @@
 import React from "react";
+import logoImg from "../assets/logo.png";
 import { TabType, BackendStatus } from "../types";
 import { 
   FolderKanban, 
@@ -49,8 +50,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4">
         {/* Left: App Title */}
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#f6f5f4] dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333333] flex items-center justify-center text-lg shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-            📁
+          <div className="w-8 h-8 rounded-lg bg-[#f6f5f4] dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333333] flex items-center justify-center p-1 shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden group">
+            <img
+              src={logoImg}
+              alt="TidyFlow Logo"
+              className="w-full h-full object-contain dark:invert transition-transform duration-200 group-hover:scale-110"
+            />
           </div>
           <div>
             <div className="flex items-center gap-2">
