@@ -52,29 +52,50 @@ def score_keywords_all(
 
 
 def _score_single_text(text: str, categories: dict[str, CategoryConfig]) -> dict[str, float]:
-    """Score text against category keyword lists."""
+    """Score text against category keyword lists with exact word boundary and multi-word checking."""
     scores: dict[str, float] = {}
+    text_lower = text.lower()
+
     for cat_name, cat_cfg in categories.items():
         if not cat_cfg.keywords:
             scores[cat_name] = 0.0
             continue
 
-        best_score = max(
-            fuzz.partial_ratio(kw.lower(), text) for kw in cat_cfg.keywords
-        )
-        scores[cat_name] = round(best_score, 2)
+        cat_scores = []
+        for kw in cat_cfg.keywords:
+            kw_clean = kw.lower().strip()
+            if not kw_clean:
+                continue
+
+            # Exact phrase match for multi-word keywords
+            if " " in kw_clean:
+                if kw_clean in text_lower:
+                    cat_scores.append(100.0)
+                else:
+                    cat_scores.append(fuzz.partial_ratio(kw_clean, text_lower))
+            else:
+                # Word-boundary check for single words to avoid substring false positives
+                if re.search(rf"\b{re.escape(kw_clean)}\b", text_lower):
+                    cat_scores.append(100.0)
+                elif len(kw_clean) >= 6:
+                    cat_scores.append(fuzz.partial_ratio(kw_clean, text_lower))
+                else:
+                    cat_scores.append(0.0)
+
+        scores[cat_name] = round(max(cat_scores), 2) if cat_scores else 0.0
     return scores
 
 
 def identify_heuristic_candidates(
     records: list[FileRecord],
     *,
-    high_threshold: float = 88.0,
-    low_second: float = 50.0,
+    high_threshold: float = 95.0,
+    low_second: float = 40.0,
 ) -> list[FileRecord]:
     """
     Identify files where the top keyword score is high (>= high_threshold) and the
     runner-up score is low (< low_second) — safe for fast-path heuristic bypass.
+    Only bypasses when there is strong multiple-category differentiation or exact 100% keyword match.
     """
     candidates: list[FileRecord] = []
     for rec in records:
@@ -83,7 +104,8 @@ def identify_heuristic_candidates(
 
         sorted_scores = sorted(rec.keyword_scores.values(), reverse=True)
         if len(sorted_scores) < 2:
-            if sorted_scores and sorted_scores[0] >= high_threshold:
+            # Single category: only bypass if exact 100% score
+            if sorted_scores and sorted_scores[0] >= 100.0:
                 candidates.append(rec)
             continue
 
@@ -144,8 +166,8 @@ class RuleEngine:
         """
         Evaluate full record against user rules, size limits, and heuristics.
         """
-        # Large Files
-        if rec.file_size_bytes > 50 * 1024 * 1024:
+        # Large Files (only if configured or no custom categories filter)
+        if rec.file_size_bytes > 50 * 1024 * 1024 and (not self.categories or "Large_Files" in self.categories):
             return ClassificationResult(
                 category="Large_Files",
                 confidence=1.0,
@@ -158,6 +180,8 @@ class RuleEngine:
         # User Rules
         for rule in self.user_rules:
             cat = rule.get("category", "Unknown")
+            if self.categories and cat not in self.categories:
+                continue
             if "extensions" in rule and rec.extension.lower() in [e.lower() for e in rule["extensions"]]:
                 return ClassificationResult(
                     category=cat,
@@ -186,10 +210,10 @@ class RuleEngine:
                     source="user_rule",
                 )
 
-        # Fallback Extension Heuristics for non-document types (code, archives, media)
+        # Fallback Extension Heuristics (only for active configured categories)
         if rec.file_category in {"code", "archive", "media"}:
             for category, exts in DEFAULT_EXTENSION_HEURISTICS.items():
-                if rec.extension.lower() in exts:
+                if (not self.categories or category in self.categories) and rec.extension.lower() in exts:
                     return ClassificationResult(
                         category=category,
                         confidence=0.90,

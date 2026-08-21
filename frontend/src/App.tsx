@@ -137,7 +137,11 @@ export default function App() {
           // Pre-select high confidence files
           const initialSelected = new Set<string>();
           data.files.forEach((f: ClassifiedFile) => {
-            if (f.confidence >= autoThreshold && f.category !== "Unknown") {
+            if (
+              f.confidence >= autoThreshold &&
+              f.category !== "Unknown" &&
+              f.action === "copy_to_organized"
+            ) {
               initialSelected.add(f.file_id);
             }
           });
@@ -274,12 +278,20 @@ export default function App() {
 
       setFiles(data.files || []);
       setSummary(data.summary || null);
+      setCategoryOverrides({});
       if (data.output_dir) setOutputFolder(data.output_dir);
 
-      // Auto-select high confidence files
+      // Auto-select high confidence files matching active categories
       const preselected = new Set<string>();
       (data.files || []).forEach((f: ClassifiedFile) => {
-        if (f.confidence >= autoThreshold && f.category !== "Unknown") {
+        const isCustomMatch =
+          Object.keys(activeCats).length === 0 || activeCats[f.category] !== undefined;
+        if (
+          f.confidence >= autoThreshold &&
+          f.category !== "Unknown" &&
+          f.action === "copy_to_organized" &&
+          isCustomMatch
+        ) {
           preselected.add(f.file_id);
         }
       });
