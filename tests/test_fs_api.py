@@ -61,10 +61,16 @@ def test_open_path_nonexistent(client):
     assert res.status_code == 404
 
 
+from unittest.mock import patch
+
+
 def test_open_path_existing(client, tmp_path):
     """Verify 200 on existing directory."""
     test_file = tmp_path / "sample.txt"
     test_file.write_text("hello world")
-    res = client.post("/fs/open-path", json={"path": str(test_file), "reveal": False})
-    assert res.status_code == 200
-    assert res.json()["status"] == "success"
+    with patch("subprocess.Popen") as mock_popen:
+        res = client.post("/fs/open-path", json={"path": str(test_file), "reveal": False})
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+        assert mock_popen.called
+
