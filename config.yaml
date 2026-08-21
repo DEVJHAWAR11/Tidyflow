@@ -23,11 +23,11 @@ ocr:
 llm:
   enabled: true
   provider: "deepseek"                          # deepseek | openai | groq | openrouter | gemini | custom
-  api_base_url: "https://api.deepseek.com"       # OpenAI-compatible endpoint
+  api_base_url: "https://api.deepseek.com/v1"   # OpenAI-compatible endpoint
   model: "deepseek-chat"
-  batch_size: 40
+  batch_size: 15
   max_retries: 3
-  timeout_seconds: 90
+  timeout_seconds: 120
   custom_instructions: "Prioritize sorting financial documents by type (Invoices, Receipts, Tax) and work documents by project or topic."
 
 # ── Classification & Heuristics ──────────────────────────────
