@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { ClassifiedFile, RunSummary, CategoryItem } from "../types";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import {
@@ -446,89 +447,107 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       </div>
 
       {/* Document Text Preview Modal */}
-      {previewFile && (
-        <div className="fixed inset-0 bg-[#000000]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-2xl w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 animate-fade-in max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#333333] pb-3">
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-5 h-5 text-[#0075de] dark:text-[#2383e2]" />
-                <div>
-                  <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff] font-mono">
-                    {previewFile.filename}
-                  </h3>
-                  <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
-                    {formatBytes(previewFile.file_size_bytes)} · Predicted Category:{" "}
-                    <strong>{categoryOverrides[previewFile.file_id] || previewFile.category}</strong>
-                  </p>
+      {previewFile &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-[99999] flex items-center justify-center p-4"
+            onClick={() => setPreviewFile(null)}
+          >
+            <div
+              className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-2xl w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.25)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-4 animate-fade-in max-h-[85vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#333333] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <FileText className="w-5 h-5 text-[#0075de] dark:text-[#2383e2]" />
+                  <div>
+                    <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff] font-mono">
+                      {previewFile.filename}
+                    </h3>
+                    <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
+                      {formatBytes(previewFile.file_size_bytes)} · Predicted Category:{" "}
+                      <strong>{categoryOverrides[previewFile.file_id] || previewFile.category}</strong>
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <button
-                onClick={() => setPreviewFile(null)}
-                className="p-1 rounded-md text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-              <div>
-                <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
-                  Classification Summary
-                </h4>
-                <p className="text-[13px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
-                  {previewFile.reason || "Matched by keyword and file extension rules."}
-                </p>
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="p-1 rounded-md text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {previewFile.extracted_text && (
+              <div className="space-y-3 overflow-y-auto flex-1 pr-1">
                 <div>
                   <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
-                    Extracted Text & OCR Content
+                    Classification Summary
                   </h4>
-                  <pre className="text-[12px] font-mono text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap max-h-60 overflow-y-auto">
-                    {previewFile.extracted_text}
-                  </pre>
+                  <p className="text-[13px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
+                    {previewFile.reason || "Matched by keyword and file extension rules."}
+                  </p>
                 </div>
-              )}
-            </div>
 
-            <div className="flex justify-end pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
-              <button
-                onClick={() => setPreviewFile(null)}
-                className="px-5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer"
-              >
-                Close
-              </button>
+                {previewFile.extracted_text && (
+                  <div>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
+                      Extracted Text & OCR Content
+                    </h4>
+                    <pre className="text-[12px] font-mono text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap max-h-60 overflow-y-auto">
+                      {previewFile.extracted_text}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="px-5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* Success Modal */}
-      {applyResultModal && (
-        <div className="fixed inset-0 bg-[#000000]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-md w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 animate-fade-in text-center">
-            <div className="w-14 h-14 rounded-full bg-[#ecf7ed] dark:bg-[#0c3917]/40 text-[#166534] dark:text-[#4ade80] mx-auto flex items-center justify-center text-2xl">
-              ✓
-            </div>
-            <h3 className="text-xl font-bold text-[#000000] dark:text-[#ffffff]">
-              Files Successfully Organized!
-            </h3>
-            <p className="text-[13px] text-[#615d59] dark:text-[#9b9a97] leading-relaxed">
-              <strong>{applyResultModal.count} files</strong> have been {applyResultModal.action} into organized subdirectories under:
-            </p>
-            <p className="text-[12px] font-mono bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg text-[#000000] dark:text-[#ffffff] break-all border border-[#e6e6e6] dark:border-[#2e2e2e]">
-              {applyResultModal.output_dir}
-            </p>
-            <button
-              onClick={() => setApplyResultModal(null)}
-              className="w-full py-2.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white font-semibold text-[13px] rounded-full shadow-xs cursor-pointer"
+      {applyResultModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-[99999] flex items-center justify-center p-4"
+            onClick={() => setApplyResultModal(null)}
+          >
+            <div
+              className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-md w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.25)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-4 animate-fade-in text-center"
+              onClick={(e) => e.stopPropagation()}
             >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="w-14 h-14 rounded-full bg-[#ecf7ed] dark:bg-[#0c3917]/40 text-[#166534] dark:text-[#4ade80] mx-auto flex items-center justify-center text-2xl">
+                ✓
+              </div>
+              <h3 className="text-xl font-bold text-[#000000] dark:text-[#ffffff]">
+                Files Successfully Organized!
+              </h3>
+              <p className="text-[13px] text-[#615d59] dark:text-[#9b9a97] leading-relaxed">
+                <strong>{applyResultModal.count} files</strong> have been {applyResultModal.action} into organized subdirectories under:
+              </p>
+              <p className="text-[12px] font-mono bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg text-[#000000] dark:text-[#ffffff] break-all border border-[#e6e6e6] dark:border-[#2e2e2e]">
+                {applyResultModal.output_dir}
+              </p>
+              <button
+                onClick={() => setApplyResultModal(null)}
+                className="w-full py-2.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white font-semibold text-[13px] rounded-full shadow-xs cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
