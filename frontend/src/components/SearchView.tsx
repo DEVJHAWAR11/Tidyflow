@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { FtsResultItem } from "../types";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import {
@@ -14,6 +15,7 @@ import {
   Sparkles,
   Layers,
   Eye,
+  ImageIcon,
 } from "lucide-react";
 
 interface SearchViewProps {
@@ -37,7 +39,25 @@ export const SearchView: React.FC<SearchViewProps> = ({
 }) => {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
+  const [inlineThumbnails, setInlineThumbnails] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<FtsResultItem | null>(null);
+
+  // Lock body scroll and handle Escape key when preview modal is open
+  useEffect(() => {
+    if (previewItem) {
+      document.body.style.overflow = "hidden";
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          setPreviewItem(null);
+        }
+      };
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        document.body.style.overflow = "";
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }
+  }, [previewItem]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -60,6 +80,10 @@ export const SearchView: React.FC<SearchViewProps> = ({
 
   const toggleExpand = (key: string) => {
     setExpandedFiles((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleInlineThumb = (key: string) => {
+    setInlineThumbnails((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const sampleKeywords = [
@@ -205,6 +229,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
               const isCopied = copiedPath === item.path;
               const itemKey = `${item.id || idx}_${item.path}`;
               const isExpanded = !!expandedFiles[itemKey];
+              const isInlineThumbOpen = !!inlineThumbnails[itemKey];
               const snippetHtml = item.snippet || item.extracted_text || "";
               const hasLongText = (item.extracted_text || "").length > 250;
               const extension = item.extension || (fileName.includes(".") ? "." + fileName.split(".").pop() : "");
@@ -223,7 +248,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           type="button"
                           onClick={() => setPreviewItem(item)}
                           className="relative group shrink-0 cursor-pointer"
-                          title="Click to view large preview"
+                          title="Click to view full preview"
                         >
                           <img
                             src={`data:image/jpeg;base64,${item.thumbnail_b64}`}
@@ -294,13 +319,25 @@ export const SearchView: React.FC<SearchViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setPreviewItem(item)}
-                        className="p-1 text-[#a39e98] hover:text-[#0075de] dark:hover:text-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 rounded-md transition cursor-pointer ml-1"
-                        title="Inspect file & preview"
+                        className="px-2.5 py-1 text-[11px] font-medium bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#0075de] dark:text-[#2383e2] rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer flex items-center gap-1"
+                        title="Open full preview inspector"
                       >
-                        <Eye className="w-4 h-4" />
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Preview</span>
                       </button>
                     </div>
                   </div>
+
+                  {/* Inline Image Preview (if toggled) */}
+                  {isInlineThumbOpen && item.thumbnail_b64 && (
+                    <div className="p-3 bg-[#f6f5f4] dark:bg-[#151515] rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] flex justify-center animate-fade-in">
+                      <img
+                        src={`data:image/jpeg;base64,${item.thumbnail_b64}`}
+                        alt="inline preview"
+                        className="max-h-60 max-w-full object-contain rounded-md shadow-xs"
+                      />
+                    </div>
+                  )}
 
                   {/* Highlighted Match Snippet */}
                   {snippetHtml ? (
@@ -312,25 +349,38 @@ export const SearchView: React.FC<SearchViewProps> = ({
                         }}
                       />
 
-                      {hasLongText && (
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(itemKey)}
-                          className="flex items-center gap-1 text-[11px] text-[#0075de] dark:text-[#2383e2] hover:underline font-medium pt-0.5 cursor-pointer"
-                        >
-                          {isExpanded ? (
-                            <>
-                              <ChevronUp className="w-3 h-3" />
-                              <span>Show less</span>
-                            </>
-                          ) : (
-                            <>
-                              <ChevronDown className="w-3 h-3" />
-                              <span>Show full extracted text ({item.extracted_text?.length} chars)</span>
-                            </>
-                          )}
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3 pt-0.5">
+                        {item.thumbnail_b64 && (
+                          <button
+                            type="button"
+                            onClick={() => toggleInlineThumb(itemKey)}
+                            className="flex items-center gap-1 text-[11px] text-[#615d59] dark:text-[#9b9a97] hover:text-[#0075de] dark:hover:text-[#2383e2] font-medium cursor-pointer"
+                          >
+                            <ImageIcon className="w-3 h-3" />
+                            <span>{isInlineThumbOpen ? "Hide image preview" : "View image preview"}</span>
+                          </button>
+                        )}
+
+                        {hasLongText && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(itemKey)}
+                            className="flex items-center gap-1 text-[11px] text-[#0075de] dark:text-[#2383e2] hover:underline font-medium cursor-pointer"
+                          >
+                            {isExpanded ? (
+                              <>
+                                <ChevronUp className="w-3 h-3" />
+                                <span>Show less text</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="w-3 h-3" />
+                                <span>Show full extracted text ({item.extracted_text?.length} chars)</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="text-[11px] text-[#a39e98] italic font-mono">
@@ -414,111 +464,160 @@ export const SearchView: React.FC<SearchViewProps> = ({
         </div>
       )}
 
-      {/* Document & Image Preview Modal */}
-      {previewItem && (
-        <div className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-2xl w-full p-6 shadow-[0_20px_50px_rgba(0,0,0,0.25)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-4 animate-fade-in max-h-[85vh] flex flex-col">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#333333] pb-3.5">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center shrink-0">
-                  <FileText className="w-5 h-5 text-[#0075de] dark:text-[#2383e2]" />
+      {/* Modern 2-Column Split Preview Inspector Modal rendered in document.body Portal */}
+      {previewItem &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 bg-[#000000]/70 backdrop-blur-xs z-[99999] flex items-center justify-center p-4 sm:p-6"
+            onClick={() => setPreviewItem(null)}
+          >
+            <div
+              className="bg-[#ffffff] dark:bg-[#1f1f1f] rounded-2xl border border-[#e6e6e6] dark:border-[#333333] max-w-4xl w-full h-[85vh] max-h-[640px] p-5 sm:p-6 shadow-[0_25px_60px_rgba(0,0,0,0.4)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.9)] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#333333] pb-3.5 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 flex items-center justify-center shrink-0">
+                    <FileText className="w-5 h-5 text-[#0075de] dark:text-[#2383e2]" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff] font-mono truncate">
+                      {previewItem.path.split("/").pop() || previewItem.path}
+                    </h3>
+                    <div className="flex items-center gap-2 text-[12px] text-[#615d59] dark:text-[#9b9a97] mt-0.5">
+                      {previewItem.file_size_bytes ? (
+                        <span>{formatBytes(previewItem.file_size_bytes)} · </span>
+                      ) : null}
+                      <span>
+                        Category:{" "}
+                        <strong className="text-[#000000] dark:text-[#ffffff]">
+                          {previewItem.category || "Unknown"}
+                        </strong>
+                      </span>
+                      {previewItem.confidence_score !== undefined && (
+                        <span className="font-mono">
+                          ({(previewItem.confidence_score * 100).toFixed(0)}%)
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff] font-mono truncate">
-                    {previewItem.path.split("/").pop() || previewItem.path}
-                  </h3>
-                  <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] truncate mt-0.5">
-                    {previewItem.file_size_bytes ? `${formatBytes(previewItem.file_size_bytes)} · ` : ""}
-                    Category: <strong className="text-[#000000] dark:text-[#ffffff]">{previewItem.category || "Unknown"}</strong>
-                    {previewItem.confidence_score !== undefined && ` (${(previewItem.confidence_score * 100).toFixed(0)}%)`}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreviewItem(null)}
-                className="p-1.5 rounded-lg text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] hover:bg-[#f6f5f4] dark:hover:bg-[#282828] transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Modal Body */}
-            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
-              {/* Visual Image/PDF Thumbnail Preview */}
-              {previewItem.thumbnail_b64 && (
-                <div className="bg-[#f6f5f4] dark:bg-[#191919] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-center">
-                  <img
-                    src={`data:image/jpeg;base64,${previewItem.thumbnail_b64}`}
-                    alt="File Preview"
-                    className="max-h-64 max-w-full object-contain rounded-lg shadow-sm border border-[#e6e6e6] dark:border-[#383838]"
-                  />
-                </div>
-              )}
-
-              {/* Full File Path Card */}
-              <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-between gap-2">
-                <span className="font-mono text-[11.5px] text-[#615d59] dark:text-[#9b9a97] truncate">
-                  {previewItem.path}
-                </span>
                 <button
                   type="button"
-                  onClick={() => handleCopyPath(previewItem.path)}
-                  className="px-2.5 py-1 text-[11px] font-semibold bg-[#ffffff] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#31302e] dark:text-[#d4d4d4] rounded border border-[#e6e6e6] dark:border-[#383838] shrink-0 flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setPreviewItem(null)}
+                  className="p-1.5 rounded-lg text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] hover:bg-[#f6f5f4] dark:hover:bg-[#282828] transition cursor-pointer"
+                  title="Close preview (Esc)"
                 >
-                  {copiedPath === previewItem.path ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Copy Path</span>
-                    </>
-                  )}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Classification Reason */}
-              {previewItem.reason && (
-                <div>
-                  <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
-                    Classification Details
-                  </h4>
-                  <p className="text-[12.5px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
-                    {previewItem.reason}
-                  </p>
+              {/* Modal 2-Column Split Content */}
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-5 pt-4 min-h-0 overflow-hidden">
+                {/* Left Column: Visual Image / PDF Canvas */}
+                <div className="md:col-span-7 bg-[#f6f5f4] dark:bg-[#141414] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] flex flex-col items-center justify-center p-3 relative overflow-hidden h-full">
+                  {previewItem.thumbnail_b64 ? (
+                    <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
+                      <img
+                        src={`data:image/jpeg;base64,${previewItem.thumbnail_b64}`}
+                        alt="Document Preview"
+                        className="max-h-full max-w-full object-contain rounded-lg shadow-md border border-[#e6e6e6] dark:border-[#2e2e2e]"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-center space-y-2 p-6">
+                      <div className="w-14 h-14 rounded-2xl bg-[#ffffff] dark:bg-[#222222] border border-[#e6e6e6] dark:border-[#383838] flex items-center justify-center mx-auto text-[#0075de] dark:text-[#2383e2]">
+                        <FileText className="w-7 h-7" />
+                      </div>
+                      <p className="font-mono text-[13px] font-semibold text-[#000000] dark:text-[#ffffff]">
+                        {previewItem.path.split("/").pop()}
+                      </p>
+                      <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
+                        Visual thumbnail not available for this file type.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {/* Extracted Text / OCR */}
-              {previewItem.extracted_text && (
-                <div>
-                  <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
-                    Extracted Text & OCR Content ({previewItem.extracted_text.length} chars)
-                  </h4>
-                  <div className="font-mono text-[12px] text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3.5 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed fts-snippet">
-                    {previewItem.extracted_text}
+                {/* Right Column: Metadata & Extracted Text Inspector */}
+                <div className="md:col-span-5 flex flex-col space-y-3.5 min-h-0 overflow-y-auto pr-1">
+                  {/* File Path & Copy */}
+                  <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] space-y-1.5 shrink-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
+                        File Path
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPath(previewItem.path)}
+                        className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedPath === previewItem.path ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy Path</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="font-mono text-[11px] text-[#31302e] dark:text-[#d4d4d4] break-all leading-relaxed">
+                      {previewItem.path}
+                    </p>
+                  </div>
+
+                  {/* Classification Details */}
+                  {previewItem.reason && (
+                    <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] space-y-1 shrink-0">
+                      <span className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
+                        Classification Reason
+                      </span>
+                      <p className="text-[12px] text-[#000000] dark:text-[#ffffff] leading-relaxed">
+                        {previewItem.reason}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Extracted Text & OCR */}
+                  <div className="flex-1 flex flex-col min-h-[140px] space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
+                      Extracted OCR & Body Text ({previewItem.extracted_text?.length || 0} chars)
+                    </span>
+                    <div className="flex-1 font-mono text-[11.5px] text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap overflow-y-auto leading-relaxed fts-snippet">
+                      {previewItem.extracted_text || "No text content extracted from this document."}
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Modal Footer */}
-            <div className="flex justify-end pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
-              <button
-                type="button"
-                onClick={() => setPreviewItem(null)}
-                className="px-5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer transition"
-              >
-                Close Preview
-              </button>
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between pt-3 border-t border-[#e6e6e6] dark:border-[#333333] shrink-0 mt-3">
+                <span className="text-[11px] text-[#a39e98] font-mono">
+                  Press{" "}
+                  <kbd className="px-1.5 py-0.5 bg-[#f6f5f4] dark:bg-[#282828] border border-[#e6e6e6] dark:border-[#383838] rounded text-[10px]">
+                    Esc
+                  </kbd>{" "}
+                  to close
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewItem(null)}
+                  className="px-5 py-1.5 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer transition"
+                >
+                  Close Preview
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
