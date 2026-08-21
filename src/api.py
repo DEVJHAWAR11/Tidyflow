@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from .ai_assistant import apply_review_command, chat_generate_structure
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
@@ -124,8 +125,22 @@ class PipelineRunRequest(BaseModel):
     output_dir: Optional[str] = None
     use_llm: bool = True
     custom_categories: Optional[dict[str, Any]] = None
+    custom_instructions: Optional[str] = None
     auto_apply: bool = False
     dry_run: bool = True
+
+
+class AiStructureChatRequest(BaseModel):
+    message: str
+    history: Optional[list[dict[str, Any]]] = None
+    input_dir: Optional[str] = None
+    current_categories: Optional[dict[str, Any]] = None
+
+
+class AiReviewChatRequest(BaseModel):
+    command: str
+    files: list[dict[str, Any]]
+    categories: Optional[list[str]] = None
 
 
 class CategoryPayload(BaseModel):
@@ -280,6 +295,8 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     cfg.output_dir = out_path
     cfg.staging_dir = out_path / "Staging"
     cfg.llm.enabled = req.use_llm
+    if req.custom_instructions:
+        cfg.llm.custom_instructions = req.custom_instructions
 
     if req.custom_categories:
         cats = {}
@@ -500,6 +517,44 @@ async def update_rules(rules_req: dict[str, Any]):
     with open(rules_path, "w", encoding="utf-8") as f:
         yaml.dump({"rules": rules_list}, f)
     return {"message": "Rules updated successfully", "count": len(rules_list)}
+
+
+@app.post("/ai/chat-structure")
+async def ai_chat_structure_endpoint(req: AiStructureChatRequest):
+    """Generate or refine category structure and rules via natural language."""
+    sample_filenames = []
+    if req.input_dir:
+        try:
+            p = Path(req.input_dir).resolve()
+            if p.exists() and p.is_dir():
+                sample_filenames = [
+                    f.name
+                    for f in p.iterdir()
+                    if f.is_file() and not f.name.startswith(".")
+                ][:50]
+        except Exception:
+            pass
+
+    result = await asyncio.to_thread(
+        chat_generate_structure,
+        message=req.message,
+        history=req.history,
+        current_categories=req.current_categories,
+        sample_filenames=sample_filenames,
+    )
+    return result
+
+
+@app.post("/ai/review-chat")
+async def ai_review_chat_endpoint(req: AiReviewChatRequest):
+    """Apply bulk category/filename adjustments to review table via natural language."""
+    result = await asyncio.to_thread(
+        apply_review_command,
+        command=req.command,
+        files=req.files,
+        categories=req.categories,
+    )
+    return result
 
 
 @app.get("/stream")

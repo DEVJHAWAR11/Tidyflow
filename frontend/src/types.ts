@@ -65,5 +65,15 @@ export interface FtsResultItem {
   summary?: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp?: string;
+  categories?: Record<string, CategoryItem>;
+  customInstructions?: string;
+  isReady?: boolean;
+}
+
 export type TabType = "organize" | "categories" | "review" | "search" | "settings";
 export type BackendStatus = "running" | "offline" | "checking";

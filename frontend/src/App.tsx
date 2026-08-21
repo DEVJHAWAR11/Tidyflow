@@ -52,6 +52,7 @@ export default function App() {
 
   // Categories state
   const [categories, setCategories] = useState<Record<string, CategoryItem>>({});
+  const [customInstructions, setCustomInstructions] = useState("");
 
   // Review & Apply state
   const [files, setFiles] = useState<ClassifiedFile[]>([]);
@@ -228,14 +229,20 @@ export default function App() {
 
   // --- Pipeline Execution ---
 
-  const handleStartPipeline = async () => {
+  const handleStartPipeline = async (
+    customCats?: Record<string, CategoryItem>,
+    instructions?: string
+  ) => {
     if (!inputFolder.trim()) return;
     setIsRunning(true);
     setCurrentStage("Scanning directory & computing content hashes...");
     setProgressLogs([`> Initiating scan on ${inputFolder}`]);
 
+    const catsToUse = customCats || categories;
+    const instructionsToUse = instructions !== undefined ? instructions : customInstructions;
+
     const activeCats: Record<string, any> = {};
-    Object.entries(categories).forEach(([name, item]) => {
+    Object.entries(catsToUse).forEach(([name, item]) => {
       if (item.active) {
         activeCats[name] = {
           description: item.description,
@@ -254,6 +261,7 @@ export default function App() {
           output_dir: outputFolder.trim() || undefined,
           use_llm: useLlm,
           custom_categories: Object.keys(activeCats).length > 0 ? activeCats : undefined,
+          custom_instructions: instructionsToUse.trim() || undefined,
           auto_apply: false,
           dry_run: true,
         }),
@@ -427,6 +435,9 @@ export default function App() {
             currentStage={currentStage}
             progressLogs={progressLogs}
             categories={categories}
+            setCategories={setCategories}
+            customInstructions={customInstructions}
+            setCustomInstructions={setCustomInstructions}
             summary={summary}
             backendStatus={backendStatus}
             onStartPipeline={handleStartPipeline}
