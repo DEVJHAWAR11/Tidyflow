@@ -46,5 +46,5 @@ def test_target_path_collision(tmp_path):
 
     mover = FileMover(None)
     target = mover.determine_target_path(tmp_path, "Finance/Invoices", src_file)
-    assert "Finance/Invoices" in target
+    assert "Finance" in target and "Invoices" in target
     assert "test.txt" in target

@@ -22,7 +22,12 @@ from .ai_assistant import (
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
-from .llm_provider import get_stored_api_key, save_settings
+from .llm_provider import (
+    _resolve_provider_model,
+    get_stored_api_key,
+    load_settings,
+    save_settings,
+)
 from .main_loop import Processor, load_records_jsonl, run_pipeline
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
@@ -193,12 +198,13 @@ class SettingsPayload(BaseModel):
 
 @app.get("/status")
 async def get_status():
-    stored_key = get_stored_api_key("deepseek") or os.getenv("DEEPSEEK_API_KEY") or ""
-    has_key = bool(stored_key.strip())
+    provider, api_key, _ = load_settings()
+    has_key = bool(api_key.strip())
     return {
         "status": "running",
         "version": "2.0.0",
         "has_llm_key": has_key,
+        "provider": provider,
         "active_clients": len(clients),
     }
 
@@ -239,13 +245,15 @@ async def save_categories(req: CategoriesUpdateRequest):
 async def get_settings():
     """Get current configuration and masked API key."""
     cfg = load_config()
-    provider = cfg.llm.provider
-    key = get_stored_api_key(provider) or os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
+    provider, key, _ = load_settings()
+    if not provider:
+        provider = cfg.llm.provider
     masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else ("••••••••" if key else "")
+    model = _resolve_provider_model(provider, cfg.llm.model)
 
     return {
         "provider": provider,
-        "model": cfg.llm.model,
+        "model": model,
         "has_key": bool(key),
         "masked_key": masked_key,
         "auto_copy_threshold": cfg.classification.auto_copy_threshold,
@@ -276,8 +284,8 @@ async def update_settings(payload: SettingsPayload):
         with open(cfg_file, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         data.setdefault("llm", {})["provider"] = payload.provider
-        if payload.model:
-            data["llm"]["model"] = payload.model
+        target_model = _resolve_provider_model(payload.provider, payload.model)
+        data["llm"]["model"] = target_model
         data.setdefault("classification", {})["auto_copy_threshold"] = payload.auto_copy_threshold
         data["max_file_size_mb"] = payload.max_file_size_mb
         with open(cfg_file, "w", encoding="utf-8") as f:

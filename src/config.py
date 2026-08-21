@@ -69,7 +69,7 @@ class LlmConfig(BaseModel):
     enabled: bool = True
     provider: str = "deepseek"  # deepseek | openai | groq | openrouter | gemini | custom
     api_base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
     batch_size: int = 40
     max_retries: int = 3
     timeout_seconds: int = 90
