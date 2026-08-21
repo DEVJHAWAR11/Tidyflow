@@ -1,69 +1,75 @@
+"""Safe file mover and organizer service."""
+
+from __future__ import annotations
+
 import os
-import hashlib
+import shutil
 from pathlib import Path
+from typing import Optional, Any
 from datetime import datetime
-from src.mcp_server import copy_file, delete_file, is_path_allowed
-from src.database import DatabaseManager
+
+from .mcp_server import copy_file, delete_file, is_path_allowed
+from .utils import compute_sha256, resolve_filename_collision
+
 
 class FileMover:
-    def __init__(self, db: DatabaseManager):
+    """Safely organizes files into categorized directory hierarchies."""
+
+    def __init__(self, db: Any = None):
         self.db = db
 
-    def _get_hash(self, path: str) -> str:
-        sha256 = hashlib.sha256()
-        with open(path, "rb") as f:
-            for block in iter(lambda: f.read(65536), b""):
-                sha256.update(block)
-        return sha256.hexdigest()
-
-    def determine_target_path(self, base_target_dir: str, category: str, original_path: str) -> str:
-        """Logic: <base_target_dir>/<category>/YYYY-MM-DD_<filename>"""
-        stat = os.stat(original_path)
-        # creation time
-        dt = datetime.fromtimestamp(stat.st_ctime)
-        date_str = dt.strftime("%Y-%m-%d")
-        
-        filename = Path(original_path).name
-        # Add date prefix if not already present (to prevent 2026-08-04_2026-08-04_img.png on re-runs)
-        if not filename.startswith(date_str):
-            filename = f"{date_str}_{filename}"
-            
+    def determine_target_path(self, base_target_dir: str | Path, category: str, original_path: str | Path) -> str:
+        """
+        Determine target destination path:
+        <base_target_dir>/<category>/<filename> (resolving collisions if needed)
+        """
         target_dir = Path(base_target_dir) / category
-        return str(target_dir / filename)
+        filename = Path(original_path).name
+        sha = compute_sha256(original_path) if os.path.exists(original_path) else "00000000"
+        target_path = resolve_filename_collision(target_dir, filename, sha)
+        return str(target_path)
 
-    async def safe_move(self, original_path: str, target_path: str) -> bool:
-        """Copies file, verifies hash, deletes original, logs to DB."""
+    async def safe_copy(self, original_path: str, target_path: str) -> bool:
+        """Copies file, verifies SHA-256 integrity, records in DB."""
         if not os.path.exists(original_path):
-            raise FileNotFoundError(f"Source missing: {original_path}")
+            raise FileNotFoundError(f"Source file not found: {original_path}")
 
-        # MCP check
         if not is_path_allowed(original_path) or not is_path_allowed(target_path):
-            raise PermissionError("Path not allowed by MCP rules")
+            raise PermissionError("Path not permitted by security allow-list")
 
-        original_hash = self._get_hash(original_path)
-        
-        # Copy via MCP Server func directly (for testing)
+        original_hash = compute_sha256(original_path)
+
         res = copy_file(original_path, target_path)
         if res != "Success":
-            raise RuntimeError(f"Copy failed: {res}")
-            
-        # Verify
-        new_hash = self._get_hash(target_path)
+            raise RuntimeError(f"Copy operation failed: {res}")
+
+        new_hash = compute_sha256(target_path)
         if original_hash != new_hash:
-            # Hash mismatch, delete the bad copy
             delete_file(target_path)
-            raise RuntimeError("Hash mismatch after copy. Move aborted.")
-            
-        # Delete original
+            raise RuntimeError("Hash mismatch after copy. Operation aborted and rolled back.")
+
+        if self.db:
+            await self.db.execute_write(
+                "UPDATE files SET new_path = ?, status = 'copied' WHERE path = ?",
+                (target_path, original_path)
+            )
+
+        return True
+
+    async def safe_move(self, original_path: str, target_path: str) -> bool:
+        """Copies file, verifies hash, deletes original, records in DB."""
+        # First safely copy and verify
+        await self.safe_copy(original_path, target_path)
+
+        # Then delete original
         res = delete_file(original_path)
         if res != "Success":
-            raise RuntimeError(f"Original deletion failed: {res}")
-            
-        # Update DB for undo support
+            raise RuntimeError(f"Original deletion failed after copy: {res}")
+
         if self.db:
             await self.db.execute_write(
                 "UPDATE files SET new_path = ?, status = 'moved' WHERE path = ?",
                 (target_path, original_path)
             )
-        
+
         return True

@@ -1,4 +1,3 @@
 rules:
-- category: Test
-  extensions:
-  - .txt
+- category: Finance/Invoices
+  contains: invoice

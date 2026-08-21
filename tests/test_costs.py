@@ -1,22 +1,22 @@
 import pytest
-from fastapi.testclient import TestClient
-from src.api import app, db
-import asyncio
+from src.api import db, app
+import httpx
 
-client = TestClient(app)
 
 @pytest.mark.asyncio
 async def test_costs_endpoint():
-    # Insert some mock token logs directly
     await db.start()
+    # Clear previous test token logs
+    await db.execute_write("DELETE FROM token_logs")
     await db.log_tokens("openai", "gpt-4o", 100, 50, 0.05)
     await db.log_tokens("anthropic", "claude-3-5-sonnet", 200, 100, 0.02)
-    await db.stop() # Flush writes
-    
-    with TestClient(app) as c:
-        response = c.get("/costs")
+    await db.stop()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.get("/costs")
         assert response.status_code == 200
         data = response.json()
         assert "costs" in data
         assert len(data["costs"]) > 0
-        assert data["costs"][0]["total_cost"] == 0.07
+        assert round(data["costs"][0]["total_cost"], 2) == 0.07

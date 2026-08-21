@@ -1,11 +1,19 @@
-import operator
-from typing import TypedDict, Annotated, Optional, Dict, Any, List
-from langgraph.graph import StateGraph, END
-from src.rules import RuleEngine
-from src.extractor import extract_text_from_pdf, extract_text_from_image
+"""LangGraph workflow definition for single-item graph executions."""
+
+from __future__ import annotations
+
 from pathlib import Path
-from src.llm_provider import LLMProvider, load_settings
-from src.file_mover import FileMover
+from typing import Optional, TypedDict
+
+from langgraph.graph import END, StateGraph
+
+from .extractor import extract_all_text
+from .file_mover import FileMover
+from .llm_provider import LLMProvider, load_settings
+from .models import FileRecord
+from .rules import RuleEngine
+from .scanner import determine_file_category
+
 
 class GraphState(TypedDict):
     file_path: str
@@ -18,102 +26,121 @@ class GraphState(TypedDict):
     error: Optional[str]
     retries: int
 
+
 def scan_node(state: GraphState):
-    # just setting up our blank slate for a new file
-    return {"retries": 0, "needs_review": False, "category": None, "extracted_text": "", "confidence": 0.0, "error": None}
+    return {
+        "retries": 0,
+        "needs_review": False,
+        "category": None,
+        "extracted_text": "",
+        "confidence": 0.0,
+        "error": None,
+    }
+
 
 def route_node(state: GraphState):
-    # look at our fast path rules to see if we can skip the ai stuff
     file_path = state["file_path"]
     size = state.get("size", 0)
-    
+
     if size > 50 * 1024 * 1024:
-        return {"category": "Large Files", "needs_review": False, "extracted_text": ""}
+        return {"category": "Large_Files", "needs_review": False, "extracted_text": ""}
 
     engine = RuleEngine()
-    category = engine.evaluate(state["file_path"])
+    category = engine.evaluate(file_path)
     return {"category": category}
 
+
 def should_extract(state: GraphState):
-    # this is a conditional edge. if our rule engine already figured out the category, 
-    # we return "move" to skip the slow AI steps. otherwise, we say "extract" to read its text.
     if state.get("category"):
         return "move"
     return "extract"
 
+
 def extract_node(state: GraphState):
-    path = state["file_path"].lower()
-    if path.endswith(".pdf"):
-        res = extract_text_from_pdf(state["file_path"])
-    elif path.endswith((".png", ".jpg", ".jpeg")):
-        res = extract_text_from_image(state["file_path"])
-    else:
-        # we don't know how to read this file yet, so we tell a human to look at it
-        return {"needs_review": True, "error": "Unsupported file type for extraction"}
-        
+    path = Path(state["file_path"])
+    dummy_rec = FileRecord(
+        file_id="graph_test",
+        abs_path=path.resolve(),
+        rel_path=Path(path.name),
+        filename=path.name,
+        extension=path.suffix.lower(),
+        file_size_bytes=state.get("size", 0),
+        file_category=determine_file_category(path.suffix.lower()),
+    )
+
+    if path.exists():
+        extract_all_text([dummy_rec])
+        text = dummy_rec.extracted_text_raw or ""
+        return {
+            "extracted_text": text,
+            "confidence": 1.0 if text else 0.0,
+            "needs_review": not bool(text),
+            "error": None if text else "No text extracted",
+        }
     return {
-        "extracted_text": res.get("text", ""),
-        "confidence": res.get("confidence", 0.0),
-        "needs_review": res.get("needs_review", False),
-        "error": res.get("error")
+        "extracted_text": "",
+        "confidence": 0.0,
+        "needs_review": True,
+        "error": "File does not exist",
     }
 
+
 def should_classify(state: GraphState):
-    if state.get("needs_review"):
-        return "needs_review"
-    if not state.get("extracted_text"):
+    if state.get("needs_review") or not state.get("extracted_text"):
         return "needs_review"
     return "classify_llm"
+
 
 async def classify_llm_node(state: GraphState):
     provider, api_key, custom_url = load_settings()
     if not api_key:
         return {"needs_review": True, "error": "No LLM API key configured"}
-        
+
     llm = LLMProvider(provider, api_key, custom_url)
     try:
         res = await llm.classify(state["extracted_text"], is_test=False)
+        conf = float(res.get("confidence", 0.0))
         return {
-            "category": res.get("category"),
-            "confidence": res.get("confidence", 0.0),
-            "needs_review": res.get("confidence", 0.0) < 70.0
+            "category": res.get("category", "Unknown"),
+            "confidence": conf,
+            "needs_review": conf < 70.0,
         }
     except Exception as e:
         return {"error": str(e), "retries": state.get("retries", 0) + 1}
 
+
 def route_after_classify(state: GraphState):
-    # this checks if the llm failed. if we haven't retried 3 times yet, we tell the graph 
-    # to loop back to classify_llm and try again. this is how we survive random api glitches.
     if state.get("error") and state.get("retries", 0) < 3 and not state.get("needs_review"):
-        return "classify_llm" # Retry
+        return "classify_llm"
     if state.get("needs_review") or state.get("error"):
         return "needs_review"
     return "move"
 
+
 def needs_review_node(state: GraphState):
-    # marks the file so we can show it in a dashboard later for the user to decide
     return {"needs_review": True}
+
 
 async def move_node(state: GraphState):
     if not state.get("category") or state.get("needs_review") or state.get("error"):
         return state
-        
-    mover = FileMover(db=None) 
+
+    mover = FileMover(db=None)
     target_path = mover.determine_target_path(
         base_target_dir=state.get("base_scan_dir", str(Path(state["file_path"]).parent)),
         category=state["category"],
-        original_path=state["file_path"]
+        original_path=state["file_path"],
     )
-    
     try:
-        await mover.safe_move(state["file_path"], target_path)
-        return {"error": None} # Successfully moved
+        await mover.safe_copy(state["file_path"], target_path)
+        return {"error": None}
     except Exception as e:
-        return {"error": f"Move failed: {e}", "needs_review": True}
+        return {"error": f"Copy failed: {e}", "needs_review": True}
+
 
 def checkpoint_node(state: GraphState):
-    # saves where we're at to the database so we dont lose progress
     return state
+
 
 # Build graph
 workflow = StateGraph(GraphState)

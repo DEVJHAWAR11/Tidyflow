@@ -1,25 +1,32 @@
 import pytest
-from fastapi.testclient import TestClient
+import httpx
 from src.api import app
 
-client = TestClient(app)
 
-def test_status():
-    # By using TestClient, startup/shutdown events aren't triggered automatically
-    # unless using with TestClient(app) as client:
-    with TestClient(app) as c:
-        response = c.get("/status")
-        assert response.status_code == 200
-        assert response.json()["status"] == "running"
+@pytest.mark.asyncio
+async def test_api_status():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "running"
+        assert data["version"] == "2.0.0"
 
-def test_post_rules():
-    with TestClient(app) as c:
-        response = c.post("/rules", json={"rules": [{"category": "Test", "extensions": [".txt"]}]})
-        assert response.status_code == 200
-        assert "successfully" in response.json()["message"]
 
-def test_get_files():
-    with TestClient(app) as c:
-        response = c.get("/files?limit=10")
-        assert response.status_code == 200
-        assert "files" in response.json()
+@pytest.mark.asyncio
+async def test_api_get_files():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/files?limit=10")
+        assert res.status_code == 200
+        assert "files" in res.json()
+
+
+@pytest.mark.asyncio
+async def test_api_post_rules():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.post("/rules", json={"rules": [{"category": "Finance/Invoices", "contains": "invoice"}]})
+        assert res.status_code == 200
+        assert "successfully" in res.json()["message"]

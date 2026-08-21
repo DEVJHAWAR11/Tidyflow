@@ -1,16 +1,31 @@
-langgraph
-fastapi
-uvicorn
-typer
-pymupdf
-pytesseract
-Pillow
-keyring
-rich
-python-dotenv
-httpx
-pydantic
-pyyaml
-pathspec
-fastmcp
-sse-starlette
+# Core runtime dependencies
+pydantic>=2.0.0
+pyyaml>=6.0.0
+jinja2>=3.1.0
+pandas>=2.0.0
+Pillow>=10.0.0
+imagehash>=4.3.1
+rapidfuzz>=3.0.0
+pymupdf>=1.23.0
+httpx>=0.25.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+typer>=0.9.0
+rich>=13.0.0
+sse-starlette>=1.6.0
+python-dotenv>=1.0.0
+fastmcp>=0.1.0
+keyring>=24.0.0
+tqdm>=4.66.0
+
+# Optional Office document extraction
+python-docx>=1.0.0
+openpyxl>=3.1.0
+
+# Optional / Local OCR (Installed when supported)
+# paddlepaddle>=3.0.0
+# paddleocr>=2.7.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

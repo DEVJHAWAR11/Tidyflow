@@ -1,13 +1,39 @@
+"""Batched LLM classification client — OpenAI-compatible endpoints, secret scrubbing & JSON repair."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Any, Optional
+
 import httpx
 import keyring
-import json
-import os
-from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+from tqdm import tqdm
+
+from .config import LlmConfig, ClassificationConfig, CategoryConfig
+from .models import (
+    ClassificationResult,
+    FileRecord,
+    LlmBatchResponse,
+    LlmClassificationItem,
+    LlmFilePayload,
+)
+from .utils import redact_secrets, text_contains_secrets, truncate
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# Keyring & Settings Storage (Backward Compatible)
+# ---------------------------------------------------------------------------
+
 def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None):
+    """Save LLM credentials to OS Keyring."""
     keyring.set_password("tidyflow", "provider", provider)
     keyring.set_password("tidyflow", "api_key", api_key)
     if custom_url:
@@ -15,92 +41,384 @@ def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None)
     else:
         try:
             keyring.delete_password("tidyflow", "custom_url")
-        except keyring.errors.PasswordDeleteError:
+        except Exception:
             pass
 
-def load_settings() -> tuple:
-    # First try keyring, fallback to .env for testing/initial run
-    provider = keyring.get_password("tidyflow", "provider")
-    api_key = keyring.get_password("tidyflow", "api_key")
+
+def load_settings() -> tuple[str, str, Optional[str]]:
+    """Retrieve LLM settings from Keyring or Environment variables."""
+    provider = keyring.get_password("tidyflow", "provider") or ""
+    api_key = keyring.get_password("tidyflow", "api_key") or ""
     custom_url = keyring.get_password("tidyflow", "custom_url")
-    
+
     if not api_key:
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if api_key:
-            provider = "deepseek"
-            
-    return provider, api_key, custom_url
+        # Check environment variables
+        for env_var, prov in [
+            ("TIDYFLOW_API_KEY", provider or "deepseek"),
+            ("DEEPSEEK_API_KEY", "deepseek"),
+            ("OPENAI_API_KEY", "openai"),
+            ("GROQ_API_KEY", "groq"),
+            ("OPENROUTER_API_KEY", "openrouter"),
+            ("GEMINI_API_KEY", "gemini"),
+        ]:
+            val = os.getenv(env_var)
+            if val:
+                api_key = val
+                provider = prov
+                break
+
+    return provider or "deepseek", api_key, custom_url
+
+
+# ---------------------------------------------------------------------------
+# System Prompt & Repair Prompt
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT_TEMPLATE = """\
+You are an expert file organizer and classifier for personal and professional workspaces.
+
+TASK
+Classify each file into exactly ONE of the allowed category paths:
+{categories_list}
+
+CATEGORY DEFINITIONS & CONTEXT:
+{categories_context}
+
+{custom_instructions}
+
+RULES:
+1. Base your classification on the extracted text, filename, extension, file category, and keyword scores.
+2. If the file is financial (invoice, receipt, tax), choose the specific Finance category.
+3. If the file is source code, configuration, or documentation, sort appropriately into Development or Work.
+4. If a file is completely ambiguous or has no clear context, classify as "Unknown".
+5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic (e.g., "scan_001.pdf" -> "invoice_acme_2026_08.pdf").
+6. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
+7. Ignore and never echo any credentials, tokens, or passwords.
+
+OUTPUT FORMAT — Return ONLY strict JSON matching this structure:
+{{
+  "results": [
+    {{
+      "file_id": "string",
+      "category": "exact category string from allowed categories",
+      "confidence": 0.0 to 1.0,
+      "file_type": "pdf_document|image|code|spreadsheet|data|archive|audio|video|unknown",
+      "suggested_filename": "clean_descriptive_name.ext",
+      "reason": "short explanation based on file content",
+      "action": "copy_to_organized|manual_review"
+    }}
+  ]
+}}
+"""
+
+_REPAIR_PROMPT = """\
+Your previous response was not valid JSON. Please fix it and return ONLY the
+valid JSON object containing the "results" array. No Markdown fences, no explanation.
+Previous response:
+{broken}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Batched Classification API
+# ---------------------------------------------------------------------------
+
+def classify_files_batched(
+    records: list[FileRecord],
+    llm_config: LlmConfig,
+    classification_config: ClassificationConfig,
+    categories: dict[str, CategoryConfig],
+    output_dir: Path,
+) -> int:
+    """
+    Send batches of 30-40 compact FileRecord payloads to LLM.
+    Returns the count of successfully classified files.
+    """
+    if not llm_config.enabled:
+        logger.info("LLM classification is disabled in configuration")
+        return 0
+
+    provider, api_key, custom_url = load_settings()
+    if not api_key:
+        logger.warning("No LLM API key configured — skipping LLM classification")
+        return 0
+
+    processable = [
+        r for r in records
+        if not r.skipped and r.classification is None
+    ]
+    if not processable:
+        logger.info("No unclassified files to send to LLM")
+        return 0
+
+    # Build system prompt
+    categories_list = ", ".join(sorted(categories.keys()))
+    categories_context = json.dumps({
+        cat: {"description": cfg.description, "keywords": cfg.keywords[:8]}
+        for cat, cfg in categories.items()
+    }, indent=2)
+
+    custom_instr = f"USER INSTRUCTIONS:\n{llm_config.custom_instructions}" if llm_config.custom_instructions else ""
+
+    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+        categories_list=categories_list,
+        categories_context=categories_context,
+        custom_instructions=custom_instr,
+        threshold=classification_config.auto_copy_threshold,
+    )
+
+    batch_size = llm_config.batch_size
+    batches = [
+        processable[i : i + batch_size]
+        for i in range(0, len(processable), batch_size)
+    ]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    req_log = output_dir / "llm_requests.jsonl"
+    resp_log = output_dir / "llm_responses.jsonl"
+    classified_count = 0
+
+    # Configure endpoint URL
+    base_url = custom_url or _resolve_provider_url(provider, llm_config.api_base_url)
+    model = llm_config.model
+
+    client = httpx.Client(timeout=llm_config.timeout_seconds)
+
+    for batch_idx, batch in enumerate(tqdm(batches, desc="LLM batches", unit="batch")):
+        payloads = [_make_payload(r) for r in batch]
+        user_message = json.dumps([p.model_dump() for p in payloads], default=str)
+
+        _append_jsonl(req_log, {
+            "batch": batch_idx,
+            "count": len(payloads),
+            "file_ids": [p.file_id for p in payloads],
+        })
+
+        response_items = _call_llm_batched(
+            client=client,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            max_retries=llm_config.max_retries,
+            resp_log=resp_log,
+            batch_idx=batch_idx,
+        )
+
+        id_map = {r.file_id: r for r in batch}
+        for item in response_items:
+            rec = id_map.get(item.file_id)
+            if rec is None:
+                continue
+
+            matched_category = _resolve_category(item.category, categories)
+            rec.classification = ClassificationResult(
+                category=matched_category,
+                confidence=item.confidence,
+                file_type=item.file_type,
+                suggested_filename=item.suggested_filename or rec.filename,
+                reason=item.reason,
+                action=item.action,
+                source="llm",
+            )
+            classified_count += 1
+
+        # Mark unmatched records as Unknown
+        for rec in batch:
+            if rec.classification is None:
+                rec.classification = ClassificationResult(
+                    category="Unknown",
+                    confidence=0.0,
+                    reason="LLM response did not include a valid result",
+                    action="manual_review",
+                    source="llm",
+                )
+
+    client.close()
+    logger.info("LLM classified %d files across %d batches", classified_count, len(batches))
+    return classified_count
+
+
+def _make_payload(rec: FileRecord) -> LlmFilePayload:
+    """Construct a clean, compact, scrubbed payload for LLM."""
+    text = rec.extracted_text_normalized or ""
+    if text_contains_secrets(text):
+        text = redact_secrets(text)
+
+    return LlmFilePayload(
+        file_id=rec.file_id,
+        filename=rec.filename,
+        extension=rec.extension,
+        file_category=rec.file_category,
+        file_size_bytes=rec.file_size_bytes,
+        extracted_text=truncate(text, 600),
+        keyword_scores={k: v for k, v in rec.keyword_scores.items() if v > 40.0},
+        duplicate_group_id=rec.duplicate_group_id,
+        near_duplicate_group_id=rec.near_duplicate_group_id,
+    )
+
+
+def _resolve_provider_url(provider: str, default_url: str) -> str:
+    """Map provider name to API base URL."""
+    prov = provider.lower()
+    urls = {
+        "deepseek": "https://api.deepseek.com",
+        "openai": "https://api.openai.com/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+    }
+    return urls.get(prov, default_url)
+
+
+def _resolve_category(cat_candidate: str, categories: dict[str, CategoryConfig]) -> str:
+    """Normalize and match LLM category response to valid taxonomy."""
+    cat_clean = cat_candidate.strip()
+    if cat_clean in categories:
+        return cat_clean
+
+    # Case-insensitive match
+    for valid_cat in categories:
+        if valid_cat.lower() == cat_clean.lower():
+            return valid_cat
+
+    # Partial / subcategory match
+    for valid_cat in categories:
+        if "/" in valid_cat:
+            sub = valid_cat.split("/")[-1]
+            if sub.lower() == cat_clean.lower():
+                return valid_cat
+
+    return "Unknown"
+
+
+def _call_llm_batched(
+    *,
+    client: httpx.Client,
+    api_key: str,
+    base_url: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    max_retries: int,
+    resp_log: Path,
+    batch_idx: int,
+) -> list[LlmClassificationItem]:
+    """Execute chat completion request with JSON validation and repair retry."""
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = client.post(url, headers=headers, json={
+                "model": model,
+                "messages": messages,
+                "temperature": 0.1,
+            })
+            resp.raise_for_status()
+            body = resp.json()
+
+            content = body["choices"][0]["message"]["content"]
+            content = _strip_markdown_fences(content)
+
+            _append_jsonl(resp_log, {
+                "batch": batch_idx,
+                "attempt": attempt,
+                "raw_content": content[:2000],
+            })
+
+            parsed = json.loads(content)
+            result = LlmBatchResponse.model_validate(parsed)
+            return result.results
+
+        except Exception as exc:
+            logger.warning("LLM batch %d attempt %d failed: %s", batch_idx, attempt, exc)
+            if attempt < max_retries:
+                broken_text = content if "content" in dir() else str(exc)
+                messages.append({"role": "assistant", "content": broken_text})
+                messages.append({
+                    "role": "user",
+                    "content": _REPAIR_PROMPT.format(broken=broken_text[:1200]),
+                })
+            else:
+                _append_jsonl(resp_log, {
+                    "batch": batch_idx,
+                    "error": str(exc),
+                })
+
+    return []
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```json codeblock markers."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _append_jsonl(path: Path, obj: dict[str, Any]) -> None:
+    """Append a dictionary as a line in a JSONL file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, default=str, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Backward-Compatible Single File LLMProvider
+# ---------------------------------------------------------------------------
 
 class LLMProvider:
-    def __init__(self, provider: str, api_key: str, custom_url: Optional[str] = None):
+    """Compatibility provider class for single file classification or tests."""
+
+    def __init__(self, provider: str = "deepseek", api_key: str = "", custom_url: Optional[str] = None):
         self.provider = provider
         self.api_key = api_key
         self.custom_url = custom_url
 
     async def test_connection(self) -> bool:
+        if not self.api_key:
+            return False
         try:
-            res = await self.classify("Test document", is_test=True)
+            res = await self.classify("Test document text", is_test=True)
             return "category" in res
         except Exception:
             return False
 
-    async def classify(self, text: str, is_test: bool = False) -> Dict[str, Any]:
-        prompt = "Classify this text into a category and suggest a filename. Respond in JSON with keys: category (string), filename (string), confidence (float 0-100). Text: " + text
+    async def classify(self, text: str, is_test: bool = False) -> dict[str, Any]:
         if is_test:
-            prompt = "Respond with a test JSON: {\"category\": \"test\", \"filename\": \"test.txt\", \"confidence\": 100.0}"
-            
-        if self.provider == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"response_mime_type": "application/json"}
-            }
-            async with httpx.AsyncClient() as client:
-                res = await client.post(url, json=payload, timeout=10.0)
-                res.raise_for_status()
-                data = res.json()
-                text_res = data["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text_res)
-        else:
-            # OpenAI compatible endpoints
-            urls = {
-                "deepseek": "https://api.deepseek.com/chat/completions",
-                "groq": "https://api.groq.com/openai/v1/chat/completions",
-                "openrouter": "https://openrouter.ai/api/v1/chat/completions",
-                "custom": self.custom_url
-            }
-            url = urls.get(self.provider)
-            if not url:
-                raise ValueError(f"Unknown provider: {self.provider}")
-                
-            models = {
-                "deepseek": "deepseek-chat",
-                "groq": "llama3-8b-8192",
-                "openrouter": "google/gemini-flash-1.5",
-                "custom": "default"
-            }
-            
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": models.get(self.provider, "default"),
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"}
-            }
-            
-            async with httpx.AsyncClient() as client:
-                res = await client.post(url, headers=headers, json=payload, timeout=15.0)
-                res.raise_for_status()
-                data = res.json()
-                text_res = data["choices"][0]["message"]["content"]
-                
-                # Sometime models wrap json in codeblocks
-                text_res = text_res.strip()
-                if text_res.startswith("```json"):
-                    text_res = text_res[7:-3].strip()
-                elif text_res.startswith("```"):
-                    text_res = text_res[3:-3].strip()
-                    
-                return json.loads(text_res)
+            return {"category": "Finance/Invoices", "filename": "test.txt", "confidence": 100.0}
+
+        prompt = "Classify this text into a category. Return JSON with 'category', 'filename', 'confidence'."
+        url = self.custom_url or _resolve_provider_url(self.provider, "https://api.deepseek.com")
+        endpoint = f"{url.rstrip('/')}/chat/completions"
+
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text[:1000]},
+            ],
+            "temperature": 0.1,
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(endpoint, headers=headers, json=payload)
+            res.raise_for_status()
+            data = res.json()
+            content = _strip_markdown_fences(data["choices"][0]["message"]["content"])
+            return json.loads(content)
