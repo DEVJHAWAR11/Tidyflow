@@ -252,14 +252,45 @@ def run_ocr(
     return processed, cached
 
 
-def _ocr_single(engine: Any, rec: FileRecord, ocr_config: OcrConfig) -> None:
-    """Execute OCR on a single file record."""
-    img = Image.open(rec.abs_path)
-    if rec.extension == ".gif":
-        img.seek(0)
+def _load_image_for_record(rec: FileRecord) -> Image.Image | None:
+    """Load PIL Image from an image file or render the first page of a PDF for OCR."""
+    ext = rec.extension.lower()
+    if ext == ".pdf":
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(rec.abs_path)
+            if len(doc) == 0:
+                doc.close()
+                return None
+            page = doc[0]
+            pix = page.get_pixmap(dpi=150)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            doc.close()
+            return img
+        except Exception as exc:
+            logger.debug("Failed to render PDF page for OCR (%s): %s", rec.filename, exc)
+            return None
+    else:
+        try:
+            img = Image.open(rec.abs_path)
+            if ext == ".gif":
+                img.seek(0)
+            return img
+        except Exception as exc:
+            logger.debug("Failed to open image for OCR (%s): %s", rec.filename, exc)
+            return None
 
-    arr = _preprocess(img, max_dim=ocr_config.max_image_dimension)
-    img.close()
+
+def _ocr_single(engine: Any, rec: FileRecord, ocr_config: OcrConfig) -> None:
+    """Execute OCR on a single file record (image or scanned PDF)."""
+    img = _load_image_for_record(rec)
+    if img is None:
+        return
+
+    try:
+        arr = _preprocess(img, max_dim=ocr_config.max_image_dimension)
+    finally:
+        img.close()
 
     if callable(getattr(engine, "predict", None)):
         ocr_result = engine.predict(arr)
