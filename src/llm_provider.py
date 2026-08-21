@@ -343,21 +343,18 @@ def _resolve_provider_model(provider: str, configured_model: Optional[str] = Non
     """Resolve the appropriate default model for the chosen provider."""
     prov = provider.lower()
     default_models = {
-        "deepseek": "deepseek-v4-flash",
-        "groq": "openai/gpt-oss-20b",
-        "gemini": "gemini-3.7-flash",
+        "deepseek": "deepseek-chat",
+        "groq": "llama-3.3-70b-versatile",
+        "gemini": "gemini-2.0-flash",
         "openai": "gpt-4o-mini",
-        "openrouter": "anthropic/claude-3.7-sonnet",
+        "openrouter": "deepseek/deepseek-chat",
     }
     if configured_model and configured_model.strip():
-        # If legacy deepseek-chat was saved, upgrade to deepseek-v4-flash
-        if configured_model == "deepseek-chat" and prov == "deepseek":
-            return "deepseek-v4-flash"
-        # If legacy llama-3.3 was saved for groq, upgrade to gpt-oss-20b
-        if "llama-3.3" in configured_model and prov == "groq":
-            return "openai/gpt-oss-20b"
+        # Prevent invalid synthetic model names
+        if configured_model in ("deepseek-v4-flash", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+            return default_models.get(prov, "deepseek-chat")
         return configured_model
-    return default_models.get(prov, configured_model or "deepseek-v4-flash")
+    return default_models.get(prov, "deepseek-chat")
 
 
 def _resolve_category(cat_candidate: str, categories: dict[str, CategoryConfig]) -> str:

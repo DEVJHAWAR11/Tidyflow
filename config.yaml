@@ -15,9 +15,9 @@ ocr:
   skip_images_smaller_than: 120
 llm:
   enabled: true
-  provider: groq
+  provider: deepseek
   api_base_url: https://api.deepseek.com/v1
-  model: openai/gpt-oss-20b
+  model: deepseek-chat
   batch_size: 15
   max_retries: 3
   timeout_seconds: 120
