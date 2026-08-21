@@ -17,7 +17,7 @@ llm:
   enabled: true
   provider: groq
   api_base_url: https://api.deepseek.com/v1
-  model: openai/gpt-oss-20b
+  model: openai/gpt-oss-120b
   batch_size: 15
   max_retries: 3
   timeout_seconds: 120
