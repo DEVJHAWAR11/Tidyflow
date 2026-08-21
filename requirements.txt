@@ -22,7 +22,8 @@ tqdm>=4.66.0
 python-docx>=1.0.0
 openpyxl>=3.1.0
 
-# Local OCR Engine (PaddleOCR on Windows / Linux; macOS uses native Apple Vision in src/native)
+# Local OCR Engine (RapidOCR ONNX & PaddleOCR for Windows / Linux; macOS uses native Apple Vision in src/native)
+rapidocr-onnxruntime>=1.4.0; sys_platform != "darwin"
 paddlepaddle>=3.0.0; sys_platform != "darwin"
 paddleocr>=2.7.0; sys_platform != "darwin"
 
