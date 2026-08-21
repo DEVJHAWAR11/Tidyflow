@@ -16,6 +16,7 @@ import {
   Layers,
   Eye,
   ImageIcon,
+  FolderOpen,
 } from "lucide-react";
 
 interface SearchViewProps {
@@ -38,9 +39,27 @@ export const SearchView: React.FC<SearchViewProps> = ({
   onClear,
 }) => {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [openedPath, setOpenedPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [inlineThumbnails, setInlineThumbnails] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<FtsResultItem | null>(null);
+
+  const handleOpenInExplorer = async (filePath: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await fetch("http://localhost:8000/fs/open-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath, reveal: true }),
+      });
+      if (res.ok) {
+        setOpenedPath(filePath);
+        setTimeout(() => setOpenedPath(null), 2000);
+      }
+    } catch (err) {
+      console.error("Failed to open file in explorer:", err);
+    }
+  };
 
   // Lock body scroll and handle Escape key when preview modal is open
   useEffect(() => {
@@ -299,6 +318,21 @@ export const SearchView: React.FC<SearchViewProps> = ({
                               Copied!
                             </span>
                           )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenInExplorer(item.path, e)}
+                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-0.5 text-[10px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f0eee9] dark:hover:bg-[#333333] px-1"
+                            title="Open and reveal in Finder / File Explorer"
+                          >
+                            {openedPath === item.path ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-sans font-medium">Opened!</span>
+                            ) : (
+                              <>
+                                <FolderOpen className="w-3 h-3 text-[#0075de] dark:text-[#2383e2]" />
+                                <span>Reveal</span>
+                              </>
+                            )}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -550,23 +584,34 @@ export const SearchView: React.FC<SearchViewProps> = ({
                       <span className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
                         File Path
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyPath(previewItem.path)}
-                        className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        {copiedPath === previewItem.path ? (
-                          <>
-                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3 h-3" />
-                            <span>Copy Path</span>
-                          </>
-                        )}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyPath(previewItem.path)}
+                          className="text-[11px] font-semibold text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedPath === previewItem.path ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenInExplorer(previewItem.path)}
+                          className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline flex items-center gap-1 cursor-pointer bg-[#0075de]/10 dark:bg-[#2383e2]/15 px-2 py-0.5 rounded border border-[#0075de]/20"
+                          title="Open and reveal file in Finder / File Explorer"
+                        >
+                          <FolderOpen className="w-3 h-3" />
+                          <span>{openedPath === previewItem.path ? "Opened!" : "Reveal in Finder"}</span>
+                        </button>
+                      </div>
                     </div>
                     <p className="font-mono text-[11px] text-[#31302e] dark:text-[#d4d4d4] break-all leading-relaxed">
                       {previewItem.path}

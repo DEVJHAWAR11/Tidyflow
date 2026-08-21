@@ -14,6 +14,7 @@ import {
   Loader2,
   Zap,
   FolderCheck,
+  FolderOpen,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -65,6 +66,24 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     clusters: Record<string, string[]>;
     category_overrides: Record<string, string>;
   } | null>(null);
+  const [openedPath, setOpenedPath] = useState<string | null>(null);
+
+  const handleOpenInExplorer = async (filePath: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await fetch("http://localhost:8000/fs/open-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath, reveal: true }),
+      });
+      if (res.ok) {
+        setOpenedPath(filePath);
+        setTimeout(() => setOpenedPath(null), 2000);
+      }
+    } catch (err) {
+      console.error("Failed to open file in explorer:", err);
+    }
+  };
 
   // Unrecognized or low confidence files queue
   const unrecognizedFiles = useMemo(() => {
@@ -634,15 +653,24 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                         )}
                       </td>
 
-                      {/* Inspect Button */}
+                      {/* Inspect & Reveal Actions */}
                       <td className="p-3 text-center">
-                        <button
-                          onClick={() => setPreviewFile(file)}
-                          className="p-1 text-[#a39e98] hover:text-[#0075de] dark:hover:text-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 rounded-md transition cursor-pointer"
-                          title="Inspect document text"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => setPreviewFile(file)}
+                            className="p-1 text-[#a39e98] hover:text-[#0075de] dark:hover:text-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 rounded-md transition cursor-pointer"
+                            title="Inspect document text"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => handleOpenInExplorer(file.abs_path, e)}
+                            className="p-1 text-[#a39e98] hover:text-[#0075de] dark:hover:text-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 rounded-md transition cursor-pointer"
+                            title="Reveal in Finder / File Explorer"
+                          >
+                            <FolderOpen className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -746,7 +774,15 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 )}
               </div>
 
-              <div className="flex justify-end pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
+              <div className="flex items-center justify-between pt-3 border-t border-[#e6e6e6] dark:border-[#333333]">
+                <button
+                  type="button"
+                  onClick={() => handleOpenInExplorer(previewFile.abs_path)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#0075de]/10 dark:bg-[#2383e2]/15 hover:bg-[#0075de]/20 text-[#0075de] dark:text-[#8bc5f8] text-[13px] font-semibold rounded-full cursor-pointer transition border border-[#0075de]/20"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>{openedPath === previewFile.abs_path ? "Opened in Finder!" : "Reveal in Finder"}</span>
+                </button>
                 <button
                   onClick={() => setPreviewFile(null)}
                   className="px-5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] text-[13px] font-semibold rounded-full cursor-pointer"
@@ -783,12 +819,21 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <p className="text-[12px] font-mono bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg text-[#000000] dark:text-[#ffffff] break-all border border-[#e6e6e6] dark:border-[#2e2e2e]">
                 {applyResultModal.output_dir}
               </p>
-              <button
-                onClick={() => setApplyResultModal(null)}
-                className="w-full py-2.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white font-semibold text-[13px] rounded-full shadow-xs cursor-pointer"
-              >
-                Done
-              </button>
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  onClick={() => handleOpenInExplorer(applyResultModal.output_dir)}
+                  className="flex-1 py-2.5 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] font-semibold text-[13px] rounded-full border border-[#e6e6e6] dark:border-[#333333] flex items-center justify-center gap-1.5 cursor-pointer transition"
+                >
+                  <FolderOpen className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+                  <span>Open Folder</span>
+                </button>
+                <button
+                  onClick={() => setApplyResultModal(null)}
+                  className="flex-1 py-2.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white font-semibold text-[13px] rounded-full shadow-xs cursor-pointer transition"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>,
           document.body
