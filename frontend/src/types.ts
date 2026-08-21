@@ -1,0 +1,60 @@
+export interface CategoryItem {
+  name: string;
+  description: string;
+  keywords: string[];
+  extensions: string[];
+  active: boolean;
+}
+
+export interface ClassifiedFile {
+  file_id: string;
+  filename: string;
+  abs_path: string;
+  rel_path: string;
+  extension: string;
+  file_size_bytes: number;
+  file_category: string;
+  category: string;
+  confidence: number;
+  suggested_filename?: string;
+  reason?: string;
+  action: string;
+  source: string;
+  thumbnail_b64?: string;
+  extracted_text?: string;
+  duplicate_group_id?: string;
+  near_duplicate_group_id?: string;
+  keyword_scores?: Record<string, number>;
+}
+
+export interface RunSummary {
+  total_scanned: number;
+  total_skipped: number;
+  text_extracted: number;
+  ocr_processed: number;
+  ocr_cached: number;
+  exact_duplicates: number;
+  near_duplicates: number;
+  heuristic_classified: number;
+  llm_classified: number;
+  manual_review: number;
+}
+
+export interface ApplyDecisionItem {
+  file_id: string;
+  approved: boolean;
+  override_category?: string;
+  target_filename?: string;
+}
+
+export interface FtsResultItem {
+  path: string;
+  category?: string;
+  confidence?: number;
+  extracted_text?: string;
+  ocr_text?: string;
+  summary?: string;
+}
+
+export type TabType = "organize" | "categories" | "review" | "search" | "settings";
+export type BackendStatus = "running" | "offline" | "checking";
