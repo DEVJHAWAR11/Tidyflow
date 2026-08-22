@@ -21,52 +21,94 @@ from .llm_provider import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Prompt Templates
+# Prompt Builders & Complexity Guidelines
 # ---------------------------------------------------------------------------
 
-_STRUCTURE_CHAT_SYSTEM_PROMPT = """\
-You are TidyFlow AI, an expert workspace organizer and taxonomy architect.
+def _get_complexity_guidelines(complexity_level: str = "medium") -> str:
+    level = (complexity_level or "medium").lower().strip()
+    if level == "low":
+        return """\
+CLASSIFICATION COMPLEXITY LEVEL: BROAD (LOW)
+- Target: 3 to 4 broad, clean top-level categories only (e.g., "Documents", "Media", "Work_Files", "Archives").
+- Nesting: FLAT STRUCTURE ONLY. Do NOT use subfolders (no "/" in category names).
+- Goal: Rapid, clean decluttering with minimal mental overhead."""
+    elif level == "high":
+        return """\
+CLASSIFICATION COMPLEXITY LEVEL: GRANULAR (HIGH)
+- Target: 8 to 12 specific, detailed categories.
+- Nesting: Use 1-2 levels of subfolders (e.g., "Finance/Invoices_2026", "Finance/Receipts", "Academic/Lecture_Notes", "Academic/Assignments", "Code/Python_Scripts", "Media/Screenshots").
+- Keywords & Extensions: Provide 6 to 10 precise keywords and targeted file extensions for each category."""
+    elif level == "complex":
+        return """\
+CLASSIFICATION COMPLEXITY LEVEL: DEEP & HIERARCHICAL (COMPLEX)
+- Target: 10 to 16 deeply tailored, multi-level hierarchical categories (2-3 levels deep, e.g. "Work/Client_Projects/Alpha_Deliverables", "Finance/Taxes/FY2026/Invoices", "Development/Backend/Configs", "Personal/Medical_Records").
+- Date & Project Detection: Include date-aware or project-aware folder hierarchies where relevant.
+- Behavioral Rules: Formulate rich "custom_instructions" specifying file renaming patterns, date-prefixing rules, and OCR-based routing."""
+    else:  # medium / balanced (default)
+        return """\
+CLASSIFICATION COMPLEXITY LEVEL: BALANCED (MEDIUM)
+- Target: 5 to 7 well-structured functional categories (e.g. "Work/Client_Reports", "Finance/Invoices", "Development/Source_Code", "Media/Images", "Personal/Notes").
+- Nesting: 1 level of clean subfolders where logical (use "/" if needed).
+- Keywords & Extensions: 4 to 8 distinct keywords and matching extensions per category."""
+
+
+def _build_structure_chat_system_prompt(complexity_level: str = "medium") -> str:
+    complexity_guide = _get_complexity_guidelines(complexity_level)
+    return f"""\
+You are TidyFlow AI, an expert workspace organizer, taxonomist, and file structure architect.
 Your goal is to help users organize their disorganized directories into clean, intuitive, and tailored category folders.
 
-TASK:
-1. Analyze the user's instructions, conversation history, existing category setup, and any sample filenames from their directory.
-2. Formulate a structured set of category folders (usually 3 to 7 categories) perfectly suited to their needs.
-3. For each category provide:
-   - "name": Clean path/folder name (e.g. "Work/Client_Alpha", "Finance/Invoices", "College/Assignments", "Photos/2026"). Use "/" for subfolders if hierarchy is appropriate.
+{complexity_guide}
+
+CRITICAL RULES FOR REFINEMENT & CATEGORY MODIFICATIONS:
+1. COMPLETE TAXONOMY REPLACEMENT: The "categories" object in your JSON output will be the EXACT active set of categories in the user's workspace.
+2. DELETE / REMOVE REQUESTS: If the user says "remove X", "delete X", "I don't want X", "get rid of X", or "exclude X", you MUST COMPLETELY REMOVE category X from the returned "categories" dictionary. NEVER keep a category the user asked to remove.
+3. RENAME / MERGE / SPLIT:
+   - If the user asks to rename "X" to "Y", update the key and name to "Y", preserving or updating the description/keywords.
+   - If the user asks to split "X" into "Y" and "Z", remove "X" and create "Y" and "Z".
+   - If the user asks to merge "A" and "B" into "C", remove "A" and "B" and add "C".
+4. ADD NEW CATEGORIES: If the user asks to add a category (e.g., "add a folder for Receipts"), add it alongside the existing valid categories without wiping the rest.
+5. COMPLEXITY ADJUSTMENTS:
+   - If the user asks for fewer / simpler categories (e.g. "make it simpler", "fewer folders"), consolidate categories into broader buckets according to the Low/Broad complexity level.
+   - If the user asks for more granular / detailed categories (e.g. "split by project", "make it more detailed"), break them down into finer categories according to the High/Complex level.
+6. AUTO-DISCOVERY FROM FILES: When sample filenames or file inventories are provided, inspect the actual file names, extensions, course codes, client names, and topics present in the directory and create categories specifically tailored to those real files.
+7. For each category provide:
+   - "name": Clean path/folder name (e.g. "Work/Reports", "Finance/Invoices", "Academic/Lectures", "Photos").
    - "description": 1-2 sentence description of what belongs in this folder.
    - "keywords": 4 to 8 distinct matching keywords (lowercase).
    - "extensions": Target file extensions (e.g. [".pdf", ".docx", ".xlsx", ".png"]) or [] if all extensions are allowed.
    - "active": true
-4. Extract any specific behavioral rules into "custom_instructions" (e.g., "Put all screenshots in Temp_Screenshots; route invoices to Taxes/2026").
-5. Return a friendly, conversational message summarizing the structure and asking the user to verify or request any tweaks before organizing.
-6. Set "is_ready" to true if a concrete category structure is proposed.
+8. Set "is_ready" to true if a concrete category structure is proposed.
+9. In "message", provide a friendly, conversational explanation explicitly detailing what changes were made.
 
 OUTPUT FORMAT — Return ONLY strict JSON:
-{
-  "message": "Friendly response explaining the proposed organization structure, highlighting key folders, and asking the user to verify.",
-  "categories": {
-    "Category_Name": {
+{{
+  "message": "Friendly response explaining the proposed organization structure, highlighting key folders, and summarizing changes.",
+  "categories": {{
+    "Category_Name": {{
       "name": "Category_Name",
       "description": "Short description",
       "keywords": ["kw1", "kw2"],
       "extensions": [".pdf", ".docx"],
       "active": true
-    }
-  },
-  "custom_instructions": "Specific rules for file classification",
+    }}
+  }},
+  "custom_instructions": "Specific rules for file classification if any",
   "is_ready": true
-}
+}}
 """
 
+
 _REVIEW_COMMAND_SYSTEM_PROMPT = """\
-You are TidyFlow AI assisting the user with bulk editing classified files.
-The user will provide a command in natural language (e.g., "Move all invoices to Finance/Invoices", "Set files containing 'tax' to Taxes/2026", "Change all .png files to Screenshots").
+You are TidyFlow AI assisting the user with bulk editing classified files in the review dashboard.
+The user will provide a command in natural language (e.g., "Move all invoices to Finance/Invoices", "Set files containing 'tax' to Taxes/2026", "Change all .png files to Screenshots", "Create category Travel and move vacation photos there").
 
 TASK:
 1. Examine the list of files provided (file_id, filename, current_category, extension).
 2. Determine which files match the user's intent.
-3. Output category overrides mapping file_id to the target category.
-4. Output optional suggested filename changes if requested.
+3. You can assign files to EXISTING categories or introduce a NEW target category if the user asked for one.
+4. Output category overrides mapping file_id to the target category.
+5. Output optional suggested filename changes if requested.
 
 OUTPUT FORMAT — Return ONLY strict JSON:
 {
@@ -107,7 +149,81 @@ OUTPUT FORMAT — Return ONLY strict JSON:
 
 
 # ---------------------------------------------------------------------------
-# Conversational Category Structure Planner
+# Deep Directory Inspection for Bespoke Taxonomy Synthesis
+# ---------------------------------------------------------------------------
+
+def inspect_directory_files(input_dir: str, max_files: int = 100) -> list[str]:
+    """
+    Recursively inspect up to `max_files` from input_dir, extracting filenames,
+    relative paths, extensions, file sizes, and short content previews for text/PDF files.
+    """
+    if not input_dir:
+        return []
+
+    p = Path(input_dir).resolve()
+    if not p.exists() or not p.is_dir():
+        return []
+
+    ignored_names = {
+        ".git", ".svn", ".hg", "__pycache__", ".pytest_cache", ".venv", "venv",
+        "node_modules", ".DS_Store", "Thumbs.db", ".tidyflow",
+        "Organized_Output", "organized_output", "Organized", "organized", "Staging", "staging",
+    }
+
+    discovered: list[str] = []
+
+    for root, dirs, files in os.walk(p):
+        dirs[:] = [d for d in dirs if d not in ignored_names and not d.startswith(".")]
+        try:
+            rel_root = Path(root).relative_to(p)
+        except ValueError:
+            rel_root = Path(".")
+
+        for file_name in files:
+            if file_name.startswith(".") or file_name in ignored_names:
+                continue
+
+            file_path = Path(root) / file_name
+            rel_file_path = (rel_root / file_name).as_posix() if str(rel_root) != "." else file_name
+            ext = file_path.suffix.lower()
+
+            try:
+                size_kb = round(file_path.stat().st_size / 1024, 1)
+            except OSError:
+                size_kb = 0.0
+
+            preview = ""
+            try:
+                if ext in {".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".html", ".css", ".sql", ".sh", ".yaml", ".yml"}:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        snippet = f.read(400).replace("\n", " ").strip()
+                        if snippet:
+                            preview = f' | Content: "{snippet[:180]}"'
+                elif ext == ".pdf":
+                    import fitz
+                    doc = fitz.open(file_path)
+                    if len(doc) > 0:
+                        page_text = doc[0].get_text()[:400].replace("\n", " ").strip()
+                        if page_text:
+                            preview = f' | PDF Content: "{page_text[:180]}"'
+                    doc.close()
+            except Exception:
+                pass
+
+            file_desc = f"{rel_file_path} ({ext.upper() if ext else 'FILE'}, {size_kb} KB){preview}"
+            discovered.append(file_desc)
+
+            if len(discovered) >= max_files:
+                break
+
+        if len(discovered) >= max_files:
+            break
+
+    return discovered
+
+
+# ---------------------------------------------------------------------------
+# Conversational Category Structure Planner & Auto-Discovery
 # ---------------------------------------------------------------------------
 
 def chat_generate_structure(
@@ -115,22 +231,31 @@ def chat_generate_structure(
     history: list[dict[str, str]] | None = None,
     current_categories: dict[str, Any] | None = None,
     sample_filenames: list[str] | None = None,
+    complexity_level: str = "medium",
+    auto_discover: bool = False,
 ) -> dict[str, Any]:
     """
-    Process natural language instruction to generate or update categories.
+    Process natural language instruction or auto-discovery trigger to generate or update categories.
     Returns:
         {
             "message": str,
             "categories": dict[str, dict],
             "custom_instructions": str,
-            "is_ready": bool
+            "is_ready": bool,
+            "complexity_level": str
         }
     """
     provider, api_key, custom_url = load_settings()
 
     # If no LLM key, use smart heuristic fallback
     if not api_key:
-        return _fallback_heuristic_structure(message, current_categories, sample_filenames)
+        return _fallback_heuristic_structure(
+            message=message,
+            current_categories=current_categories,
+            sample_filenames=sample_filenames,
+            complexity_level=complexity_level,
+            auto_discover=auto_discover,
+        )
 
     base_url = custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -141,17 +266,22 @@ def chat_generate_structure(
 
     # Format context for prompt
     context_parts = []
-    if current_categories:
-        context_parts.append(f"CURRENT CONFIGURED CATEGORIES:\n{json.dumps(current_categories, indent=2)}")
+    context_parts.append(f"SELECTED COMPLEXITY LEVEL: {complexity_level.upper()}")
+
+    if current_categories and not auto_discover:
+        active_cats = {k: v for k, v in current_categories.items() if v.get("active", True)}
+        context_parts.append(f"CURRENT CONFIGURED CATEGORIES ({len(active_cats)} active):\n{json.dumps(active_cats, indent=2)}")
+
     if sample_filenames:
-        context_parts.append(f"SAMPLE FILENAMES IN DIRECTORY (first {len(sample_filenames)} files):\n" + "\n".join(sample_filenames[:40]))
+        context_parts.append(f"ACTUAL DIRECTORY INVENTORY (sample of {len(sample_filenames)} files):\n" + "\n".join(sample_filenames[:60]))
 
     context_str = "\n\n".join(context_parts) if context_parts else "No existing files/categories provided."
 
-    messages = [{"role": "system", "content": _STRUCTURE_CHAT_SYSTEM_PROMPT}]
+    system_prompt = _build_structure_chat_system_prompt(complexity_level)
+    messages = [{"role": "system", "content": system_prompt}]
 
-    # Append history
-    if history:
+    # Append history (only if not a fresh auto-discover request)
+    if history and not auto_discover:
         for h in history[-8:]:  # keep last 8 turns for context
             role = "assistant" if h.get("role") in ("assistant", "ai") else "user"
             content = h.get("content") or h.get("message") or ""
@@ -159,11 +289,12 @@ def chat_generate_structure(
                 messages.append({"role": role, "content": content})
 
     # Current user turn with context
-    user_payload = f"USER REQUEST:\n{message}\n\nCONTEXT:\n{context_str}"
+    req_type = "AUTO-DISCOVER DIRECTORY TAXONOMY REQUEST" if auto_discover else "USER INSTRUCTION / EDIT REQUEST"
+    user_payload = f"{req_type}:\n{message}\n\nCONTEXT & CURRENT STATE:\n{context_str}"
     messages.append({"role": "user", "content": user_payload})
 
     try:
-        with httpx.Client(timeout=45.0) as client:
+        with httpx.Client(timeout=50.0) as client:
             resp = client.post(
                 url,
                 headers=headers,
@@ -215,16 +346,28 @@ def chat_generate_structure(
                             "active": item.get("active", True),
                         }
 
+            msg = parsed.get(
+                "message",
+                f"Generated custom {complexity_level} taxonomy with {len(normalized_cats)} categories."
+            )
+
             return {
-                "message": parsed.get("message", "Here is your custom organization structure. Please review before proceeding."),
+                "message": msg,
                 "categories": normalized_cats if normalized_cats else (current_categories or {}),
-                "custom_instructions": parsed.get("custom_instructions", message),
+                "custom_instructions": parsed.get("custom_instructions", ""),
                 "is_ready": parsed.get("is_ready", True),
+                "complexity_level": complexity_level,
             }
 
     except Exception as exc:
         logger.warning("LLM category generation failed (%s), falling back to heuristic planner", exc)
-        return _fallback_heuristic_structure(message, current_categories, sample_filenames)
+        return _fallback_heuristic_structure(
+            message=message,
+            current_categories=current_categories,
+            sample_filenames=sample_filenames,
+            complexity_level=complexity_level,
+            auto_discover=auto_discover,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +403,7 @@ def apply_review_command(
         "Content-Type": "application/json",
     }
 
-    # Compact files list for prompt
+    # Compact files list for prompt (up to 120 files)
     files_payload = [
         {
             "file_id": f.get("file_id"),
@@ -269,17 +412,17 @@ def apply_review_command(
             "current_category": f.get("category"),
             "reason": f.get("reason", "")[:60],
         }
-        for f in files[:80]  # cap at 80 files for prompt efficiency
+        for f in files[:120]
     ]
 
     user_payload = (
         f"USER COMMAND: {command}\n\n"
-        f"AVAILABLE CATEGORIES: {json.dumps(cat_list)}\n\n"
+        f"AVAILABLE CATEGORIES (you may also create a new one if command requests): {json.dumps(cat_list)}\n\n"
         f"FILES TO REVIEW ({len(files_payload)} items):\n{json.dumps(files_payload, indent=2)}"
     )
 
     try:
-        with httpx.Client(timeout=35.0) as client:
+        with httpx.Client(timeout=40.0) as client:
             resp = client.post(
                 url,
                 headers=headers,
@@ -463,45 +606,389 @@ def _fallback_heuristic_clustering(
 
 
 # ---------------------------------------------------------------------------
-# Fallback Heuristic Generators (Offline / API Key Missing)
+# Smart Heuristic Structure Planner & Fallback
 # ---------------------------------------------------------------------------
 
 def _fallback_heuristic_structure(
     message: str,
     current_categories: dict[str, Any] | None = None,
     sample_filenames: list[str] | None = None,
+    complexity_level: str = "medium",
+    auto_discover: bool = False,
 ) -> dict[str, Any]:
-    """Generate smart categories using keyword rules when LLM is unavailable."""
+    """
+    Intelligent heuristic structure planner supporting edit commands,
+    sample filename clustering, and multi-tier complexity levels.
+    """
     msg_lower = message.lower()
-    proposed: dict[str, dict[str, Any]] = {}
+    complexity = (complexity_level or "medium").lower()
 
-    # Detect preset themes
-    if any(w in msg_lower for w in ["student", "academic", "university", "college", "lecture", "homework", "study"]):
-        proposed = {
-            "Academic/Lecture_Notes": {
-                "name": "Academic/Lecture_Notes",
-                "description": "Lecture slides, class notes, and summaries",
-                "keywords": ["lecture", "notes", "chapter", "slide", "class", "syllabus"],
-                "extensions": [".pdf", ".pptx", ".docx", ".md", ".txt"],
+    # 1. Handle user edit commands on existing categories (remove / delete / rename / add / simplify)
+    if current_categories and not auto_discover:
+        cats = {k: dict(v) for k, v in current_categories.items()}
+
+        # Check for DELETE / REMOVE commands
+        delete_matches = re.findall(
+            r"(?:remove|delete|drop|exclude|get rid of|stop using)\s+(?:the\s+)?(?:category\s+)?([a-zA-Z0-9_\-\/ ]+?)(?:\s+category|\s+folder|and|\.|$|,)",
+            message,
+            re.IGNORECASE,
+        )
+        for target in delete_matches:
+            target_clean = target.strip().lower()
+            keys_to_remove = [k for k in list(cats.keys()) if target_clean in k.lower() or k.lower() in target_clean]
+            for k in keys_to_remove:
+                if k in cats:
+                    del cats[k]
+
+        # Check for RENAME commands: "rename X to Y" or "change X to Y"
+        rename_matches = re.findall(
+            r"(?:rename|change)\s+(?:the\s+)?(?:category\s+)?([a-zA-Z0-9_\-\/ ]+?)\s+to\s+([a-zA-Z0-9_\-\/]+)",
+            message,
+            re.IGNORECASE,
+        )
+        for old_name, new_name in rename_matches:
+            old_clean = old_name.strip().lower()
+            new_clean = new_name.strip()
+            for k in list(cats.keys()):
+                if old_clean in k.lower() or k.lower() in old_clean:
+                    val = cats.pop(k)
+                    val["name"] = new_clean
+                    cats[new_clean] = val
+
+        # Check for ADD commands: "add a new folder for X" or "create X"
+        add_matches = re.findall(
+            r"(?:add|create|new folder for|make folder for)\s+(?:a\s+)?(?:new\s+)?(?:folder\s+for\s+|category\s+for\s+)?([a-zA-Z0-9_\-\/ ]+?)(?:\s+category|\s+folder|and|\.|$|,)",
+            message,
+            re.IGNORECASE,
+        )
+        for new_item in add_matches:
+            new_item_clean = re.sub(r"^(?:a|the|new|folder|category|for)\s+", "", new_item.strip(), flags=re.IGNORECASE).strip().replace(" ", "_")
+            if new_item_clean and len(new_item_clean) >= 2 and new_item_clean not in cats:
+                cats[new_item_clean] = {
+                    "name": new_item_clean,
+                    "description": f"Files for {new_item_clean}",
+                    "keywords": [new_item_clean.lower()],
+                    "extensions": [],
+                    "active": True,
+                }
+
+        # If user asked for simpler / fewer categories
+        if any(w in msg_lower for w in ["simpler", "fewer", "consolidate", "minimal"]):
+            if len(cats) > 4:
+                # Merge into 3 broad categories
+                cats = {
+                    "Documents": {
+                        "name": "Documents",
+                        "description": "General text documents, PDFs, and reports",
+                        "keywords": ["document", "pdf", "report", "notes", "file"],
+                        "extensions": [".pdf", ".docx", ".txt", ".md"],
+                        "active": True,
+                    },
+                    "Media": {
+                        "name": "Media",
+                        "description": "Photos, illustrations, and recordings",
+                        "keywords": ["image", "photo", "screenshot", "video"],
+                        "extensions": [".png", ".jpg", ".jpeg", ".mp4", ".mp3"],
+                        "active": True,
+                    },
+                    "Archives_and_Data": {
+                        "name": "Archives_and_Data",
+                        "description": "Archives, datasets, and code files",
+                        "keywords": ["zip", "data", "backup", "archive"],
+                        "extensions": [".zip", ".tar", ".gz", ".json", ".csv"],
+                        "active": True,
+                    },
+                }
+
+        if cats:
+            return {
+                "message": f"Updated your workspace structure. You now have {len(cats)} active categories.",
+                "categories": cats,
+                "custom_instructions": message,
+                "is_ready": True,
+                "complexity_level": complexity,
+            }
+
+    # 2. Dynamic clustering from sample_filenames if provided
+    if sample_filenames and len(sample_filenames) >= 3:
+        proposed = _cluster_sample_filenames_heuristically(sample_filenames, complexity)
+        if proposed:
+            return {
+                "message": f"Analyzed {len(sample_filenames)} files in your directory and synthesized a {complexity.title()} taxonomy with {len(proposed)} folders.",
+                "categories": proposed,
+                "custom_instructions": "",
+                "is_ready": True,
+                "complexity_level": complexity,
+            }
+
+    # 3. Thematic presets by complexity level
+    proposed = _generate_thematic_categories(msg_lower, complexity)
+
+    return {
+        "message": f"Formulated a {complexity.title()} organization blueprint with {len(proposed)} folders based on your requirements. Please verify below.",
+        "categories": proposed,
+        "custom_instructions": message if not auto_discover else "",
+        "is_ready": True,
+        "complexity_level": complexity,
+    }
+
+
+def _cluster_sample_filenames_heuristically(filenames: list[str], complexity: str) -> dict[str, dict[str, Any]]:
+    """Synthesize categories from real filenames matching requested complexity."""
+    ext_counts: dict[str, int] = {}
+    tokens: list[str] = []
+
+    for item in filenames:
+        clean_name = item.split(" (")[0] if " (" in item else item
+        ext = Path(clean_name).suffix.lower()
+        if ext:
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        # Extract word tokens from filename & preview content
+        words = re.findall(r"[a-zA-Z]{3,}", item.lower())
+        tokens.extend(words)
+
+    categories: dict[str, dict[str, Any]] = {}
+
+    has_code = any(e in ext_counts for e in [".py", ".ts", ".js", ".html", ".css", ".go", ".rs", ".cpp", ".sh"])
+    has_docs = any(e in ext_counts for e in [".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".txt", ".md"])
+    has_images = any(e in ext_counts for e in [".png", ".jpg", ".jpeg", ".webp", ".svg", ".heic"])
+    has_media = any(e in ext_counts for e in [".mp4", ".mov", ".mkv", ".mp3", ".wav"])
+    has_archives = any(e in ext_counts for e in [".zip", ".tar", ".gz", ".7z", ".dmg", ".pkg"])
+
+    has_invoices = any(w in tokens for w in ["invoice", "receipt", "bill", "payment", "tax"])
+    has_academic = any(w in tokens for w in ["lecture", "assignment", "homework", "exam", "syllabus", "paper", "lab"])
+    has_screenshots = any(w in tokens for w in ["screenshot", "screen shot", "capture"])
+
+    if complexity == "low":
+        # 3-4 Flat broad buckets
+        if has_docs or has_invoices or has_academic:
+            categories["Documents"] = {
+                "name": "Documents",
+                "description": "General text files, PDFs, reports, and spreadsheets",
+                "keywords": ["document", "pdf", "report", "statement", "notes"],
+                "extensions": [".pdf", ".docx", ".xlsx", ".txt", ".md"],
                 "active": True,
-            },
-            "Academic/Assignments": {
-                "name": "Academic/Assignments",
-                "description": "Homework, problem sets, and essays",
-                "keywords": ["assignment", "homework", "lab", "essay", "report", "submission"],
+            }
+        if has_images or has_media or has_screenshots:
+            categories["Media"] = {
+                "name": "Media",
+                "description": "Images, screenshots, videos, and audio files",
+                "keywords": ["photo", "image", "screenshot", "video", "audio"],
+                "extensions": [".png", ".jpg", ".jpeg", ".mp4", ".mp3", ".mov"],
+                "active": True,
+            }
+        if has_code:
+            categories["Development"] = {
+                "name": "Development",
+                "description": "Source code scripts, datasets, and configs",
+                "keywords": ["code", "script", "data", "json", "config"],
+                "extensions": [".py", ".js", ".ts", ".json", ".sql", ".sh"],
+                "active": True,
+            }
+        if has_archives:
+            categories["Archives"] = {
+                "name": "Archives",
+                "description": "Zip files, installers, and compressed packages",
+                "keywords": ["zip", "archive", "installer", "backup"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg", ".pkg"],
+                "active": True,
+            }
+        if not categories:
+            categories["General_Files"] = {
+                "name": "General_Files",
+                "description": "Organized general workspace items",
+                "keywords": [],
+                "extensions": [],
+                "active": True,
+            }
+
+    elif complexity in ("high", "complex"):
+        # Granular & Hierarchical
+        if has_invoices:
+            categories["Finance/Invoices_and_Bills"] = {
+                "name": "Finance/Invoices_and_Bills",
+                "description": "Vendor invoices, receipts, and payment confirmations",
+                "keywords": ["invoice", "receipt", "bill", "payment", "due", "total"],
+                "extensions": [".pdf", ".xlsx", ".csv"],
+                "active": True,
+            }
+        if has_academic:
+            categories["Academic/Course_Materials"] = {
+                "name": "Academic/Course_Materials",
+                "description": "Class lectures, slides, and study notes",
+                "keywords": ["lecture", "notes", "slide", "syllabus", "chapter"],
+                "extensions": [".pdf", ".pptx", ".docx"],
+                "active": True,
+            }
+            categories["Academic/Assignments_and_Labs"] = {
+                "name": "Academic/Assignments_and_Labs",
+                "description": "Homework submissions, problem sets, and lab reports",
+                "keywords": ["assignment", "homework", "lab", "report", "problem"],
                 "extensions": [".pdf", ".docx", ".py", ".zip"],
                 "active": True,
-            },
-            "Academic/Research_Papers": {
-                "name": "Academic/Research_Papers",
-                "description": "Academic papers, journal articles, and reading material",
-                "keywords": ["paper", "journal", "doi", "abstract", "ieee", "arxiv"],
-                "extensions": [".pdf"],
+            }
+        if has_screenshots:
+            categories["Media/Screenshots"] = {
+                "name": "Media/Screenshots",
+                "description": "Screen captures and quick recordings",
+                "keywords": ["screenshot", "screen shot", "capture"],
+                "extensions": [".png", ".jpg", ".jpeg"],
                 "active": True,
-            },
-        }
-    elif any(w in msg_lower for w in ["freelance", "client", "contract", "agency", "consulting"]):
-        proposed = {
+            }
+        if has_images:
+            categories["Media/Photos_and_Assets"] = {
+                "name": "Media/Photos_and_Assets",
+                "description": "High-res photos, design graphics, and visual assets",
+                "keywords": ["photo", "camera", "graphic", "asset", "design"],
+                "extensions": [".jpg", ".jpeg", ".png", ".webp", ".svg", ".heic"],
+                "active": True,
+            }
+        if has_code:
+            categories["Development/Source_Code"] = {
+                "name": "Development/Source_Code",
+                "description": "Source code scripts, modules, and repositories",
+                "keywords": ["import", "function", "class", "def", "const"],
+                "extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"],
+                "active": True,
+            }
+            categories["Development/Data_and_Configs"] = {
+                "name": "Development/Data_and_Configs",
+                "description": "Configuration files, schemas, and dataset exports",
+                "keywords": ["json", "yaml", "config", "schema", "database", "sql"],
+                "extensions": [".json", ".yaml", ".yml", ".sql", ".csv"],
+                "active": True,
+            }
+        if has_docs and not has_invoices and not has_academic:
+            categories["Documents/Reports_and_Notes"] = {
+                "name": "Documents/Reports_and_Notes",
+                "description": "General text documents, PDFs, and notes",
+                "keywords": ["report", "document", "notes", "summary"],
+                "extensions": [".pdf", ".docx", ".txt", ".md"],
+                "active": True,
+            }
+        if has_archives:
+            categories["Archives_and_Installers"] = {
+                "name": "Archives_and_Installers",
+                "description": "Compressed archives, packages, and installer images",
+                "keywords": ["archive", "backup", "installer", "setup", "zip"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg", ".pkg"],
+                "active": True,
+            }
+    else:
+        # Medium / Balanced (5-7 categories)
+        if has_invoices:
+            categories["Finance/Invoices"] = {
+                "name": "Finance/Invoices",
+                "description": "Invoices, bills, and payment records",
+                "keywords": ["invoice", "bill", "receipt", "payment"],
+                "extensions": [".pdf", ".xlsx", ".csv"],
+                "active": True,
+            }
+        if has_academic:
+            categories["Academic/Study_Files"] = {
+                "name": "Academic/Study_Files",
+                "description": "Lectures, study notes, and assignments",
+                "keywords": ["lecture", "assignment", "homework", "notes"],
+                "extensions": [".pdf", ".pptx", ".docx"],
+                "active": True,
+            }
+        if has_code:
+            categories["Development/Code"] = {
+                "name": "Development/Code",
+                "description": "Source code, scripts, and configuration files",
+                "keywords": ["code", "script", "config", "json"],
+                "extensions": [".py", ".js", ".ts", ".json", ".sql"],
+                "active": True,
+            }
+        if has_images or has_screenshots:
+            categories["Media/Images"] = {
+                "name": "Media/Images",
+                "description": "Photos, screenshots, and graphic assets",
+                "keywords": ["photo", "image", "screenshot", "capture"],
+                "extensions": [".png", ".jpg", ".jpeg", ".webp"],
+                "active": True,
+            }
+        if has_docs:
+            categories["Documents/General"] = {
+                "name": "Documents/General",
+                "description": "PDF documents, reports, and text files",
+                "keywords": ["document", "report", "notes", "manual"],
+                "extensions": [".pdf", ".docx", ".txt", ".md"],
+                "active": True,
+            }
+        if has_archives:
+            categories["Archives"] = {
+                "name": "Archives",
+                "description": "Compressed packages and installer archives",
+                "keywords": ["zip", "archive", "backup", "dmg"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg"],
+                "active": True,
+            }
+
+    return categories
+
+
+def _generate_thematic_categories(msg_lower: str, complexity: str) -> dict[str, dict[str, Any]]:
+    """Generate default thematic categories when no filenames are provided."""
+    if any(w in msg_lower for w in ["student", "academic", "university", "college", "lecture", "homework", "study"]):
+        if complexity == "low":
+            return {
+                "Course_Notes": {
+                    "name": "Course_Notes",
+                    "description": "Lecture slides, class notes, and summaries",
+                    "keywords": ["lecture", "notes", "chapter", "slide"],
+                    "extensions": [".pdf", ".pptx", ".docx"],
+                    "active": True,
+                },
+                "Assignments": {
+                    "name": "Assignments",
+                    "description": "Homework, problem sets, and lab reports",
+                    "keywords": ["assignment", "homework", "lab", "report"],
+                    "extensions": [".pdf", ".docx", ".py", ".zip"],
+                    "active": True,
+                },
+                "Study_Material": {
+                    "name": "Study_Material",
+                    "description": "Textbooks, papers, and exam prep",
+                    "keywords": ["paper", "book", "exam", "syllabus"],
+                    "extensions": [".pdf"],
+                    "active": True,
+                },
+            }
+        else:
+            return {
+                "Academic/Lecture_Notes": {
+                    "name": "Academic/Lecture_Notes",
+                    "description": "Lecture slides, class notes, and summaries",
+                    "keywords": ["lecture", "notes", "chapter", "slide", "class", "syllabus"],
+                    "extensions": [".pdf", ".pptx", ".docx", ".md", ".txt"],
+                    "active": True,
+                },
+                "Academic/Assignments": {
+                    "name": "Academic/Assignments",
+                    "description": "Homework, problem sets, and essays",
+                    "keywords": ["assignment", "homework", "lab", "essay", "report", "submission"],
+                    "extensions": [".pdf", ".docx", ".py", ".zip"],
+                    "active": True,
+                },
+                "Academic/Research_Papers": {
+                    "name": "Academic/Research_Papers",
+                    "description": "Academic papers, journal articles, and reading material",
+                    "keywords": ["paper", "journal", "doi", "abstract", "ieee", "arxiv"],
+                    "extensions": [".pdf"],
+                    "active": True,
+                },
+                "Academic/Projects_and_Code": {
+                    "name": "Academic/Projects_and_Code",
+                    "description": "Course code repositories, scripts, and project datasets",
+                    "keywords": ["project", "code", "dataset", "jupyter", "ipynb"],
+                    "extensions": [".py", ".ipynb", ".zip", ".csv"],
+                    "active": True,
+                },
+            }
+
+    if any(w in msg_lower for w in ["freelance", "client", "contract", "agency", "consulting"]):
+        return {
             "Client_Work/Contracts_and_NDAs": {
                 "name": "Client_Work/Contracts_and_NDAs",
                 "description": "Client agreements, NDAs, statements of work",
@@ -524,106 +1011,44 @@ def _fallback_heuristic_structure(
                 "active": True,
             },
         }
-    elif any(w in msg_lower for w in ["code", "developer", "software", "programming", "scripts", "repo"]):
-        proposed = {
-            "Development/Source_Code": {
-                "name": "Development/Source_Code",
-                "description": "Source code files and scripts",
-                "keywords": ["import", "def", "class", "function", "const", "return"],
-                "extensions": [".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".cpp", ".sh"],
-                "active": True,
-            },
-            "Development/Data_and_Configs": {
-                "name": "Development/Data_and_Configs",
-                "description": "Datasets, databases, and configuration files",
-                "keywords": ["config", "data", "json", "yaml", "database", "schema"],
-                "extensions": [".json", ".yaml", ".yml", ".sql", ".csv", ".db", ".sqlite"],
-                "active": True,
-            },
-            "Development/Documentation": {
-                "name": "Development/Documentation",
-                "description": "Technical specs, READMEs, and API docs",
-                "keywords": ["readme", "doc", "specification", "api", "architecture"],
-                "extensions": [".md", ".txt", ".pdf"],
-                "active": True,
-            },
-        }
-    elif any(w in msg_lower for w in ["screenshot", "downloads", "cleanup", "declutter"]):
-        proposed = {
-            "Screenshots": {
-                "name": "Screenshots",
-                "description": "Screen captures and visual recordings",
-                "keywords": ["screen shot", "screenshot", "capture", "cleanshot"],
-                "extensions": [".png", ".jpg", ".jpeg", ".webp"],
-                "active": True,
-            },
-            "Documents/PDFs": {
-                "name": "Documents/PDFs",
-                "description": "Downloaded PDF documents",
-                "keywords": ["manual", "guide", "statement", "form"],
-                "extensions": [".pdf"],
-                "active": True,
-            },
-            "Installers_and_Archives": {
-                "name": "Installers_and_Archives",
-                "description": "Zip archives, disk images, installer packages",
-                "keywords": ["installer", "setup", "archive", "zip", "dmg"],
-                "extensions": [".zip", ".dmg", ".tar", ".gz", ".pkg"],
-                "active": True,
-            },
-        }
-    else:
-        # Extract custom terms from user prompt
-        words = re.findall(r"[a-zA-Z0-9_\-]+", message)
-        custom_cats = [w.capitalize() for w in words if len(w) > 4 and w.lower() not in ["organize", "files", "folder", "folders", "create", "category", "categories", "please", "system", "want"]]
 
-        if custom_cats:
-            for cat in custom_cats[:4]:
-                cat_name = f"Custom/{cat}"
-                proposed[cat_name] = {
-                    "name": cat_name,
-                    "description": f"Files matching '{cat}' topic and related documents",
-                    "keywords": [cat.lower(), f"{cat.lower()}s"],
-                    "extensions": [],
-                    "active": True,
-                }
-            proposed["Other/Unclassified"] = {
-                "name": "Other/Unclassified",
-                "description": "General files and miscellaneous items",
-                "keywords": [],
-                "extensions": [],
-                "active": True,
-            }
-        else:
-            proposed = current_categories or {
-                "Documents/General": {
-                    "name": "Documents/General",
-                    "description": "General text, PDFs, and Office documents",
-                    "keywords": ["document", "report", "notes"],
-                    "extensions": [".pdf", ".docx", ".txt"],
-                    "active": True,
-                },
-                "Media/Images": {
-                    "name": "Media/Images",
-                    "description": "Photos, illustrations, and graphic assets",
-                    "keywords": ["photo", "image", "screenshot"],
-                    "extensions": [".png", ".jpg", ".jpeg", ".heic"],
-                    "active": True,
-                },
-                "Finance/Receipts_and_Bills": {
-                    "name": "Finance/Receipts_and_Bills",
-                    "description": "Invoices, payment receipts, and financial statements",
-                    "keywords": ["receipt", "invoice", "statement", "total"],
-                    "extensions": [".pdf", ".csv", ".xlsx"],
-                    "active": True,
-                },
-            }
-
+    # Standard default
     return {
-        "message": f"I've tailored a custom organization plan with {len(proposed)} folders based on your requirements. Please verify the categories below before we organize.",
-        "categories": proposed,
-        "custom_instructions": message,
-        "is_ready": True,
+        "Documents/General": {
+            "name": "Documents/General",
+            "description": "General text, PDFs, and Office documents",
+            "keywords": ["document", "report", "notes"],
+            "extensions": [".pdf", ".docx", ".txt"],
+            "active": True,
+        },
+        "Media/Images": {
+            "name": "Media/Images",
+            "description": "Photos, illustrations, and graphic assets",
+            "keywords": ["photo", "image", "screenshot"],
+            "extensions": [".png", ".jpg", ".jpeg", ".heic"],
+            "active": True,
+        },
+        "Finance/Receipts_and_Bills": {
+            "name": "Finance/Receipts_and_Bills",
+            "description": "Invoices, payment receipts, and financial statements",
+            "keywords": ["receipt", "invoice", "statement", "total"],
+            "extensions": [".pdf", ".csv", ".xlsx"],
+            "active": True,
+        },
+        "Development/Code": {
+            "name": "Development/Code",
+            "description": "Scripts, datasets, and programming files",
+            "keywords": ["code", "script", "json", "python"],
+            "extensions": [".py", ".js", ".ts", ".json"],
+            "active": True,
+        },
+        "Archives": {
+            "name": "Archives",
+            "description": "Zip files, installers, and compressed packages",
+            "keywords": ["zip", "tar", "archive", "installer"],
+            "extensions": [".zip", ".tar", ".gz", ".dmg"],
+            "active": True,
+        },
     }
 
 
@@ -646,7 +1071,7 @@ def _fallback_heuristic_review_command(
     if not target_cat:
         # Fallback to creating a new category name from command
         if "to " in cmd_lower:
-            target_cat = command.split("to ")[-1].strip().title()
+            target_cat = command.split("to ")[-1].strip().title().replace(" ", "_")
         else:
             target_cat = "Custom_Group"
 

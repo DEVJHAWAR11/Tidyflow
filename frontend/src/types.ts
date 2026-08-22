@@ -73,7 +73,9 @@ export interface ChatMessage {
   categories?: Record<string, CategoryItem>;
   customInstructions?: string;
   isReady?: boolean;
+  complexityLevel?: ComplexityLevel;
 }
 
+export type ComplexityLevel = "low" | "medium" | "high" | "complex";
 export type TabType = "welcome" | "select_folder" | "organize" | "categories" | "review" | "search" | "settings";
 export type BackendStatus = "running" | "offline" | "checking";

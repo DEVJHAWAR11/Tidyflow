@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { FtsResultItem } from "../types";
+import { API_BASE } from "../config";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import {
   Search,
@@ -47,7 +48,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
   const handleOpenInExplorer = async (filePath: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
-      const res = await fetch("http://localhost:8000/fs/open-path", {
+      const res = await fetch(`${API_BASE}/fs/open-path`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: filePath, reveal: true }),

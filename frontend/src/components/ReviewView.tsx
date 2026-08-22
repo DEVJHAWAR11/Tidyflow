@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { ClassifiedFile, RunSummary, CategoryItem } from "../types";
+import { API_BASE } from "../config";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import { QuickTriageModal } from "./QuickTriageModal";
 import { WorkflowStepper } from "./WorkflowStepper";
@@ -178,7 +179,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     setAiFeedback(null);
 
     try {
-      const res = await fetch("http://localhost:8000/ai/review-chat", {
+      const res = await fetch(`${API_BASE}/ai/review-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -204,6 +205,11 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           ...prev,
           ...data.category_overrides,
         }));
+        setSelectedFileIds((prev) => {
+          const next = new Set(prev);
+          Object.keys(data.category_overrides).forEach((fid) => next.add(fid));
+          return next;
+        });
       }
       setAiFeedback(data.message || "Updated files successfully.");
       setAiCommand("");
