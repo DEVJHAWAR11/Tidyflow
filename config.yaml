@@ -32,301 +32,113 @@ classification:
 duplicates:
   hamming_distance_threshold: 8
 categories:
-  Finance/Invoices:
-    description: Invoices, bills, and purchase requests from vendors or services
+  Images/Screenshots:
+    name: Images/Screenshots
+    description: Screenshots captured from devices, typically with 'Screenshot' in
+      the name.
     keywords:
-    - invoice
-    - bill
-    - billing
-    - due date
-    - amount due
-    - invoice number
-    - total amount
-    - payment terms
-    - vendor
-    - remit payment
+    - screenshot
+    - screen
+    - capture
+    - snapshot
     extensions:
-    - .pdf
-    - .png
-    - .jpg
-    - .docx
-  Finance/Receipts:
-    description: Receipts, proof of purchase, order confirmations, and payment acknowledgments
-    keywords:
-    - receipt
-    - order confirmation
-    - payment received
-    - transaction id
-    - subtotal
-    - merchant
-    - store
-    - checkout
-    - paid
-    - cash
-    - visa
-    - mastercard
-    extensions:
-    - .pdf
-    - .png
     - .jpg
     - .jpeg
-    - .webp
-  Finance/Tax:
-    description: Tax returns, W2, 1099, tax deductions, and government revenue filings
-    keywords:
-    - tax
-    - w-2
-    - 1099
-    - irs
-    - tax return
-    - deduction
-    - revenue service
-    - form 1040
-    - fiscal year
-    extensions:
-    - .pdf
-    - .xlsx
-    - .csv
-  Finance/Statements:
-    description: Bank statements, credit card statements, and investment summaries
-    keywords:
-    - statement
-    - account summary
-    - ending balance
-    - beginning balance
-    - deposits
-    - withdrawals
-    - checking account
-    - savings account
-    extensions:
-    - .pdf
-    - .csv
-    - .xlsx
-  Legal/Contracts:
-    description: Legal agreements, NDA, master service agreements, and terms of service
-    keywords:
-    - agreement
-    - contract
-    - non-disclosure
-    - nda
-    - terms and conditions
-    - hereby agree
-    - signature
-    - governing law
-    - confidentiality
-    extensions:
-    - .pdf
-    - .docx
-    - .doc
-  Legal/IDs_and_Certificates:
-    description: Passports, identity cards, driving licenses, certificates, and diplomas
-    keywords:
-    - passport
-    - identity card
-    - driving license
-    - drivers license
-    - certificate of
-    - identification
-    - date of birth
-    - nationality
-    - valid until
-    extensions:
-    - .pdf
     - .png
-    - .jpg
-    - .jpeg
-  Work/Documents:
-    description: Work reports, research documents, meeting notes, memos, and proposals
+    active: true
+  Images/General:
+    name: Images/General
+    description: General image files like icons and other non-screenshot images.
     keywords:
-    - report
-    - meeting notes
-    - executive summary
-    - project plan
-    - roadmap
-    - proposal
-    - memorandum
-    - agenda
-    extensions:
-    - .pdf
-    - .docx
-    - .doc
-    - .md
-    - .txt
-  Work/Resumes_and_CVs:
-    description: Curriculum Vitae, resumes, portfolio documents, and job applications
-    keywords:
-    - resume
-    - curriculum vitae
-    - cv
-    - work experience
-    - education
-    - skills
-    - employment history
-    - professional summary
-    extensions:
-    - .pdf
-    - .docx
-    - .doc
-  Work/Spreadsheets:
-    description: Financial models, data sheets, tables, and tracking sheets
-    keywords:
-    - spreadsheet
-    - workbook
-    - budget
-    - forecast
-    - tracking
-    - inventory
-    - calculation
-    - metrics
-    extensions:
-    - .xlsx
-    - .xls
-    - .csv
-    - .tsv
-  Work/Presentations:
-    description: Slide decks, pitch decks, and presentations
-    keywords:
-    - presentation
-    - slide deck
-    - keynote
-    - pitch deck
-    - overview
-    - agenda
-    extensions:
-    - .pptx
-    - .ppt
-    - .pdf
-    - .key
-  Personal/Photos:
-    description: Personal photography, camera shots, family pictures, and wallpapers
-    keywords:
+    - icon
+    - image
     - photo
     - picture
-    - camera
-    - portrait
-    - landscape
-    - dsc_
-    - img_
     extensions:
+    - .png
     - .jpg
     - .jpeg
-    - .png
-    - .heic
-    - .raw
-    - .tiff
-  Personal/Notes:
-    description: Personal notes, journals, quick thoughts, and drafts
+    - .gif
+    - .bmp
+    - .svg
+    active: true
+  Academic/Coursework:
+    name: Academic/Coursework
+    description: Course-related materials, reports, and assignments, such as the React
+      JS course completion report.
     keywords:
-    - journal
-    - diary
-    - personal note
-    - thoughts
-    - ideas
-    - todo
-    - checklist
+    - react
+    - course
+    - completion
+    - report
+    - learning
+    - aryan
+    - singh
     extensions:
-    - .txt
-    - .md
-  Development/Code:
-    description: Source code files and scripts
+    - .zip
+    - .pptx
+    - .jpeg
+    - .jpg
+    - .pdf
+    active: true
+  Career/Resumes:
+    name: Career/Resumes
+    description: Resumes and CVs for job applications.
     keywords:
-    - import
-    - function
-    - class
-    - def
-    - const
-    - let
-    - var
-    - package
-    - namespace
-    - return
+    - resume
+    - cv
+    - curriculum
+    - vitae
+    - arpan
+    - singh
     extensions:
-    - .py
-    - .js
-    - .ts
-    - .jsx
-    - .tsx
-    - .html
-    - .css
-    - .rs
-    - .go
-    - .cpp
-    - .c
-    - .h
-    - .java
-    - .kt
-    - .dart
-    - .sh
-    - .rb
-    - .php
-  Development/Data:
-    description: Data files, database exports, and configuration files
+    - .pdf
+    - .doc
+    - .docx
+    active: true
+  Finance/Receipts:
+    name: Finance/Receipts
+    description: Payment receipts, invoices, and financial documents.
     keywords:
-    - json
-    - yaml
-    - schema
-    - database
-    - dump
-    - export
-    - dataset
+    - payment
+    - receipt
+    - invoice
+    - bill
+    - gateway
+    - kiit
     extensions:
-    - .json
-    - .yaml
-    - .yml
-    - .xml
-    - .sql
-    - .db
-    - .sqlite
-  Media/Audio:
-    description: Audio recordings, podcasts, voice memos, and music tracks
-    keywords:
-    - audio
-    - podcast
-    - recording
-    - soundtrack
-    - music
-    extensions:
-    - .mp3
-    - .wav
-    - .flac
-    - .m4a
-    - .aac
-    - .ogg
-  Media/Video:
-    description: Video recordings, screen captures, movies, and clips
-    keywords:
-    - video
-    - movie
-    - screen recording
-    - screencast
-    - clip
-    extensions:
-    - .mp4
-    - .mov
-    - .mkv
-    - .avi
-    - .webm
+    - .pdf
+    active: true
   Archives:
-    description: Compressed archive files
+    name: Archives
+    description: Compressed archives and installer files.
     keywords:
     - archive
-    - zip
-    - backup
-    - tar
     - compressed
+    - installer
+    - dmg
+    - tar
+    - zip
+    - tbz2
+    - gz
     extensions:
     - .zip
     - .tar
     - .gz
-    - .tar.gz
-    - .bz2
-    - .7z
+    - .tbz2
+    - .dmg
     - .rar
-  Large_Files:
-    description: Very large files exceeding 50 MB
-    keywords: []
-    extensions: []
-  Unknown:
-    description: Unclassified or miscellaneous files requiring review
-    keywords: []
-    extensions: []
+    - .7z
+    active: true
+  Development/Databases:
+    name: Development/Databases
+    description: Database scripts and schema files.
+    keywords:
+    - sql
+    - table
+    - schema
+    - database
+    - query
+    extensions:
+    - .sql
+    active: true
