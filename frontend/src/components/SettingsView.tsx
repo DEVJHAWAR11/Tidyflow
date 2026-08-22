@@ -13,6 +13,18 @@ export interface ModelOption {
 export const PROVIDER_MODELS: Record<string, ModelOption[]> = {
   deepseek: [
     {
+      id: "deepseek-chat",
+      name: "DeepSeek-V3 Chat (deepseek-chat)",
+      badge: "Flagship V3",
+      description: "DeepSeek-V3 671B MoE model — powerful, fast, and highly cost-effective",
+    },
+    {
+      id: "deepseek-reasoner",
+      name: "DeepSeek-R1 Reasoner (deepseek-reasoner)",
+      badge: "Reasoning R1",
+      description: "DeepSeek-R1 reasoning model with chain-of-thought verification",
+    },
+    {
       id: "deepseek-v4-flash",
       name: "DeepSeek-V4 Flash (deepseek-v4-flash)",
       badge: "Recommended",
@@ -24,43 +36,31 @@ export const PROVIDER_MODELS: Record<string, ModelOption[]> = {
       badge: "Frontier Reasoning",
       description: "Full-scale V4 frontier model for complex document reasoning and sorting",
     },
-    {
-      id: "deepseek-v4-flash-vision-exp",
-      name: "DeepSeek-V4 Flash Vision (deepseek-v4-flash-vision-exp)",
-      badge: "Multimodal Vision",
-      description: "Experimental multimodal vision model for direct image & scanned document analysis",
-    },
   ],
   groq: [
     {
+      id: "llama-3.3-70b-versatile",
+      name: "Llama 3.3 70B (llama-3.3-70b-versatile)",
+      badge: "Recommended Flagship",
+      description: "Meta Llama 3.3 70B running with extreme LPU throughput on Groq",
+    },
+    {
+      id: "llama-3.1-8b-instant",
+      name: "Llama 3.1 8B Instant (llama-3.1-8b-instant)",
+      badge: "Ultra Fast",
+      description: "Ultra-fast low-latency classification for high-volume file sorting",
+    },
+    {
       id: "openai/gpt-oss-120b",
       name: "GPT-OSS 120B (openai/gpt-oss-120b)",
-      badge: "Recommended Flagship",
+      badge: "120B Flagship",
       description: "120B open-weights model running with extreme LPU throughput on Groq",
-    },
-    {
-      id: "openai/gpt-oss-20b",
-      name: "GPT-OSS 20B (openai/gpt-oss-20b)",
-      badge: "Ultra Fast",
-      description: "20B high-efficiency reasoning model for rapid file classification",
-    },
-    {
-      id: "qwen/qwen3.6-27b",
-      name: "Qwen 3.6 27B (qwen/qwen3.6-27b)",
-      badge: "Multimodal",
-      description: "27B vision + text model with thinking modes on Groq LPU",
     },
     {
       id: "qwen-2.5-coder-32b",
       name: "Qwen 2.5 Coder 32B (qwen-2.5-coder-32b)",
       badge: "Code & Structure",
       description: "Specialized for source code, configuration files, and tabular data",
-    },
-    {
-      id: "qwen-qwq-32b",
-      name: "Qwen QwQ 32B (qwen-qwq-32b)",
-      badge: "Math & Logic",
-      description: "High-precision logic & math reasoning model",
     },
     {
       id: "qwen-2.5-32b",

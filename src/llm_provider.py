@@ -517,7 +517,14 @@ def _call_llm_batched(
             return result.results, ""
 
         except Exception as exc:
-            last_error_msg = str(exc)
+            exc_str = str(exc)
+            if "nodename nor servname provided" in exc_str or "getaddrinfo failed" in exc_str:
+                last_error_msg = f"DNS Resolution Error: Unable to reach {base_url}. Your network/DNS is unable to resolve this domain. Switch provider in Settings or use 8.8.8.8 DNS."
+            elif isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                last_error_msg = f"Connection Failed: Could not connect to {base_url} ({exc})"
+            else:
+                last_error_msg = exc_str
+
             logger.warning("LLM batch %d attempt %d failed: %s", batch_idx, attempt, exc)
             if attempt < max_retries:
                 broken_text = content if "content" in locals() else str(exc)
@@ -537,7 +544,7 @@ def _call_llm_batched(
             else:
                 _append_jsonl(resp_log, {
                     "batch": batch_idx,
-                    "error": str(exc),
+                    "error": last_error_msg,
                 })
 
     return [], last_error_msg
