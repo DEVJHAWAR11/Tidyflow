@@ -9,20 +9,30 @@ import {
   BackendStatus,
 } from "./types";
 import { Navbar } from "./components/Navbar";
+import { GetStartedView } from "./components/GetStartedView";
+import { FolderSelectView } from "./components/FolderSelectView";
 import { OrganizeView } from "./components/OrganizeView";
 import { CategoriesView } from "./components/CategoriesView";
 import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
+import { DirectoryPickerModal } from "./components/DirectoryPickerModal";
 import { DEFAULT_STANDARD_CATEGORIES } from "./utils/presetCategories";
 import "./App.css";
 
 const API_BASE = "http://localhost:8000";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabType>("organize");
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    const hasOnboarded = localStorage.getItem("tidyflow_has_onboarded");
+    if (!hasOnboarded) return "welcome";
+    const savedFolder = localStorage.getItem("tidyflow_input_folder");
+    return savedFolder ? "organize" : "select_folder";
+  });
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [hasLlmKey, setHasLlmKey] = useState(false);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [folderPickerTarget, setFolderPickerTarget] = useState<"source" | "destination">("source");
 
   // Dark mode theme state
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -474,6 +484,25 @@ export default function App() {
     setHasSearched(false);
   };
 
+  const handleSelectFolder = (path: string) => {
+    setInputFolder(path);
+    if (!outputFolder || outputFolder.endsWith("/Organized_Output") || !outputFolder.trim()) {
+      setOutputFolder(`${path}/Organized_Output`);
+    }
+  };
+
+  const handleOpenPath = async (path: string) => {
+    try {
+      await fetch(`${API_BASE}/fs/open-path`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, reveal: true }),
+      });
+    } catch (err) {
+      console.error("Failed to open path:", err);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f6f5f4] dark:bg-[#191919] text-[#000000] dark:text-[#ededed] flex flex-col font-sans selection:bg-[#0075de]/20 selection:text-[#005bab] transition-colors duration-200">
       {/* Top Navigation Bar with Dark Mode Switch */}
@@ -487,8 +516,63 @@ export default function App() {
         toggleDarkMode={toggleDarkMode}
       />
 
+      {/* Directory Picker Modal for In-App Folder Browsing */}
+      <DirectoryPickerModal
+        isOpen={folderPickerOpen}
+        onClose={() => setFolderPickerOpen(false)}
+        onSelect={(path) => {
+          setFolderPickerOpen(false);
+          if (folderPickerTarget === "source") {
+            handleSelectFolder(path);
+          } else {
+            setOutputFolder(path);
+          }
+        }}
+        initialPath={folderPickerTarget === "source" ? inputFolder : outputFolder}
+        title={folderPickerTarget === "source" ? "Select Folder to Organize" : "Select Destination Folder"}
+        description={
+          folderPickerTarget === "source"
+            ? "Choose the cluttered folder you want TidyFlow to scan and file."
+            : "Choose where organized category folders should be created."
+        }
+      />
+
       {/* Main Workspace Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8">
+        {activeTab === "welcome" && (
+          <GetStartedView
+            onGetStarted={() => {
+              localStorage.setItem("tidyflow_has_onboarded", "true");
+              setActiveTab("select_folder");
+            }}
+            recentFolder={inputFolder}
+            recentSummary={summary}
+            outputFolder={outputFolder}
+            onResumeRecent={() => {
+              localStorage.setItem("tidyflow_has_onboarded", "true");
+              setActiveTab("organize");
+            }}
+            onOpenOutputFolder={handleOpenPath}
+          />
+        )}
+
+        {activeTab === "select_folder" && (
+          <FolderSelectView
+            inputFolder={inputFolder}
+            setInputFolder={handleSelectFolder}
+            outputFolder={outputFolder}
+            setOutputFolder={setOutputFolder}
+            onContinue={() => setActiveTab("organize")}
+            onBack={() => setActiveTab("welcome")}
+            onOpenDirectoryPicker={(target) => {
+              setFolderPickerTarget(target);
+              setFolderPickerOpen(true);
+            }}
+            fileCount={files.length}
+            onNavigateToReview={() => setActiveTab("review")}
+          />
+        )}
+
         {activeTab === "organize" && (
           <OrganizeView
             inputFolder={inputFolder}
@@ -509,6 +593,8 @@ export default function App() {
             onStartPipeline={handleStartPipeline}
             onNavigateToReview={() => setActiveTab("review")}
             onNavigateToCategories={() => setActiveTab("categories")}
+            onChangeFolder={() => setActiveTab("select_folder")}
+            fileCount={files.length}
           />
         )}
 
@@ -540,6 +626,9 @@ export default function App() {
             setApplyResultModal={setApplyResultModal}
             onApplyDecisions={handleApplyDecisions}
             onNavigateToOrganize={() => setActiveTab("organize")}
+            inputFolder={inputFolder}
+            onNavigateToSelectFolder={() => setActiveTab("select_folder")}
+            onNavigateToSearch={() => setActiveTab("search")}
           />
         )}
 

@@ -48,9 +48,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-[#ffffff]/90 dark:bg-[#191919]/90 backdrop-blur-md border-b border-[#e6e6e6] dark:border-[#2e2e2e] transition-colors">
       <div className="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4">
-        {/* Left: App Title */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#ffffff] dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333333] flex items-center justify-center p-0.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden group">
+        {/* Left: App Title (clickable to return to Welcome) */}
+        <button
+          onClick={() => setActiveTab("welcome")}
+          className="flex items-center gap-3 text-left group cursor-pointer focus:outline-none"
+          title="Return to Welcome Screen"
+        >
+          <div className="w-8 h-8 rounded-lg bg-[#ffffff] dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333333] flex items-center justify-center p-0.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden group-hover:scale-105 transition-transform">
             <img
               src={logoImg}
               alt="TidyFlow Logo"
@@ -59,13 +63,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-3 flex items-center gap-1.5">
+              <h1 className="text-base font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-3 flex items-center gap-1.5 group-hover:text-[#0075de] dark:group-hover:text-[#38bdf8] transition-colors">
                 TidyFlow
               </h1>
             </div>
             <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">Desktop File Organizer</p>
           </div>
-        </div>
+        </button>
 
         {/* Center: Tab Navigation */}
         <nav className="flex items-center bg-[#f6f5f4] dark:bg-[#202020] p-1 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
