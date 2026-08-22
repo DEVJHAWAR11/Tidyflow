@@ -32,113 +32,81 @@ classification:
 duplicates:
   hamming_distance_threshold: 8
 categories:
-  Images/Screenshots:
-    name: Images/Screenshots
-    description: Screenshots captured from devices, typically with 'Screenshot' in
-      the name.
+  Screenshots:
+    name: Screenshots
+    description: All screenshot images, typically with names starting with 'Screenshot_'.
     keywords:
     - screenshot
-    - screen
+    - screen capture
     - capture
-    - snapshot
-    extensions:
-    - .jpg
-    - .jpeg
-    - .png
-    active: true
-  Images/General:
-    name: Images/General
-    description: General image files like icons and other non-screenshot images.
-    keywords:
-    - icon
     - image
-    - photo
-    - picture
     extensions:
+    - .jpg
+    - .jpeg
     - .png
-    - .jpg
-    - .jpeg
-    - .gif
-    - .bmp
-    - .svg
     active: true
-  Academic/Coursework:
-    name: Academic/Coursework
-    description: Course-related materials, reports, and assignments, such as the React
-      JS course completion report.
+  Development:
+    name: Development
+    description: Source code, databases, and development tools including SQL files,
+      archives, and installers.
     keywords:
-    - react
-    - course
-    - completion
-    - report
-    - learning
-    - aryan
-    - singh
+    - sql
+    - database
+    - code
+    - source
+    - archive
+    - installer
+    - dmg
+    - tar
+    - gz
+    - tbz2
+    - zip
     extensions:
+    - .sql
     - .zip
-    - .pptx
-    - .jpeg
-    - .jpg
-    - .pdf
+    - .gz
+    - .dmg
+    - .tbz2
     active: true
-  Career/Resumes:
-    name: Career/Resumes
-    description: Resumes and CVs for job applications.
+  Resumes:
+    name: Resumes
+    description: Resume and CV documents, typically PDFs with names containing 'Resume'
+      or 'CV'.
     keywords:
     - resume
     - cv
-    - curriculum
-    - vitae
-    - arpan
-    - singh
+    - curriculum vitae
+    - job application
     extensions:
     - .pdf
-    - .doc
-    - .docx
     active: true
-  Finance/Receipts:
-    name: Finance/Receipts
-    description: Payment receipts, invoices, and financial documents.
+  Finance:
+    name: Finance
+    description: Financial documents such as payment receipts and invoices.
     keywords:
     - payment
     - receipt
     - invoice
     - bill
     - gateway
-    - kiit
     extensions:
     - .pdf
     active: true
-  Archives:
-    name: Archives
-    description: Compressed archives and installer files.
+  Course_Reports:
+    name: Course_Reports
+    description: Course completion reports, learning reports, and related images or
+      presentations.
     keywords:
-    - archive
-    - compressed
-    - installer
-    - dmg
-    - tar
-    - zip
-    - tbz2
-    - gz
+    - course
+    - completion
+    - learning
+    - report
+    - react
+    - aryan
     extensions:
     - .zip
-    - .tar
-    - .gz
-    - .tbz2
-    - .dmg
-    - .rar
-    - .7z
-    active: true
-  Development/Databases:
-    name: Development/Databases
-    description: Database scripts and schema files.
-    keywords:
-    - sql
-    - table
-    - schema
-    - database
-    - query
-    extensions:
-    - .sql
+    - .pptx
+    - .jpeg
+    - .jpg
+    - .png
     active: true
