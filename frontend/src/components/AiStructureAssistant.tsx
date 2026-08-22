@@ -1,10 +1,18 @@
-import React, { useState, useRef } from "react";
-import { CategoryItem, ComplexityLevel } from "../types";
+import React, { useState, useRef, useEffect } from "react";
+import { CategoryItem, ComplexityLevel, CategorySnapshot } from "../types";
 import { API_BASE } from "../config";
 import {
   PRESET_PACKS,
   DEFAULT_STANDARD_CATEGORIES,
 } from "../utils/presetCategories";
+import {
+  loadCategorySnapshots,
+  saveCategorySnapshot,
+  deleteCategorySnapshot,
+  clearCategoryHistory,
+} from "../utils/categoryHistory";
+import { TierChangeConfirmModal } from "./TierChangeConfirmModal";
+import { CategoryHistoryModal } from "./CategoryHistoryModal";
 import {
   FolderPlus,
   FolderTree,
@@ -23,6 +31,7 @@ import {
   X,
   Plus,
   RotateCcw,
+  History as HistoryIcon,
 } from "lucide-react";
 
 interface AiStructureAssistantProps {
@@ -98,13 +107,107 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
   const [newFolderName, setNewFolderName] = useState("");
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
+  // Modals & History State
+  const [snapshots, setSnapshots] = useState<CategorySnapshot[]>(() => loadCategorySnapshots());
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isTierConfirmOpen, setIsTierConfirmOpen] = useState(false);
+  const [pendingTier, setPendingTier] = useState<ComplexityLevel>("medium");
+  const [proposedCategories, setProposedCategories] = useState<Record<string, CategoryItem>>({});
+  const [isLoadingProposal, setIsLoadingProposal] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync snapshots on load if empty but categories exist
+  useEffect(() => {
+    if (Object.keys(activeCategories).length > 0 && snapshots.length === 0) {
+      const initSnaps = saveCategorySnapshot(
+        `Initial Workspace (${complexityLevel.toUpperCase()})`,
+        "init",
+        activeCategories,
+        complexityLevel
+      );
+      setSnapshots(initSnaps);
+    }
+  }, []);
 
   const handleTierChange = (lvl: ComplexityLevel) => {
     setCurrentLevel(lvl);
     if (setComplexityLevel) {
       setComplexityLevel(lvl);
     }
+  };
+
+  const handleTierSelect = async (tier: ComplexityLevel) => {
+    if (tier === currentLevel) return;
+    if (Object.keys(activeCategories).length > 0) {
+      setPendingTier(tier);
+      setIsTierConfirmOpen(true);
+      setIsLoadingProposal(true);
+      setProposedCategories({});
+
+      try {
+        const payload = {
+          message: `Analyze directory files and generate custom ${tier} category taxonomy`,
+          history: [],
+          input_dir: inputFolder || undefined,
+          current_categories: undefined,
+          complexity_level: tier,
+          auto_discover: true,
+        };
+        const res = await fetch(`${API_BASE}/ai/chat-structure`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.categories) {
+            const parsedCats: Record<string, CategoryItem> = {};
+            Object.entries(data.categories).forEach(([name, c]: [string, any]) => {
+              parsedCats[name] = {
+                name: c.name || name,
+                description: c.description || "",
+                keywords: c.keywords || [],
+                extensions: c.extensions || [],
+                active: c.active !== false,
+              };
+            });
+            setProposedCategories(parsedCats);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to prefetch proposed categories:", err);
+      } finally {
+        setIsLoadingProposal(false);
+      }
+    } else {
+      handleTierChange(tier);
+      handleAutoSynthesize(tier);
+    }
+  };
+
+  const handleConfirmTierChange = () => {
+    if (Object.keys(proposedCategories).length > 0) {
+      setActiveCategories(proposedCategories);
+      handleTierChange(pendingTier);
+      const updatedSnaps = saveCategorySnapshot(
+        `${pendingTier.charAt(0).toUpperCase() + pendingTier.slice(1)} Tier AI Synthesis`,
+        "ai_synthesis",
+        proposedCategories,
+        pendingTier
+      );
+      setSnapshots(updatedSnaps);
+      setStatusMessage(`Applied ${pendingTier.toUpperCase()} taxonomy (${Object.keys(proposedCategories).length} folders).`);
+      fetch(`${API_BASE}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: proposedCategories }),
+      }).catch((e) => console.warn("Failed to persist categories:", e));
+    } else {
+      handleTierChange(pendingTier);
+      handleAutoSynthesize(pendingTier);
+    }
+    setIsTierConfirmOpen(false);
   };
 
   // 1-Click Autonomous File Inspection & Taxonomy Synthesis
@@ -149,6 +252,15 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           };
         });
         setActiveCategories(generatedCats);
+
+        // Record history snapshot
+        const updatedSnaps = saveCategorySnapshot(
+          `${levelToUse.charAt(0).toUpperCase() + levelToUse.slice(1)} Tier AI Synthesis`,
+          "ai_synthesis",
+          generatedCats,
+          levelToUse
+        );
+        setSnapshots(updatedSnaps);
       }
 
       if (data.custom_instructions !== undefined) {
@@ -168,12 +280,53 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
     setActiveCategories(presetCats);
     setActivePresetId(presetId);
     setStatusMessage(`Loaded '${presetId.toUpperCase()}' preset template (${Object.keys(presetCats).length} folders).`);
+
+    const updatedSnaps = saveCategorySnapshot(
+      `${presetId.toUpperCase()} Preset Pack`,
+      "preset",
+      presetCats,
+      currentLevel
+    );
+    setSnapshots(updatedSnaps);
   };
 
   const handleLoadStandard = () => {
     setActiveCategories(DEFAULT_STANDARD_CATEGORIES);
     setActivePresetId("standard");
     setStatusMessage(`Loaded standard 18-folder workspace template.`);
+
+    const updatedSnaps = saveCategorySnapshot(
+      "Standard 18 Workspace Preset",
+      "preset",
+      DEFAULT_STANDARD_CATEGORIES,
+      currentLevel
+    );
+    setSnapshots(updatedSnaps);
+  };
+
+  const handleRestoreSnapshot = (snap: CategorySnapshot) => {
+    setActiveCategories(snap.categories);
+    if (snap.complexity_level) {
+      handleTierChange(snap.complexity_level);
+    }
+    setActivePresetId(null);
+    setStatusMessage(`Restored category snapshot: "${snap.label}" (${snap.categoryCount} folders).`);
+
+    fetch(`${API_BASE}/categories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categories: snap.categories }),
+    }).catch((e) => console.warn("Failed to persist restored snapshot:", e));
+  };
+
+  const handleDeleteSnapshot = (id: string) => {
+    const next = deleteCategorySnapshot(id);
+    setSnapshots(next);
+  };
+
+  const handleClearHistory = () => {
+    clearCategoryHistory();
+    setSnapshots([]);
   };
 
   const handleExecuteCommand = async (commandToSend?: string) => {
@@ -421,10 +574,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
             return (
               <button
                 key={tier.id}
-                onClick={() => {
-                  handleTierChange(tier.id);
-                  handleAutoSynthesize(tier.id);
-                }}
+                onClick={() => handleTierSelect(tier.id)}
                 disabled={isProcessing}
                 className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all cursor-pointer flex items-center gap-1.5 select-none ${
                   isSelected
@@ -455,6 +605,15 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           >
             {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3 text-[#0075de]" />}
             <span>Re-Analyze Files</span>
+          </button>
+
+          <button
+            onClick={() => setIsHistoryOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-[#f2f2f7] dark:bg-[#2c2c2e] hover:bg-[#e5e5ea] dark:hover:bg-[#38383a] text-[#1d1d1f] dark:text-[#f5f5f7] text-[11.5px] font-medium flex items-center gap-1.5 transition cursor-pointer border border-[#e5e5e7] dark:border-[#38383a]"
+            title="View previous category snapshots & blueprints"
+          >
+            <HistoryIcon className="w-3 h-3 text-[#0075de] dark:text-[#38bdf8]" />
+            <span>History ({snapshots.length})</span>
           </button>
 
           <button
@@ -740,6 +899,33 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           )}
         </button>
       </div>
+
+      {/* Tier Switch Confirmation Modal */}
+      <TierChangeConfirmModal
+        isOpen={isTierConfirmOpen}
+        currentTier={currentLevel}
+        targetTier={pendingTier}
+        currentCategories={activeCategories}
+        proposedCategories={proposedCategories}
+        isLoadingProposal={isLoadingProposal}
+        onClose={() => {
+          setIsTierConfirmOpen(false);
+          setProposedCategories({});
+        }}
+        onConfirm={handleConfirmTierChange}
+        context="blueprint"
+      />
+
+      {/* Category Version History Modal */}
+      <CategoryHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        snapshots={snapshots}
+        currentCategories={activeCategories}
+        onRestoreSnapshot={handleRestoreSnapshot}
+        onDeleteSnapshot={handleDeleteSnapshot}
+        onClearHistory={handleClearHistory}
+      />
     </div>
   );
 };

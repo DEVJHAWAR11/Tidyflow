@@ -523,7 +523,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 bg-[#000000]/70 backdrop-blur-xs z-[99999] flex items-center justify-center p-4 sm:p-6"
+            className="fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm z-[99999] flex items-center justify-center p-4 sm:p-6 animate-fade-in"
             onClick={() => setPreviewItem(null)}
           >
             <div

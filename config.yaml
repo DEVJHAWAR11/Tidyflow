@@ -34,10 +34,10 @@ duplicates:
 categories:
   Screenshots:
     name: Screenshots
-    description: All screenshot images, typically with names starting with 'Screenshot_'.
+    description: All screenshot images, typically with 'Screenshot' in the filename.
     keywords:
     - screenshot
-    - screen capture
+    - screen
     - capture
     - image
     extensions:
@@ -45,68 +45,104 @@ categories:
     - .jpeg
     - .png
     active: true
-  Development:
-    name: Development
-    description: Source code, databases, and development tools including SQL files,
-      archives, and installers.
-    keywords:
-    - sql
-    - database
-    - code
-    - source
-    - archive
-    - installer
-    - dmg
-    - tar
-    - gz
-    - tbz2
-    - zip
-    extensions:
-    - .sql
-    - .zip
-    - .gz
-    - .dmg
-    - .tbz2
-    active: true
   Resumes:
     name: Resumes
-    description: Resume and CV documents, typically PDFs with names containing 'Resume'
-      or 'CV'.
+    description: Resume and CV documents, often with 'resume' or 'cv' in the name.
     keywords:
     - resume
     - cv
-    - curriculum vitae
-    - job application
+    - curriculum
+    - vitae
     extensions:
     - .pdf
+    - .docx
     active: true
-  Finance:
-    name: Finance
-    description: Financial documents such as payment receipts and invoices.
+  Courses/React_JS:
+    name: Courses/React_JS
+    description: Course completion reports, learning materials, and related files
+      for React JS.
     keywords:
-    - payment
-    - receipt
-    - invoice
-    - bill
-    - gateway
-    extensions:
-    - .pdf
-    active: true
-  Course_Reports:
-    name: Course_Reports
-    description: Course completion reports, learning reports, and related images or
-      presentations.
-    keywords:
+    - react
+    - js
     - course
     - completion
     - learning
     - report
-    - react
-    - aryan
     extensions:
     - .zip
     - .pptx
     - .jpeg
     - .jpg
     - .png
+    - .pdf
+    active: true
+  Finance/Payments:
+    name: Finance/Payments
+    description: Payment receipts, invoices, and financial transaction documents.
+    keywords:
+    - payment
+    - receipt
+    - invoice
+    - bill
+    - gateway
+    - response
+    extensions:
+    - .pdf
+    active: true
+  Development/Archives:
+    name: Development/Archives
+    description: Compressed archives and development-related files like tarballs and
+      zip files.
+    keywords:
+    - archive
+    - tar
+    - gz
+    - zip
+    - compress
+    - backup
+    extensions:
+    - .tar.gz
+    - .gz
+    - .zip
+    - .tbz2
+    active: true
+  Development/Databases:
+    name: Development/Databases
+    description: Database schema files and SQL scripts.
+    keywords:
+    - sql
+    - table
+    - schema
+    - database
+    - query
+    extensions:
+    - .sql
+    active: true
+  Applications:
+    name: Applications
+    description: Installer files for software applications.
+    keywords:
+    - installer
+    - dmg
+    - app
+    - setup
+    extensions:
+    - .dmg
+    - .exe
+    - .msi
+    active: true
+  Images:
+    name: Images
+    description: General image files that are not screenshots or course-related.
+    keywords:
+    - image
+    - photo
+    - picture
+    - icon
+    extensions:
+    - .png
+    - .jpg
+    - .jpeg
+    - .gif
+    - .bmp
     active: true
