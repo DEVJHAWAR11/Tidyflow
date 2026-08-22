@@ -10,7 +10,8 @@ import {
   FileText, 
   CircleDot,
   Moon,
-  Sun
+  Sun,
+  RotateCcw
 } from "lucide-react";
 
 interface NavbarProps {
@@ -21,6 +22,7 @@ interface NavbarProps {
   fileCount: number;
   darkMode: boolean;
   toggleDarkMode: () => void;
+  onResetWorkspace?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -31,6 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   fileCount,
   darkMode,
   toggleDarkMode,
+  onResetWorkspace,
 }) => {
   const navTabs: { id: TabType; label: string; icon: React.ReactNode; badge?: string | number }[] = [
     { id: "organize", label: "Organize", icon: <FolderKanban className="w-4 h-4" /> },
@@ -138,6 +141,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             <FileText className="w-3 h-3 text-[#9b51e0] dark:text-[#d8b4fe]" />
             <span>{hasLlmKey ? "Language Model Active" : "Rule Matching"}</span>
           </div>
+
+          {/* Reset Workspace Action */}
+          {onResetWorkspace && (
+            <button
+              onClick={onResetWorkspace}
+              title="Reset Workspace & Start Over"
+              className="px-2.5 py-1.5 rounded-lg bg-[#f6f5f4] dark:bg-[#252525] hover:bg-[#ff3b30]/10 hover:text-[#ff3b30] hover:border-[#ff3b30]/30 border border-[#e6e6e6] dark:border-[#333333] text-[#615d59] dark:text-[#9b9a97] text-[12px] font-medium flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
+          )}
 
           {/* Theme Toggle */}
           <button

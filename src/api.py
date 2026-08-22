@@ -18,6 +18,7 @@ from .ai_assistant import (
     apply_review_command,
     chat_generate_structure,
     cluster_unrecognized_files,
+    inspect_directory_files,
 )
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
 from .config import CategoryConfig, TidyConfig, load_config
@@ -137,6 +138,7 @@ class PipelineRunRequest(BaseModel):
     use_llm: bool = True
     custom_categories: Optional[dict[str, Any]] = None
     custom_instructions: Optional[str] = None
+    complexity_level: Optional[str] = "medium"
     auto_apply: bool = False
     dry_run: bool = True
 
@@ -146,6 +148,8 @@ class AiStructureChatRequest(BaseModel):
     history: Optional[list[dict[str, Any]]] = None
     input_dir: Optional[str] = None
     current_categories: Optional[dict[str, Any]] = None
+    complexity_level: Optional[str] = "medium"
+    auto_discover: Optional[bool] = False
 
 
 class AiReviewChatRequest(BaseModel):
@@ -556,6 +560,17 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     if req.custom_instructions:
         cfg.llm.custom_instructions = req.custom_instructions
 
+    # Tune auto_copy_threshold based on complexity_level
+    lvl = (req.complexity_level or "medium").lower()
+    if lvl == "low":
+        cfg.classification.auto_copy_threshold = 0.70
+    elif lvl == "high":
+        cfg.classification.auto_copy_threshold = 0.90
+    elif lvl == "complex":
+        cfg.classification.auto_copy_threshold = 0.92
+    else:
+        cfg.classification.auto_copy_threshold = 0.85
+
     # Determine if user passed custom narrow categories (strict LLM mode)
     is_custom_categories = bool(req.custom_categories)
 
@@ -573,16 +588,21 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
 
     await broadcast_event("pipeline_start", {"input_dir": str(input_path), "output_dir": str(out_path)})
 
-    # Execute pipeline in worker thread to prevent event loop blocking
-    records, summary = await asyncio.to_thread(
-        run_pipeline,
-        cfg,
-        use_llm=req.use_llm,
-        auto_apply=req.auto_apply,
-        dry_run=req.dry_run,
-        db=db,
-        strict_mode=is_custom_categories,
-    )
+    try:
+        # Execute pipeline in worker thread to prevent event loop blocking
+        records, summary = await asyncio.to_thread(
+            run_pipeline,
+            cfg,
+            use_llm=req.use_llm,
+            auto_apply=req.auto_apply,
+            dry_run=req.dry_run,
+            db=db,
+            strict_mode=is_custom_categories,
+        )
+    except Exception as e:
+        logger.exception("Pipeline execution failed: %s", e)
+        await broadcast_event("pipeline_error", {"error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Pipeline execution error: {str(e)}")
 
     # Transform records into JSON serializable format for UI
     file_list = []
@@ -797,19 +817,17 @@ async def update_rules(rules_req: dict[str, Any]):
 
 @app.post("/ai/chat-structure")
 async def ai_chat_structure_endpoint(req: AiStructureChatRequest):
-    """Generate or refine category structure and rules via natural language."""
+    """Generate or refine category structure and rules via natural language or auto-discovery."""
     sample_filenames = []
     if req.input_dir:
         try:
-            p = Path(req.input_dir).resolve()
-            if p.exists() and p.is_dir():
-                sample_filenames = [
-                    f.name
-                    for f in p.iterdir()
-                    if f.is_file() and not f.name.startswith(".")
-                ][:50]
-        except Exception:
-            pass
+            sample_filenames = await asyncio.to_thread(
+                inspect_directory_files,
+                input_dir=req.input_dir,
+                max_files=100,
+            )
+        except Exception as e:
+            logger.warning(f"Error inspecting directory {req.input_dir}: {e}")
 
     result = await asyncio.to_thread(
         chat_generate_structure,
@@ -817,6 +835,8 @@ async def ai_chat_structure_endpoint(req: AiStructureChatRequest):
         history=req.history,
         current_categories=req.current_categories,
         sample_filenames=sample_filenames,
+        complexity_level=req.complexity_level or "medium",
+        auto_discover=bool(req.auto_discover),
     )
     return result
 

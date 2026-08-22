@@ -85,3 +85,62 @@ def test_cluster_unrecognized_files_fallback():
     assert "clusters" in res
     assert "category_overrides" in res
     assert len(res["category_overrides"]) == 2
+
+
+def test_fallback_heuristic_delete_category():
+    current_cats = {
+        "Work": {"name": "Work", "description": "", "keywords": [], "extensions": [], "active": True},
+        "Finance": {"name": "Finance", "description": "", "keywords": [], "extensions": [], "active": True},
+        "Photos": {"name": "Photos", "description": "", "keywords": [], "extensions": [], "active": True},
+    }
+    res = _fallback_heuristic_structure("Please delete the Work category", current_categories=current_cats)
+    assert "Work" not in res["categories"]
+    assert "Finance" in res["categories"]
+    assert "Photos" in res["categories"]
+
+
+def test_fallback_heuristic_rename_category():
+    current_cats = {
+        "Invoices": {"name": "Invoices", "description": "", "keywords": [], "extensions": [], "active": True},
+        "Documents": {"name": "Documents", "description": "", "keywords": [], "extensions": [], "active": True},
+    }
+    res = _fallback_heuristic_structure("Rename Invoices to Bills_2026", current_categories=current_cats)
+    assert "Invoices" not in res["categories"]
+    assert "Bills_2026" in res["categories"]
+
+
+def test_fallback_heuristic_add_category():
+    current_cats = {
+        "Work": {"name": "Work", "description": "", "keywords": [], "extensions": [], "active": True},
+    }
+    res = _fallback_heuristic_structure("Add a new folder for Receipts", current_categories=current_cats)
+    assert "Work" in res["categories"]
+    assert "Receipts" in res["categories"]
+
+
+def test_fallback_heuristic_complexity_levels():
+    sample_files = [
+        "invoice_01.pdf", "receipt_feb.pdf", "lecture_01.pdf", "assignment_hw.docx",
+        "script.py", "database.sql", "screenshot_1.png", "photo_vacation.jpg", "backup.zip"
+    ]
+    # Low complexity (broad flat buckets)
+    res_low = _fallback_heuristic_structure("", sample_filenames=sample_files, complexity_level="low")
+    assert len(res_low["categories"]) <= 4
+    assert not any("/" in k for k in res_low["categories"].keys())
+
+    # High / Complex (granular / hierarchical)
+    res_high = _fallback_heuristic_structure("", sample_filenames=sample_files, complexity_level="high")
+    assert len(res_high["categories"]) >= 4
+    assert any("/" in k for k in res_high["categories"].keys())
+
+
+def test_chat_generate_structure_auto_discover():
+    res = chat_generate_structure(
+        message="Auto-discover taxonomy",
+        sample_filenames=["invoice_acme.pdf", "lecture_ai.pptx", "backend.py"],
+        complexity_level="medium",
+        auto_discover=True,
+    )
+    assert "categories" in res
+    assert res["is_ready"] is True
+    assert len(res["categories"]) > 0

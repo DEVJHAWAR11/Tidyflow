@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { WorkflowStepper } from "./WorkflowStepper";
+import { API_BASE } from "../config";
 import {
   FolderOpen,
   FolderDown,
@@ -56,7 +57,7 @@ export const FolderSelectView: React.FC<FolderSelectViewProps> = ({
 
   // Fetch quick system locations
   useEffect(() => {
-    fetch("http://localhost:8000/fs/quick-locations")
+    fetch(`${API_BASE}/fs/quick-locations`)
       .then((res) => res.json())
       .then((data) => {
         if (data.locations) {
@@ -77,7 +78,7 @@ export const FolderSelectView: React.FC<FolderSelectViewProps> = ({
   const handleNativeBrowse = async (target: "source" | "destination" = "source") => {
     setIsNativeBrowsing(true);
     try {
-      const res = await fetch("http://localhost:8000/fs/browse-native", {
+      const res = await fetch(`${API_BASE}/fs/browse-native`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

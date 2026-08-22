@@ -7,6 +7,7 @@ import {
   FtsResultItem,
   TabType,
   BackendStatus,
+  ComplexityLevel,
 } from "./types";
 import { Navbar } from "./components/Navbar";
 import { GetStartedView } from "./components/GetStartedView";
@@ -17,10 +18,9 @@ import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
 import { DirectoryPickerModal } from "./components/DirectoryPickerModal";
-import { DEFAULT_STANDARD_CATEGORIES } from "./utils/presetCategories";
+import { ResetWorkspaceModal } from "./components/ResetWorkspaceModal";
+import { API_BASE } from "./config";
 import "./App.css";
-
-const API_BASE = "http://localhost:8000";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
@@ -33,6 +33,7 @@ export default function App() {
   const [hasLlmKey, setHasLlmKey] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerTarget, setFolderPickerTarget] = useState<"source" | "destination">("source");
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   // Dark mode theme state
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -78,6 +79,7 @@ export default function App() {
   // Categories state
   const [categories, setCategories] = useState<Record<string, CategoryItem>>({});
   const [customInstructions, setCustomInstructions] = useState("");
+  const [complexityLevel, setComplexityLevel] = useState<ComplexityLevel>("medium");
 
   // Review & Apply state
   const [files, setFiles] = useState<ClassifiedFile[]>([]);
@@ -130,15 +132,10 @@ export default function App() {
         const data = await res.json();
         if (data.categories && Object.keys(data.categories).length > 0) {
           setCategories(data.categories);
-        } else {
-          setCategories(DEFAULT_STANDARD_CATEGORIES);
         }
-      } else {
-        setCategories(DEFAULT_STANDARD_CATEGORIES);
       }
     } catch (e) {
       console.error("Failed to load categories:", e);
-      setCategories(DEFAULT_STANDARD_CATEGORIES);
     }
   };
 
@@ -298,7 +295,8 @@ export default function App() {
 
   const handleStartPipeline = async (
     customCats?: Record<string, CategoryItem>,
-    instructions?: string
+    instructions?: string,
+    complexity?: ComplexityLevel
   ) => {
     if (!inputFolder.trim()) return;
     setIsRunning(true);
@@ -307,6 +305,7 @@ export default function App() {
 
     const catsToUse = customCats || categories;
     const instructionsToUse = instructions !== undefined ? instructions : customInstructions;
+    const levelToUse = complexity || complexityLevel || "medium";
 
     const activeCats: Record<string, any> = {};
     Object.entries(catsToUse).forEach(([name, item]) => {
@@ -329,6 +328,7 @@ export default function App() {
           use_llm: useLlm,
           custom_categories: Object.keys(activeCats).length > 0 ? activeCats : undefined,
           custom_instructions: instructionsToUse.trim() || undefined,
+          complexity_level: levelToUse,
           auto_apply: false,
           dry_run: true,
         }),
@@ -489,6 +489,8 @@ export default function App() {
     if (!outputFolder || outputFolder.endsWith("/Organized_Output") || !outputFolder.trim()) {
       setOutputFolder(`${path}/Organized_Output`);
     }
+    setCategories({});
+    setCustomInstructions("");
   };
 
   const handleOpenPath = async (path: string) => {
@@ -503,9 +505,26 @@ export default function App() {
     }
   };
 
+  const handleConfirmResetWorkspace = () => {
+    setInputFolderState("");
+    setOutputFolderState("");
+    localStorage.removeItem("tidyflow_input_folder");
+    localStorage.removeItem("tidyflow_output_folder");
+    setCategories({});
+    setCustomInstructions("");
+    setFiles([]);
+    setSummary(null);
+    setSelectedFileIds(new Set());
+    setCategoryOverrides({});
+    setProgressLogs([]);
+    setCurrentStage("");
+    setComplexityLevel("medium");
+    setActiveTab("select_folder");
+  };
+
   return (
     <div className="min-h-screen bg-[#f6f5f4] dark:bg-[#191919] text-[#000000] dark:text-[#ededed] flex flex-col font-sans selection:bg-[#0075de]/20 selection:text-[#005bab] transition-colors duration-200">
-      {/* Top Navigation Bar with Dark Mode Switch */}
+      {/* Top Navigation Bar with Dark Mode Switch & Reset Workspace */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -514,6 +533,17 @@ export default function App() {
         fileCount={files.length}
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
+        onResetWorkspace={() => setIsResetModalOpen(true)}
+      />
+
+      {/* Reset Workspace Confirmation Modal */}
+      <ResetWorkspaceModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        onConfirm={handleConfirmResetWorkspace}
+        inputFolder={inputFolder}
+        categoryCount={Object.keys(categories).length}
+        fileCount={files.length}
       />
 
       {/* Directory Picker Modal for In-App Folder Browsing */}
@@ -595,6 +625,8 @@ export default function App() {
             onNavigateToCategories={() => setActiveTab("categories")}
             onChangeFolder={() => setActiveTab("select_folder")}
             fileCount={files.length}
+            complexityLevel={complexityLevel}
+            setComplexityLevel={setComplexityLevel}
           />
         )}
 

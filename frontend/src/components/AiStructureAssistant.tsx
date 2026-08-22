@@ -1,23 +1,29 @@
-import React, { useState, useRef, useEffect } from "react";
-import { CategoryItem, ChatMessage } from "../types";
-import { getStickerStyle } from "../utils/stickerTheme";
+import React, { useState, useRef } from "react";
+import { CategoryItem, ComplexityLevel } from "../types";
+import { API_BASE } from "../config";
 import {
   PRESET_PACKS,
   DEFAULT_STANDARD_CATEGORIES,
 } from "../utils/presetCategories";
 import {
-  Sparkles,
-  Send,
-  Loader2,
-  CheckCircle2,
+  FolderPlus,
   FolderTree,
   Trash2,
-  Plus,
-  FileCode,
+  Check,
   ArrowRight,
-  Bot,
-  User,
+  Loader2,
+  Sparkles,
+  Grid2X2,
+  LayoutGrid,
   Layers,
+  GitFork,
+  Send,
+  FileCode,
+  CheckCircle2,
+  Terminal,
+  X,
+  Plus,
+  RotateCcw,
 } from "lucide-react";
 
 interface AiStructureAssistantProps {
@@ -29,7 +35,56 @@ interface AiStructureAssistantProps {
   onApproveAndOrganize: () => void;
   isRunning: boolean;
   backendStatus: string;
+  complexityLevel?: ComplexityLevel;
+  setComplexityLevel?: (lvl: ComplexityLevel) => void;
 }
+
+interface GranularityTier {
+  id: ComplexityLevel;
+  label: string;
+  target: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const GRANULARITY_TIERS: GranularityTier[] = [
+  {
+    id: "low",
+    label: "Broad",
+    target: "3-4 Folders",
+    description: "Flat, minimal top-level buckets for quick decluttering",
+    icon: Grid2X2,
+  },
+  {
+    id: "medium",
+    label: "Balanced",
+    target: "5-7 Folders",
+    description: "Functional folders with 1-level clean subfolders",
+    icon: LayoutGrid,
+  },
+  {
+    id: "high",
+    label: "Granular",
+    target: "8-12 Folders",
+    description: "Specific categories by project, topic & file format",
+    icon: Layers,
+  },
+  {
+    id: "complex",
+    label: "Deep Tree",
+    target: "10+ Folders",
+    description: "Multi-level hierarchy, date routing & semantic rules",
+    icon: GitFork,
+  },
+];
+
+const QUICK_ACTIONS = [
+  { label: "Re-Scan Directory", prompt: "Re-scan all files in this directory and re-synthesize categories.", isAuto: true },
+  { label: "Simplify Structure", prompt: "Consolidate into fewer, broader folders." },
+  { label: "Split by Year / Date", prompt: "Create year-based subfolders where relevant." },
+  { label: "Separate Work & Personal", prompt: "Split into distinct Work and Personal trees." },
+  { label: "Add Custom Folder...", prompt: "Add a folder for " },
+];
 
 export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
   inputFolder,
@@ -40,87 +95,52 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
   onApproveAndOrganize,
   isRunning,
   backendStatus,
+  complexityLevel = "medium",
+  setComplexityLevel,
 }) => {
   const [inputText, setInputText] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Tell me how you'd like your workspace organized! You can pick one of the predefined category templates below or describe your custom structure in plain English. I'll propose a structure for you to verify before organizing.",
-    },
-  ]);
-  const [hasProposedStructure, setHasProposedStructure] = useState(false);
-  const [isEditingCategory, setIsEditingCategory] = useState(false);
-  const [newCatName, setNewCatName] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState<ComplexityLevel>(complexityLevel);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [isAddingFolder, setIsAddingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const handleTierChange = (lvl: ComplexityLevel) => {
+    setCurrentLevel(lvl);
+    if (setComplexityLevel) {
+      setComplexityLevel(lvl);
+    }
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isGenerating]);
+  // 1-Click Autonomous File Inspection & Taxonomy Synthesis
+  const handleAutoSynthesize = async (lvl?: ComplexityLevel) => {
+    const levelToUse = lvl || currentLevel;
+    if (isProcessing || isRunning) return;
 
-  // Load preset categories immediately (optimistic UI) and send prompt to AI
-  const handleSelectPreset = async (_presetId: string, promptText: string, presetCats: Record<string, CategoryItem>) => {
-    // 1. Immediately apply categories to the workspace state
-    setActiveCategories(presetCats);
-    setHasProposedStructure(true);
-
-    // 2. Add assistant message & run chat
-    await handleSendPrompt(promptText, presetCats);
-  };
-
-  const handleLoadStandardDefaults = () => {
-    setActiveCategories(DEFAULT_STANDARD_CATEGORIES);
-    setHasProposedStructure(true);
-    const msgId = Date.now().toString();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: msgId,
-        role: "assistant",
-        content: `Loaded the full standard 18-folder predefined taxonomy covering Finance, Legal, Work, Personal, Development, Media, and Archives. You can tweak any folder or click "Approve & Start Organizing" below.`,
-        categories: DEFAULT_STANDARD_CATEGORIES,
-        isReady: true,
-      },
-    ]);
-  };
-
-  const handleSendPrompt = async (promptToSend?: string, overrideCats?: Record<string, CategoryItem>) => {
-    const text = (promptToSend || inputText).trim();
-    if (!text || isGenerating) return;
-
-    const userMsgId = Date.now().toString();
-    const newHistory = [
-      ...messages,
-      { id: userMsgId, role: "user" as const, content: text },
-    ];
-    setMessages(newHistory);
-    setInputText("");
-    setIsGenerating(true);
+    setIsProcessing(true);
+    setStatusMessage(`Scanning '${inputFolder || "directory"}' files & reading document previews...`);
 
     try {
-      const currentCats = overrideCats || activeCategories;
       const payload = {
-        message: text,
-        history: newHistory.map((m) => ({ role: m.role, content: m.content })),
+        message: `Analyze directory files and generate custom ${levelToUse} category taxonomy`,
+        history: [],
         input_dir: inputFolder || undefined,
-        current_categories: Object.keys(currentCats).length > 0 ? currentCats : undefined,
+        current_categories: undefined,
+        complexity_level: levelToUse,
+        auto_discover: true,
       };
 
-      const res = await fetch("http://localhost:8000/ai/chat-structure", {
+      const res = await fetch(`${API_BASE}/ai/chat-structure`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        throw new Error("Failed to generate structure from AI");
+        throw new Error("Directory analysis failed");
       }
 
       const data = await res.json();
@@ -139,408 +159,531 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
         setActiveCategories(generatedCats);
       }
 
-      if (data.custom_instructions) {
+      if (data.custom_instructions !== undefined) {
         setCustomInstructions(data.custom_instructions);
       }
-      setHasProposedStructure(true);
 
-      const aiMsgId = (Date.now() + 1).toString();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: aiMsgId,
-          role: "assistant",
-          content: data.message || "I've structured your workspace. Please verify below.",
-          categories: Object.keys(generatedCats).length > 0 ? generatedCats : overrideCats,
-          customInstructions: data.custom_instructions,
-          isReady: data.is_ready,
-        },
-      ]);
+      setStatusMessage(data.message || `Synthesized ${Object.keys(generatedCats).length} bespoke categories from your directory.`);
+      setActivePresetId(null);
     } catch (err: any) {
-      // Fallback: If AI call failed but we already had preset categories, keep them!
-      setHasProposedStructure(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: `Applied template structure below (${Object.keys(overrideCats || activeCategories).length} folders). Note: AI connection notice: ${err.message}`,
-        },
-      ]);
+      setStatusMessage(`Notice: ${err.message}.`);
     } finally {
-      setIsGenerating(false);
+      setIsProcessing(false);
     }
   };
 
-  const handleToggleCat = (catName: string) => {
-    const existing = activeCategories[catName];
+  const handleLoadPreset = (presetId: string, presetCats: Record<string, CategoryItem>) => {
+    setActiveCategories(presetCats);
+    setActivePresetId(presetId);
+    setStatusMessage(`Loaded '${presetId.toUpperCase()}' preset template (${Object.keys(presetCats).length} folders).`);
+  };
+
+  const handleLoadStandard = () => {
+    setActiveCategories(DEFAULT_STANDARD_CATEGORIES);
+    setActivePresetId("standard");
+    setStatusMessage(`Loaded standard 18-folder workspace template.`);
+  };
+
+  const handleExecuteCommand = async (commandToSend?: string) => {
+    const text = (commandToSend || inputText).trim();
+    if (!text || isProcessing) return;
+
+    setIsProcessing(true);
+    setInputText("");
+    setStatusMessage(`Applying: "${text}"...`);
+
+    try {
+      const payload = {
+        message: text,
+        input_dir: inputFolder || undefined,
+        current_categories: Object.keys(activeCategories).length > 0 ? activeCategories : undefined,
+        complexity_level: currentLevel,
+        auto_discover: false,
+      };
+
+      const res = await fetch(`${API_BASE}/ai/chat-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Command failed");
+
+      const data = await res.json();
+      const generatedCats: Record<string, CategoryItem> = {};
+
+      if (data.categories && Object.keys(data.categories).length > 0) {
+        Object.entries(data.categories).forEach(([name, c]: [string, any]) => {
+          generatedCats[name] = {
+            name: c.name || name,
+            description: c.description || "",
+            keywords: c.keywords || [],
+            extensions: c.extensions || [],
+            active: c.active !== false,
+          };
+        });
+        setActiveCategories(generatedCats);
+      }
+
+      if (data.custom_instructions !== undefined) {
+        setCustomInstructions(data.custom_instructions);
+      }
+
+      setStatusMessage(data.message || "Categories updated.");
+      setActivePresetId(null);
+    } catch (err: any) {
+      setStatusMessage(`Notice: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleToggleFolder = (name: string) => {
+    const existing = activeCategories[name];
     if (!existing) return;
     setActiveCategories({
       ...activeCategories,
-      [catName]: { ...existing, active: !existing.active },
+      [name]: { ...existing, active: !existing.active },
     });
   };
 
-  const handleDeleteCat = (catName: string) => {
-    const updated = { ...activeCategories };
-    delete updated[catName];
-    setActiveCategories(updated);
+  const handleDeleteFolder = (name: string) => {
+    const next = { ...activeCategories };
+    delete next[name];
+    setActiveCategories(next);
   };
 
-  const handleAddQuickCat = (e: React.FormEvent) => {
+  const handleAddFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = newCatName.trim();
-    if (!trimmed) return;
+    const clean = newFolderName.trim();
+    if (!clean) return;
     setActiveCategories({
       ...activeCategories,
-      [trimmed]: {
-        name: trimmed,
-        description: `Custom folder: ${trimmed}`,
-        keywords: [trimmed.toLowerCase()],
+      [clean]: {
+        name: clean,
+        description: `Custom folder: ${clean}`,
+        keywords: [clean.toLowerCase()],
         extensions: [],
         active: true,
       },
     });
-    setNewCatName("");
-    setIsEditingCategory(false);
+    setNewFolderName("");
+    setIsAddingFolder(false);
   };
 
   const activeCount = Object.values(activeCategories).filter((c) => c.active).length;
+  const hasCategories = Object.keys(activeCategories).length > 0;
+  const folderName = inputFolder ? inputFolder.split("/").filter(Boolean).pop() || inputFolder : "Selected Folder";
 
-  return (
-    <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col space-y-0">
-      {/* Assistant Top Banner */}
-      <div className="p-5 border-b border-[#e6e6e6] dark:border-[#2e2e2e] bg-linear-to-r from-[#f9fafb] to-[#ffffff] dark:from-[#242424] dark:to-[#202020] flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-[#0075de] to-[#9b51e0] text-white flex items-center justify-center shadow-xs">
-            <Sparkles className="w-4 h-4" />
+  // --- 1. UNINITIALIZED STATE: DIRECTORY ANALYSIS HERO ---
+  if (!hasCategories) {
+    return (
+      <div className="bg-[#ffffff] dark:bg-[#1c1c1e] rounded-2xl border border-[#e5e5e7] dark:border-[#2c2c2e] shadow-sm p-8 max-w-4xl mx-auto space-y-8 animate-fade-in">
+        <div className="text-center space-y-3">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-[#0075de]/10 dark:bg-[#0075de]/20 text-[#0075de] dark:text-[#38bdf8] flex items-center justify-center">
+            <Sparkles className="w-7 h-7" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-[15px] font-bold text-[#000000] dark:text-[#ffffff]">
-                AI Organization Architect
-              </h3>
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#e8f4fd] dark:bg-[#0c3966]/40 text-[#0075de] dark:text-[#8bc5f8] font-semibold border border-[#0075de]/20">
-                Interactive Control
-              </span>
-            </div>
-            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mt-0.5">
-              Command custom folder layouts, select predefined category packs, and refine anytime via chat.
+            <h3 className="text-xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] tracking-tight">
+              Analyze Directory & Synthesize Blueprint
+            </h3>
+            <p className="text-[13px] text-[#86868b] max-w-lg mx-auto mt-1 leading-relaxed">
+              TidyFlow will inspect the actual filenames, document previews, and code files in{" "}
+              <span className="font-mono text-[#0075de] dark:text-[#38bdf8] font-semibold">{folderName}</span> to generate bespoke categories.
             </p>
           </div>
         </div>
 
-        {hasProposedStructure && (
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] text-[#166534] dark:text-[#4ade80] font-medium flex items-center gap-1.5 bg-[#dcfce7] dark:bg-[#052e16] px-2.5 py-1 rounded-full border border-[#86efac] dark:border-[#166534]">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{activeCount} Folders Configured</span>
-            </span>
+        {/* Granularity Selection Grid */}
+        <div className="space-y-3">
+          <label className="text-[12px] font-semibold uppercase tracking-wider text-[#86868b] block text-center">
+            Choose Classification Granularity & Strength
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            {GRANULARITY_TIERS.map((tier) => {
+              const isSelected = currentLevel === tier.id;
+              const Icon = tier.icon;
+              return (
+                <button
+                  key={tier.id}
+                  onClick={() => handleTierChange(tier.id)}
+                  disabled={isProcessing}
+                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                    isSelected
+                      ? "bg-[#0075de]/10 dark:bg-[#0075de]/20 border-[#0075de] dark:border-[#38bdf8] ring-1 ring-[#0075de]/50 shadow-xs"
+                      : "bg-[#fafafc] dark:bg-[#242426] border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de]/50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className={`p-2 rounded-lg ${isSelected ? "bg-[#0075de] text-white" : "bg-[#f2f2f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d]"}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d]">
+                      {tier.target}
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-[13px] font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
+                      {tier.label}
+                    </h4>
+                    <p className="text-[11px] text-[#86868b] mt-0.5 leading-snug">
+                      {tier.description}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Primary CTA Action */}
+        <div className="pt-2 flex flex-col items-center gap-3">
+          <button
+            onClick={() => handleAutoSynthesize()}
+            disabled={isProcessing || isRunning || !inputFolder.trim()}
+            className="px-8 py-3.5 rounded-xl bg-[#0075de] hover:bg-[#0062bd] dark:bg-[#2383e2] dark:hover:bg-[#1a73cb] text-white font-bold text-[14px] flex items-center gap-2.5 transition shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-50"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Reading Directory Files & Synthesizing Taxonomy...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>Scan & Auto-Generate Categories for "{folderName}"</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+
+          {statusMessage && (
+            <p className="text-[12px] text-[#0075de] dark:text-[#38bdf8] font-mono animate-fade-in">
+              {statusMessage}
+            </p>
+          )}
+
+          {/* Secondary Preset Options */}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2 border-t border-[#e5e5e7] dark:border-[#2c2c2e] w-full text-[12px] text-[#86868b]">
+            <span>Or start with pre-configured template:</span>
+            <button
+              onClick={handleLoadStandard}
+              className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7] hover:text-[#0075de] hover:underline cursor-pointer"
+            >
+              Standard 18 Folders
+            </button>
+            <span>•</span>
+            {PRESET_PACKS.filter((p) => p.id !== "standard").map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => handleLoadPreset(preset.id, preset.categories)}
+                className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7] hover:text-[#0075de] hover:underline cursor-pointer"
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- 2. ACTIVE TAXONOMY BLUEPRINT STUDIO (WHEN CATEGORIES ARE POPULATED) ---
+  return (
+    <div className="bg-[#ffffff] dark:bg-[#1c1c1e] rounded-2xl border border-[#e5e5e7] dark:border-[#2c2c2e] shadow-sm overflow-hidden flex flex-col transition-all">
+      {/* Studio Header Bar */}
+      <div className="px-5 py-4 border-b border-[#e5e5e7] dark:border-[#2c2c2e] flex flex-wrap items-center justify-between gap-4 bg-[#fafafc] dark:bg-[#202022]">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#0075de]/10 dark:bg-[#0075de]/20 text-[#0075de] dark:text-[#38bdf8] flex items-center justify-center font-bold">
+            <FolderTree className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-[14px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] tracking-tight">
+                Taxonomy Blueprint ({folderName})
+              </h3>
+              <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-[#0075de]/10 text-[#0075de] dark:text-[#38bdf8]">
+                {activeCount} active folders
+              </span>
+            </div>
+            <p className="text-[12px] text-[#86868b]">
+              Folders synthesized from real directory files. Customize, add, or refine below.
+            </p>
+          </div>
+        </div>
+
+        {/* Tactile Granularity Segmented Switcher */}
+        <div className="flex items-center p-1 rounded-xl bg-[#f2f2f7] dark:bg-[#161618] border border-[#e5e5e7] dark:border-[#2c2c2e]">
+          {GRANULARITY_TIERS.map((tier) => {
+            const isSelected = currentLevel === tier.id;
+            const Icon = tier.icon;
+            return (
+              <button
+                key={tier.id}
+                onClick={() => {
+                  handleTierChange(tier.id);
+                  handleAutoSynthesize(tier.id);
+                }}
+                disabled={isProcessing}
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all cursor-pointer flex items-center gap-1.5 select-none ${
+                  isSelected
+                    ? "bg-[#ffffff] dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] shadow-xs font-semibold"
+                    : "text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]"
+                }`}
+                title={`Switch to ${tier.label} (${tier.target}): ${tier.description}`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tier.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Action Control Sub-bar */}
+      <div className="px-5 py-2.5 border-b border-[#e5e5e7] dark:border-[#2c2c2e] bg-[#ffffff] dark:bg-[#1c1c1e] flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => handleAutoSynthesize()}
+            disabled={isProcessing || isRunning}
+            className="px-3 py-1 rounded-lg bg-[#f2f2f7] dark:bg-[#2c2c2e] hover:bg-[#e5e5ea] dark:hover:bg-[#38383a] text-[#1d1d1f] dark:text-[#f5f5f7] text-[11.5px] font-medium flex items-center gap-1.5 transition cursor-pointer border border-[#e5e5e7] dark:border-[#38383a]"
+          >
+            {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3 text-[#0075de]" />}
+            <span>Re-Analyze Files</span>
+          </button>
+
+          <button
+            onClick={handleLoadStandard}
+            disabled={isProcessing || isRunning}
+            className={`px-2.5 py-1 rounded-lg text-[11.5px] font-medium transition cursor-pointer border ${
+              activePresetId === "standard"
+                ? "bg-[#0075de]/10 border-[#0075de] text-[#0075de]"
+                : "border-[#e5e5e7] dark:border-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d] hover:bg-[#f2f2f7] dark:hover:bg-[#2c2c2e]"
+            }`}
+          >
+            Load Standard 18
+          </button>
+
+          <button
+            onClick={() => setActiveCategories({})}
+            className="px-2.5 py-1 rounded-lg text-[11.5px] font-medium text-[#86868b] hover:text-[#ff3b30] transition cursor-pointer"
+          >
+            Clear Blueprint
+          </button>
+        </div>
+
+        {/* Add Folder Inline Button */}
+        <button
+          onClick={() => {
+            setIsAddingFolder(true);
+            setTimeout(() => inputRef.current?.focus(), 50);
+          }}
+          className="px-2.5 py-1 rounded-lg border border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de] dark:hover:border-[#38bdf8] bg-[#fafafc] dark:bg-[#252528] text-[11.5px] font-medium text-[#48484a] dark:text-[#d1d1d6] flex items-center gap-1.5 transition cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5 text-[#0075de] dark:text-[#38bdf8]" />
+          <span>New Folder</span>
+        </button>
+      </div>
+
+      {/* Main Folder Blueprint Grid */}
+      <div className="p-5 flex-1 bg-[#ffffff] dark:bg-[#1c1c1e] min-h-[260px] max-h-[460px] overflow-y-auto space-y-4">
+        {/* Inline Add Folder Form */}
+        {isAddingFolder && (
+          <form
+            onSubmit={handleAddFolderSubmit}
+            className="p-3 rounded-xl border border-[#0075de] dark:border-[#38bdf8] bg-[#0075de]/5 dark:bg-[#0075de]/10 flex items-center gap-2"
+          >
+            <FolderPlus className="w-4 h-4 text-[#0075de] dark:text-[#38bdf8] shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="e.g. Work/Reports or Invoices_2026"
+              className="flex-1 bg-transparent text-[13px] font-mono text-[#1d1d1f] dark:text-[#f5f5f7] focus:outline-none placeholder-[#86868b]"
+            />
+            <button
+              type="submit"
+              className="px-3 py-1 bg-[#0075de] text-white text-[11px] font-semibold rounded-md cursor-pointer"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAddingFolder(false)}
+              className="p-1 text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        )}
+
+        {/* Folder Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {Object.entries(activeCategories).map(([name, cat]) => {
+            return (
+              <div
+                key={name}
+                className={`p-3.5 rounded-xl border transition-all duration-150 flex flex-col justify-between gap-2.5 ${
+                  cat.active
+                    ? "bg-[#fafafc] dark:bg-[#222224] border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de]/40 hover:shadow-xs"
+                    : "bg-[#f2f2f7]/50 dark:bg-[#161618]/50 border-[#e5e5e7]/60 dark:border-[#2c2c2e]/40 opacity-50"
+                }`}
+              >
+                {/* Card Top: Checkbox, Name, Delete */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={() => handleToggleFolder(name)}
+                      className={`w-4 h-4 rounded flex items-center justify-center border transition-all cursor-pointer ${
+                        cat.active
+                          ? "bg-[#0075de] border-[#0075de] text-white"
+                          : "border-[#c7c7cc] dark:border-[#48484a] bg-transparent"
+                      }`}
+                      title={cat.active ? "Click to disable" : "Click to enable"}
+                    >
+                      {cat.active && <Check className="w-3 h-3 stroke-[3]" />}
+                    </button>
+                    <span className="font-mono text-[12.5px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] truncate">
+                      {name}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => handleDeleteFolder(name)}
+                    className="text-[#86868b] hover:text-[#ff3b30] p-1 rounded transition cursor-pointer shrink-0"
+                    title="Remove folder"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Card Middle: Description */}
+                {cat.description && (
+                  <p className="text-[11px] text-[#6e6e73] dark:text-[#98989d] line-clamp-1 leading-snug">
+                    {cat.description}
+                  </p>
+                )}
+
+                {/* Card Bottom: Extensions & Keywords */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-mono">
+                  {cat.extensions && cat.extensions.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#48484a] dark:text-[#d1d1d6] flex items-center gap-1">
+                      <FileCode className="w-2.5 h-2.5 text-[#86868b]" />
+                      <span>{cat.extensions.slice(0, 3).join(", ")}</span>
+                    </span>
+                  )}
+                  {cat.keywords && cat.keywords.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-[#f2f2f7] dark:bg-[#1a1a1c] text-[#6e6e73] dark:text-[#86868b]">
+                      {cat.keywords.slice(0, 2).join(", ")}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Custom Behavioral Rule Quote if present */}
+        {customInstructions && (
+          <div className="p-3 rounded-xl border border-[#0075de]/20 bg-[#0075de]/5 dark:bg-[#0075de]/10 flex items-start gap-2.5">
+            <Terminal className="w-4 h-4 text-[#0075de] dark:text-[#38bdf8] shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#0075de] dark:text-[#38bdf8] block">
+                Active Classification Rule
+              </span>
+              <p className="text-[12px] text-[#1d1d1f] dark:text-[#f5f5f7] mt-0.5">
+                "{customInstructions}"
+              </p>
+            </div>
+            <button
+              onClick={() => setCustomInstructions("")}
+              className="text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] text-[11px] font-medium"
+            >
+              Clear
+            </button>
           </div>
         )}
       </div>
 
-      {/* Preset Inspiration Pills Bar */}
-      <div className="p-4 bg-[#fbfbfa] dark:bg-[#1c1c1c] border-b border-[#e6e6e6] dark:border-[#2e2e2e] space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#a39e98]">
-            Predefined Category Packs & Templates (Click to apply)
-          </span>
-          {!hasProposedStructure && (
-            <button
-              onClick={handleLoadStandardDefaults}
-              className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline cursor-pointer flex items-center gap-1"
-            >
-              <Layers className="w-3 h-3" />
-              <span>Load Full Standard Taxonomy (18 Folders)</span>
-            </button>
-          )}
+      {/* Assistant Status & Quick Prompt Chips */}
+      <div className="px-5 py-2.5 border-t border-[#e5e5e7] dark:border-[#2c2c2e] bg-[#fafafc] dark:bg-[#202022] flex flex-wrap items-center justify-between gap-3 text-[11.5px]">
+        <div className="flex items-center gap-2 text-[#6e6e73] dark:text-[#98989d] truncate">
+          <div className="w-2 h-2 rounded-full bg-[#34c759] shrink-0" />
+          <span className="truncate">{statusMessage || `Taxonomy ready. ${activeCount} active categories.`}</span>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {/* Default 18 Categories Action */}
-          <button
-            onClick={handleLoadStandardDefaults}
-            disabled={isGenerating || isRunning}
-            className="text-[12px] px-3 py-1.5 rounded-full border border-[#0075de]/30 dark:border-[#2383e2]/40 bg-[#e8f4fd] dark:bg-[#0c3966]/30 text-[#0075de] dark:text-[#8bc5f8] hover:bg-[#0075de] hover:text-white dark:hover:bg-[#2383e2] dark:hover:text-white transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 active:scale-97 disabled:opacity-50 font-semibold"
-          >
-            <span>🌟</span>
-            <span>All 18 Standard Categories</span>
-          </button>
-
-          {PRESET_PACKS.filter((p) => p.id !== "standard").map((preset) => (
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          {QUICK_ACTIONS.map((action, idx) => (
             <button
-              key={preset.id}
-              onClick={() => handleSelectPreset(preset.id, preset.prompt, preset.categories)}
-              disabled={isGenerating || isRunning}
-              className="text-[12px] px-3 py-1.5 rounded-full border border-[#e6e6e6] dark:border-[#383838] bg-[#ffffff] dark:bg-[#252525] hover:border-[#0075de] dark:hover:border-[#2383e2] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/30 text-[#31302e] dark:text-[#d4d4d4] transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 active:scale-97 disabled:opacity-50"
+              key={idx}
+              onClick={() => {
+                if (action.isAuto) {
+                  handleAutoSynthesize();
+                } else if (action.prompt.endsWith(" ")) {
+                  setInputText(action.prompt);
+                } else {
+                  handleExecuteCommand(action.prompt);
+                }
+              }}
+              disabled={isProcessing || isRunning}
+              className="px-2 py-0.5 rounded-md bg-[#ffffff] dark:bg-[#2c2c2e] border border-[#e5e5e7] dark:border-[#38383a] text-[#48484a] dark:text-[#d1d1d6] hover:border-[#0075de] hover:text-[#0075de] dark:hover:text-[#38bdf8] transition text-[11px] font-medium cursor-pointer shrink-0"
             >
-              <span>{preset.emoji}</span>
-              <span>{preset.name}</span>
-              <span className="text-[10px] opacity-70 font-mono">
-                ({Object.keys(preset.categories).length})
-              </span>
+              {action.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Helpful Predefined Categories Callout if not yet expanded */}
-      {!hasProposedStructure && Object.keys(activeCategories).length > 0 && (
-        <div className="px-5 py-3 bg-[#e8f4fd]/50 dark:bg-[#0c3966]/20 border-b border-[#e6e6e6] dark:border-[#2e2e2e] flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-[12px] text-[#31302e] dark:text-[#d4d4d4]">
-            <Layers className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
-            <span>
-              <strong>{Object.keys(activeCategories).length} predefined categories</strong> are configured in your workspace.
-            </span>
-          </div>
-          <button
-            onClick={() => setHasProposedStructure(true)}
-            className="text-[12px] font-semibold text-[#0075de] dark:text-[#8bc5f8] bg-[#ffffff] dark:bg-[#252525] hover:bg-[#0075de] hover:text-white px-3 py-1 rounded-md border border-[#0075de]/30 transition cursor-pointer shadow-2xs"
-          >
-            View & Customize Categories
-          </button>
-        </div>
-      )}
-
-      {/* Chat Thread Container */}
-      <div className="p-5 max-h-[380px] overflow-y-auto space-y-4 bg-[#ffffff] dark:bg-[#1f1f1f]">
-        {messages.map((msg) => {
-          const isUser = msg.role === "user";
-          return (
-            <div
-              key={msg.id}
-              className={`flex gap-3 text-[13px] ${
-                isUser ? "flex-row-reverse" : "flex-row"
-              }`}
-            >
-              {/* Avatar */}
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold shadow-2xs ${
-                  isUser
-                    ? "bg-[#0075de] text-white"
-                    : "bg-[#f1f0ee] dark:bg-[#333333] text-[#31302e] dark:text-[#e0e0e0] border border-[#e6e6e6] dark:border-[#404040]"
-                }`}
-              >
-                {isUser ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />}
-              </div>
-
-              {/* Message Bubble */}
-              <div
-                className={`max-w-[82%] rounded-2xl px-4 py-3 leading-relaxed shadow-2xs ${
-                  isUser
-                    ? "bg-[#0075de] text-white rounded-tr-xs"
-                    : "bg-[#f6f5f4] dark:bg-[#282828] text-[#191919] dark:text-[#e8e8e8] border border-[#e6e6e6] dark:border-[#383838] rounded-tl-xs"
-                }`}
-              >
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-              </div>
-            </div>
-          );
-        })}
-
-        {isGenerating && (
-          <div className="flex gap-3 text-[13px] items-center">
-            <div className="w-7 h-7 rounded-full bg-[#f1f0ee] dark:bg-[#333333] flex items-center justify-center text-xs">
-              <Bot className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
-            </div>
-            <div className="bg-[#f6f5f4] dark:bg-[#282828] border border-[#e6e6e6] dark:border-[#383838] rounded-2xl px-4 py-2.5 flex items-center gap-2 text-[#615d59] dark:text-[#9b9a97]">
-              <Loader2 className="w-4 h-4 animate-spin text-[#0075de] dark:text-[#2383e2]" />
-              <span>Analyzing requirements & tailoring category structure...</span>
-            </div>
-          </div>
-        )}
-        <div ref={chatEndRef} />
-      </div>
-
-      {/* Verification & Proposed Categories Review Panel */}
-      {hasProposedStructure && Object.keys(activeCategories).length > 0 && (
-        <div className="p-5 border-t border-[#e6e6e6] dark:border-[#2e2e2e] bg-[#fafaf9] dark:bg-[#1b1b1b] space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <FolderTree className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
-              <h4 className="text-[14px] font-bold text-[#000000] dark:text-[#ffffff]">
-                Verify Proposed Structure ({Object.keys(activeCategories).length} Categories)
-              </h4>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsEditingCategory(true)}
-                className="text-[12px] px-2.5 py-1 rounded-md bg-[#ffffff] dark:bg-[#282828] border border-[#e6e6e6] dark:border-[#383838] text-[#31302e] dark:text-[#d4d4d4] hover:border-[#0075de] flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Folder</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Inline Add Category */}
-          {isEditingCategory && (
-            <form onSubmit={handleAddQuickCat} className="flex gap-2 items-center">
-              <input
-                type="text"
-                value={newCatName}
-                onChange={(e) => setNewCatName(e.target.value)}
-                placeholder="Category path, e.g. Work/Design_Mockups"
-                className="flex-1 bg-[#ffffff] dark:bg-[#242424] border border-[#0075de] rounded-md px-3 py-1.5 text-[12px] text-[#000000] dark:text-[#ffffff] focus:outline-none"
-                autoFocus
-              />
-              <button
-                type="submit"
-                className="px-3 py-1.5 bg-[#0075de] text-white text-[12px] font-semibold rounded-md cursor-pointer"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsEditingCategory(false)}
-                className="px-2.5 py-1.5 text-[12px] text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] cursor-pointer"
-              >
-                Cancel
-              </button>
-            </form>
-          )}
-
-          {/* Interactive Category Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
-            {Object.entries(activeCategories).map(([name, cat]) => {
-              const style = getStickerStyle(name);
-              return (
-                <div
-                  key={name}
-                  className={`p-3 rounded-lg border transition-all duration-150 flex flex-col justify-between gap-2 ${
-                    cat.active
-                      ? "bg-[#ffffff] dark:bg-[#232323] border-[#e6e6e6] dark:border-[#333333] shadow-2xs"
-                      : "bg-[#f1f0ee]/50 dark:bg-[#191919]/50 border-[#e6e6e6]/60 dark:border-[#2e2e2e]/40 opacity-60"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <input
-                        type="checkbox"
-                        checked={cat.active}
-                        onChange={() => handleToggleCat(name)}
-                        className="w-3.5 h-3.5 rounded text-[#0075de] focus:ring-0 cursor-pointer"
-                        title={cat.active ? "Enabled" : "Disabled"}
-                      />
-                      <span
-                        className={`text-[12px] font-semibold px-2 py-0.5 rounded-sm border font-mono truncate ${style.bg} ${style.text} ${style.border}`}
-                      >
-                        {name}
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={() => handleDeleteCat(name)}
-                      className="text-[#a39e98] hover:text-[#9d174d] dark:hover:text-[#f472b6] p-1 rounded-sm cursor-pointer transition"
-                      title="Remove category"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  {cat.description && (
-                    <p className="text-[11px] text-[#615d59] dark:text-[#9b9a97] line-clamp-1">
-                      {cat.description}
-                    </p>
-                  )}
-
-                  <div className="flex flex-wrap gap-1 text-[10px] text-[#a39e98] font-mono">
-                    {cat.extensions && cat.extensions.length > 0 && (
-                      <span className="flex items-center gap-1 bg-[#f1f0ee] dark:bg-[#2d2d2d] px-1.5 py-0.5 rounded-sm text-[#31302e] dark:text-[#d4d4d4]">
-                        <FileCode className="w-2.5 h-2.5" />
-                        <span>{cat.extensions.slice(0, 3).join(", ")}</span>
-                      </span>
-                    )}
-                    {cat.keywords && cat.keywords.length > 0 && (
-                      <span className="bg-[#f1f0ee] dark:bg-[#2d2d2d] px-1.5 py-0.5 rounded-sm text-[#615d59] dark:text-[#9b9a97]">
-                        {cat.keywords.slice(0, 2).join(", ")}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Custom Behavioral Rule Callout */}
-          {customInstructions && (
-            <div className="p-3 bg-[#e8f4fd]/50 dark:bg-[#0c3966]/20 border border-[#0075de]/20 rounded-lg flex items-start gap-2.5">
-              <Sparkles className="w-4 h-4 text-[#0075de] dark:text-[#2383e2] shrink-0 mt-0.5" />
-              <div>
-                <span className="text-[11px] font-bold text-[#0075de] dark:text-[#8bc5f8] uppercase tracking-wider block">
-                  Active Behavioral Rule
-                </span>
-                <p className="text-[12px] text-[#31302e] dark:text-[#d4d4d4] mt-0.5 leading-relaxed">
-                  "{customInstructions}"
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Verification CTA Action */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-            <div className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
-              Want changes? Type a follow-up message below, or click Approve to organize.
-            </div>
-
-            <button
-              onClick={onApproveAndOrganize}
-              disabled={isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()}
-              className={`px-6 py-2.5 rounded-full font-semibold text-[14px] flex items-center gap-2 shadow-sm transition-all cursor-pointer ${
-                isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()
-                  ? "bg-[#e6e6e6] dark:bg-[#333333] text-[#a39e98] cursor-not-allowed"
-                  : "bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white active:scale-97 shadow-[0_2px_4px_rgba(0,117,222,0.25)]"
-              }`}
-            >
-              {isRunning ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Processing Directory...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Approve & Start Organizing</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Bottom Chat Input Bar */}
-      <div className="p-4 border-t border-[#e6e6e6] dark:border-[#2e2e2e] bg-[#ffffff] dark:bg-[#202020]">
-        <div className="relative flex items-center">
+      {/* Command Bar & Organizer CTA Footer */}
+      <div className="p-4 border-t border-[#e5e5e7] dark:border-[#2c2c2e] bg-[#ffffff] dark:bg-[#1c1c1e] flex flex-wrap items-center justify-between gap-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleExecuteCommand();
+          }}
+          className="flex-1 min-w-[280px] relative flex items-center"
+        >
           <input
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSendPrompt();
-              }
-            }}
-            placeholder={
-              hasProposedStructure
-                ? "Ask AI to tweak this structure (e.g. 'Also add a folder for Figma files' or 'Split photos by year')..."
-                : "Describe your ideal categories or file rules in plain English..."
-            }
-            disabled={isGenerating || isRunning}
-            className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-full pl-4 pr-12 py-3 text-[13px] text-[#000000] dark:text-[#ffffff] placeholder-[#a39e98] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:ring-2 focus:ring-[#0075de]/15 shadow-2xs transition"
+            placeholder="Type a refinement command (e.g. 'Remove Archives', 'Group invoices by month', 'Simplify')..."
+            disabled={isProcessing || isRunning}
+            className="w-full bg-[#f2f2f7] dark:bg-[#252528] border border-transparent focus:border-[#0075de] dark:focus:border-[#38bdf8] rounded-xl pl-3.5 pr-10 py-2.5 text-[12.5px] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] focus:outline-none transition"
           />
           <button
-            onClick={() => handleSendPrompt()}
-            disabled={!inputText.trim() || isGenerating || isRunning}
-            className="absolute right-2 w-8 h-8 rounded-full bg-[#0075de] hover:bg-[#005bab] dark:bg-[#2383e2] dark:hover:bg-[#1d70c2] text-white flex items-center justify-center disabled:opacity-40 transition-all cursor-pointer active:scale-95 shadow-2xs"
-            title="Send prompt"
+            type="submit"
+            disabled={!inputText.trim() || isProcessing || isRunning}
+            className="absolute right-1.5 p-1.5 rounded-lg bg-[#0075de] text-white hover:bg-[#0062bd] disabled:opacity-40 transition cursor-pointer"
+            title="Execute command"
           >
-            <Send className="w-3.5 h-3.5" />
+            <Send className="w-3 h-3" />
           </button>
-        </div>
+        </form>
+
+        <button
+          onClick={onApproveAndOrganize}
+          disabled={isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()}
+          className={`px-5 py-2.5 rounded-xl font-semibold text-[13px] flex items-center gap-2 transition cursor-pointer shadow-xs select-none ${
+            isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()
+              ? "bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#86868b] cursor-not-allowed"
+              : "bg-[#0075de] hover:bg-[#0062bd] dark:bg-[#2383e2] dark:hover:bg-[#1a73cb] text-white active:scale-[0.98]"
+          }`}
+        >
+          {isRunning ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Organizing...</span>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Approve & Organize ({activeCount} Folders)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </>
+          )}
+        </button>
       </div>
     </div>
   );
