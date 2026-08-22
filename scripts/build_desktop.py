@@ -25,6 +25,16 @@ def print_step(title: str):
     print("=" * 60)
 
 
+def check_python_dependencies():
+    print_step("Step 0: Verifying Python Dependencies")
+    req_file = ROOT_DIR / "requirements.txt"
+    if req_file.exists():
+        print("📦 Ensuring all packages from requirements.txt are installed...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller>=6.0.0", "pywebview>=5.0.0"], check=True)
+    print("✅ All Python dependencies are installed and up to date!")
+
+
 def build_frontend():
     print_step("Step 1: Building React Frontend")
     frontend_dir = ROOT_DIR / "frontend"
@@ -173,6 +183,7 @@ def main():
     print("\n📦 TidyFlow 2.0 — Standalone Desktop App Builder")
     print(f"Root Directory: {ROOT_DIR}\n")
     try:
+        check_python_dependencies()
         build_frontend()
         build_native_binaries()
         package_desktop()
