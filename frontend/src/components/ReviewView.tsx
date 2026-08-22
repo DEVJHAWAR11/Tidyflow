@@ -614,6 +614,17 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             </button>
           )}
 
+          {Object.keys(categoryOverrides).length > 0 && (
+            <button
+              onClick={() => setCategoryOverrides({})}
+              title="Revert all manual / AI cluster assignments back to original scan predictions"
+              className="px-2.5 py-1 text-[12px] font-medium text-[#86868b] hover:text-[#ff3b30] hover:bg-[#ff3b30]/10 rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Categories ({Object.keys(categoryOverrides).length})</span>
+            </button>
+          )}
+
           <button
             onClick={selectAllFiltered}
             className="px-3 py-1 text-[12px] font-medium bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer"
@@ -822,7 +833,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
                       {/* Category Selector */}
                       <td className="p-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <select
                             value={currentCat}
                             onChange={(e) => {
@@ -843,30 +854,61 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                               <option value={currentCat}>{currentCat}</option>
                             )}
                           </select>
+
+                          {categoryOverrides[file.file_id] && (
+                            <button
+                              onClick={() => {
+                                setCategoryOverrides((prev) => {
+                                  const next = { ...prev };
+                                  delete next[file.file_id];
+                                  return next;
+                                });
+                              }}
+                              title={`Revert category to original: ${file.category}`}
+                              className="p-1 text-[#86868b] hover:text-[#ff3b30] hover:bg-[#ff3b30]/10 rounded transition cursor-pointer"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       </td>
 
                       {/* Confidence Meter */}
                       <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-12 bg-[#e6e6e6] dark:bg-[#333333] rounded-full h-1.5 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                isHighConf ? "bg-[#1aae39] dark:bg-[#4ade80]" : "bg-[#dd5b00] dark:bg-[#fb923c]"
-                              }`}
-                              style={{ width: `${Math.round(effectiveConfidence * 100)}%` }}
-                            />
+                        {isOverridden ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold font-mono bg-[#0075de]/10 dark:bg-[#0075de]/20 text-[#0075de] dark:text-[#38bdf8] border border-[#0075de]/30 flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              <span>Assigned</span>
+                            </span>
+                            <span
+                              className="text-[10px] text-[#86868b] font-mono"
+                              title={`Original model score: ${Math.round(file.confidence * 100)}%`}
+                            >
+                              ({Math.round(file.confidence * 100)}%)
+                            </span>
                           </div>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[11px] font-bold font-mono ${
-                              isHighConf
-                                ? "bg-[#ecf7ed] dark:bg-[#0c3917]/40 text-[#166534] dark:text-[#4ade80]"
-                                : "bg-[#fef3eb] dark:bg-[#4a1c07]/40 text-[#9a3412] dark:text-[#fb923c]"
-                            }`}
-                          >
-                            {isOverridden ? "100% (Assigned)" : `${Math.round(file.confidence * 100)}%`}
-                          </span>
-                        </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <div className="w-12 bg-[#e6e6e6] dark:bg-[#333333] rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${
+                                  isHighConf ? "bg-[#1aae39] dark:bg-[#4ade80]" : "bg-[#dd5b00] dark:bg-[#fb923c]"
+                                }`}
+                                style={{ width: `${Math.round(file.confidence * 100)}%` }}
+                              />
+                            </div>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[11px] font-bold font-mono ${
+                                isHighConf
+                                  ? "bg-[#ecf7ed] dark:bg-[#0c3917]/40 text-[#166534] dark:text-[#4ade80]"
+                                  : "bg-[#fef3eb] dark:bg-[#4a1c07]/40 text-[#9a3412] dark:text-[#fb923c]"
+                              }`}
+                            >
+                              {Math.round(file.confidence * 100)}%
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Match Summary */}
