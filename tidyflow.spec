@@ -39,7 +39,7 @@ for cfg_file in ["config.yaml", "rules.yaml"]:
 # Collect package data & metadata
 datas += collect_data_files("uvicorn")
 datas += collect_data_files("sse_starlette")
-for pkg in ["fastmcp", "fastmcp-slim", "uvicorn", "sse_starlette", "fastapi", "pydantic", "tqdm", "keyring"]:
+for pkg in ["fastmcp", "fastmcp-slim", "uvicorn", "sse_starlette", "fastapi", "pydantic", "tqdm", "keyring", "httpx", "httpcore", "starlette", "rich", "typer"]:
     try:
         datas += copy_metadata(pkg)
     except Exception:
@@ -52,10 +52,19 @@ except Exception:
 
 # Hidden imports to ensure dynamic modules are packaged
 hiddenimports = [
+    "httpx",
+    "httpcore",
+    "h11",
+    "anyio",
+    "sniffio",
+    "dotenv",
+    "python-dotenv",
     "sse_starlette",
     "sse_starlette.sse",
     "fastapi",
     "pydantic",
+    "pydantic_core",
+    "starlette",
     "keyring",
     "keyring.backends",
     "fitz",
@@ -69,19 +78,42 @@ hiddenimports = [
     "pandas",
     "jinja2",
     "yaml",
+    "rich",
+    "rich.console",
+    "typer",
+    "src",
+    "src.api",
+    "src.cli",
+    "src.config",
+    "src.database",
+    "src.extractor",
+    "src.file_mover",
+    "src.hash_utils",
+    "src.keyword_scorer",
+    "src.llm_provider",
+    "src.main_loop",
+    "src.mcp_server",
+    "src.models",
+    "src.ocr_engine",
+    "src.reporter",
+    "src.rules",
+    "src.scanner",
+    "src.search",
+    "src.utils",
 ]
 
-# Dynamically collect all submodules for uvicorn and webview
-hiddenimports += collect_submodules("uvicorn")
-try:
-    hiddenimports += collect_submodules("webview")
-except Exception:
-    hiddenimports += ["webview"]
+# Dynamically collect all submodules for key packages
+for mod in ["uvicorn", "webview", "httpx", "httpcore", "starlette", "src"]:
+    try:
+        hiddenimports += collect_submodules(mod)
+    except Exception:
+        pass
 
 if sys.platform == "darwin":
     hiddenimports += ["webview.platforms.cocoa", "keyring.backends.macOS", "objc", "AppKit", "WebKit", "Foundation"]
 elif sys.platform == "win32":
     hiddenimports += ["webview.platforms.winforms", "webview.platforms.edgechromium", "keyring.backends.Windows"]
+
 
 # Icon determination
 icon_path = None
