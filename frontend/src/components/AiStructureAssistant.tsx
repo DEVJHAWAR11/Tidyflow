@@ -432,7 +432,11 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
                 }`}
                 title={`Switch to ${tier.label} (${tier.target}): ${tier.description}`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                {isProcessing && isSelected ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0075de] dark:text-[#38bdf8]" />
+                ) : (
+                  <Icon className="w-3.5 h-3.5" />
+                )}
                 <span>{tier.label}</span>
               </button>
             );
@@ -518,71 +522,103 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
           </form>
         )}
 
-        {/* Folder Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {Object.entries(activeCategories).map(([name, cat]) => {
-            return (
-              <div
-                key={name}
-                className={`p-3.5 rounded-xl border transition-all duration-150 flex flex-col justify-between gap-2.5 ${
-                  cat.active
-                    ? "bg-[#fafafc] dark:bg-[#222224] border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de]/40 hover:shadow-xs"
-                    : "bg-[#f2f2f7]/50 dark:bg-[#161618]/50 border-[#e5e5e7]/60 dark:border-[#2c2c2e]/40 opacity-50"
-                }`}
-              >
-                {/* Card Top: Checkbox, Name, Delete */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+        {/* Folder Cards Grid OR Synthesizing Canvas */}
+        {isProcessing ? (
+          <div className="py-12 px-6 flex flex-col items-center justify-center text-center space-y-5 rounded-2xl bg-[#f2f2f7]/50 dark:bg-[#161618]/50 border border-[#0075de]/30 dark:border-[#0075de]/40">
+            <div className="w-14 h-14 rounded-2xl bg-[#0075de]/15 dark:bg-[#0075de]/25 text-[#0075de] dark:text-[#38bdf8] flex items-center justify-center shadow-xs">
+              <Loader2 className="w-7 h-7 animate-spin" />
+            </div>
+            <div className="space-y-1.5 max-w-lg">
+              <h4 className="text-base font-bold text-[#1d1d1f] dark:text-[#f5f5f7] flex items-center justify-center gap-2">
+                <span>Synthesizing {GRANULARITY_TIERS.find((t) => t.id === currentLevel)?.label || "Custom"} Taxonomy...</span>
+              </h4>
+              <p className="text-[13px] text-[#0075de] dark:text-[#38bdf8] font-mono leading-relaxed">
+                {statusMessage || `Deep scanning directory files & reading content excerpts for "${folderName}"...`}
+              </p>
+              <p className="text-[11.5px] text-[#86868b] pt-1">
+                Analyzing file types, dates, projects, and keywords to create tailored folders.
+              </p>
+            </div>
+
+            {/* Shimmer skeleton mini cards preview */}
+            <div className="w-full max-w-2xl grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 opacity-60">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div
+                  key={i}
+                  className="h-20 rounded-xl bg-[#e5e5ea]/60 dark:bg-[#2c2c2e]/60 border border-[#e5e5e7] dark:border-[#38383a] animate-pulse p-3 flex flex-col justify-between"
+                >
+                  <div className="h-3.5 bg-[#d1d1d6] dark:bg-[#3a3a3c] rounded w-2/3" />
+                  <div className="h-2.5 bg-[#e5e5ea] dark:bg-[#2c2c2e] rounded w-full" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {Object.entries(activeCategories).map(([name, cat]) => {
+              return (
+                <div
+                  key={name}
+                  className={`p-3.5 rounded-xl border transition-all duration-150 flex flex-col justify-between gap-2.5 ${
+                    cat.active
+                      ? "bg-[#fafafc] dark:bg-[#222224] border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de]/40 hover:shadow-xs"
+                      : "bg-[#f2f2f7]/50 dark:bg-[#161618]/50 border-[#e5e5e7]/60 dark:border-[#2c2c2e]/40 opacity-50"
+                  }`}
+                >
+                  {/* Card Top: Checkbox, Name, Delete */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        onClick={() => handleToggleFolder(name)}
+                        className={`w-4 h-4 rounded flex items-center justify-center border transition-all cursor-pointer ${
+                          cat.active
+                            ? "bg-[#0075de] border-[#0075de] text-white"
+                            : "border-[#c7c7cc] dark:border-[#48484a] bg-transparent"
+                        }`}
+                        title={cat.active ? "Click to disable" : "Click to enable"}
+                      >
+                        {cat.active && <Check className="w-3 h-3 stroke-[3]" />}
+                      </button>
+                      <span className="font-mono text-[12.5px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] truncate">
+                        {name}
+                      </span>
+                    </div>
+
                     <button
-                      onClick={() => handleToggleFolder(name)}
-                      className={`w-4 h-4 rounded flex items-center justify-center border transition-all cursor-pointer ${
-                        cat.active
-                          ? "bg-[#0075de] border-[#0075de] text-white"
-                          : "border-[#c7c7cc] dark:border-[#48484a] bg-transparent"
-                      }`}
-                      title={cat.active ? "Click to disable" : "Click to enable"}
+                      onClick={() => handleDeleteFolder(name)}
+                      className="text-[#86868b] hover:text-[#ff3b30] p-1 rounded transition cursor-pointer shrink-0"
+                      title="Remove folder"
                     >
-                      {cat.active && <Check className="w-3 h-3 stroke-[3]" />}
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
-                    <span className="font-mono text-[12.5px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] truncate">
-                      {name}
-                    </span>
                   </div>
 
-                  <button
-                    onClick={() => handleDeleteFolder(name)}
-                    className="text-[#86868b] hover:text-[#ff3b30] p-1 rounded transition cursor-pointer shrink-0"
-                    title="Remove folder"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* Card Middle: Description */}
-                {cat.description && (
-                  <p className="text-[11px] text-[#6e6e73] dark:text-[#98989d] line-clamp-1 leading-snug">
-                    {cat.description}
-                  </p>
-                )}
-
-                {/* Card Bottom: Extensions & Keywords */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-mono">
-                  {cat.extensions && cat.extensions.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#48484a] dark:text-[#d1d1d6] flex items-center gap-1">
-                      <FileCode className="w-2.5 h-2.5 text-[#86868b]" />
-                      <span>{cat.extensions.slice(0, 3).join(", ")}</span>
-                    </span>
+                  {/* Card Middle: Description */}
+                  {cat.description && (
+                    <p className="text-[11px] text-[#6e6e73] dark:text-[#98989d] line-clamp-1 leading-snug">
+                      {cat.description}
+                    </p>
                   )}
-                  {cat.keywords && cat.keywords.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-[#f2f2f7] dark:bg-[#1a1a1c] text-[#6e6e73] dark:text-[#86868b]">
-                      {cat.keywords.slice(0, 2).join(", ")}
-                    </span>
-                  )}
+
+                  {/* Card Bottom: Extensions & Keywords */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-mono">
+                    {cat.extensions && cat.extensions.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#48484a] dark:text-[#d1d1d6] flex items-center gap-1">
+                        <FileCode className="w-2.5 h-2.5 text-[#86868b]" />
+                        <span>{cat.extensions.slice(0, 3).join(", ")}</span>
+                      </span>
+                    )}
+                    {cat.keywords && cat.keywords.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-[#f2f2f7] dark:bg-[#1a1a1c] text-[#6e6e73] dark:text-[#86868b]">
+                        {cat.keywords.slice(0, 2).join(", ")}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Custom Behavioral Rule Quote if present */}
         {customInstructions && (
@@ -609,8 +645,19 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
       {/* Assistant Status & Quick Prompt Chips */}
       <div className="px-5 py-2.5 border-t border-[#e5e5e7] dark:border-[#2c2c2e] bg-[#fafafc] dark:bg-[#202022] flex flex-wrap items-center justify-between gap-3 text-[11.5px]">
         <div className="flex items-center gap-2 text-[#6e6e73] dark:text-[#98989d] truncate">
-          <div className="w-2 h-2 rounded-full bg-[#34c759] shrink-0" />
-          <span className="truncate">{statusMessage || `Taxonomy ready. ${activeCount} active categories.`}</span>
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-3 h-3 animate-spin text-[#0075de] dark:text-[#38bdf8] shrink-0" />
+              <span className="text-[#0075de] dark:text-[#38bdf8] font-medium truncate">
+                {statusMessage || `Synthesizing ${currentLevel} taxonomy...`}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="w-2 h-2 rounded-full bg-[#34c759] shrink-0" />
+              <span className="truncate">{statusMessage || `Taxonomy ready. ${activeCount} active categories.`}</span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto">
@@ -627,7 +674,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
                 }
               }}
               disabled={isProcessing || isRunning}
-              className="px-2 py-0.5 rounded-md bg-[#ffffff] dark:bg-[#2c2c2e] border border-[#e5e5e7] dark:border-[#38383a] text-[#48484a] dark:text-[#d1d1d6] hover:border-[#0075de] hover:text-[#0075de] dark:hover:text-[#38bdf8] transition text-[11px] font-medium cursor-pointer shrink-0"
+              className="px-2 py-0.5 rounded-md bg-[#ffffff] dark:bg-[#2c2c2e] border border-[#e5e5e7] dark:border-[#38383a] text-[#48484a] dark:text-[#d1d1d6] hover:border-[#0075de] hover:text-[#0075de] dark:hover:text-[#38bdf8] transition text-[11px] font-medium cursor-pointer shrink-0 disabled:opacity-50"
             >
               {action.label}
             </button>
@@ -664,9 +711,9 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
 
         <button
           onClick={onApproveAndOrganize}
-          disabled={isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()}
+          disabled={isRunning || isProcessing || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()}
           className={`px-5 py-2.5 rounded-xl font-semibold text-[13px] flex items-center gap-2 transition cursor-pointer shadow-xs select-none ${
-            isRunning || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()
+            isRunning || isProcessing || backendStatus !== "running" || activeCount === 0 || !inputFolder.trim()
               ? "bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#86868b] cursor-not-allowed"
               : "bg-[#0075de] hover:bg-[#0062bd] dark:bg-[#2383e2] dark:hover:bg-[#1a73cb] text-white active:scale-[0.98]"
           }`}
@@ -675,6 +722,11 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               <span>Organizing...</span>
+            </>
+          ) : isProcessing ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Synthesizing Taxonomy...</span>
             </>
           ) : (
             <>
