@@ -99,3 +99,10 @@ categories:
     - .ini
     - .lnk
     active: true
+  ITr:
+    name: ITr
+    description: Custom user-assigned triage category
+    keywords:
+    - itr
+    extensions: []
+    active: true

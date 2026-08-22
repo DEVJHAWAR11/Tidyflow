@@ -318,7 +318,7 @@ class DatabaseManager:
                     fts_syntax = " AND ".join(f'"{tok}"*' for tok in tokens)
                     try:
                         sql_fts = """
-                            SELECT files.id, files.file_id, files.path, files.category,
+                            SELECT files.id, files.file_id, files.path, files.new_path, files.status, files.category,
                                    files.confidence_score, files.extracted_text,
                                    files.thumbnail_b64, files.file_size_bytes, files.extension,
                                    files.suggested_filename, files.reason,
@@ -343,7 +343,7 @@ class DatabaseManager:
                 if not results:
                     like_param = f"%{clean_query}%"
                     sql_like = """
-                        SELECT id, file_id, path, category, confidence_score, extracted_text,
+                        SELECT id, file_id, path, new_path, status, category, confidence_score, extracted_text,
                                thumbnail_b64, file_size_bytes, extension, suggested_filename, reason,
                                '' as snippet
                         FROM files
