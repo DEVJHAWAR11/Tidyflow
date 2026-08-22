@@ -32,6 +32,8 @@ interface OrganizeViewProps {
   fileCount?: number;
   complexityLevel?: any;
   setComplexityLevel?: (lvl: any) => void;
+  onCancelPipeline?: () => void;
+  isCancelling?: boolean;
 }
 
 export const OrganizeView: React.FC<OrganizeViewProps> = ({
@@ -52,6 +54,8 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
   fileCount = 0,
   complexityLevel = "medium",
   setComplexityLevel,
+  onCancelPipeline,
+  isCancelling = false,
 }) => {
   return (
     <div className="space-y-5 animate-fade-in max-w-6xl mx-auto">
@@ -61,6 +65,8 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
         currentStage={currentStage}
         progressLogs={progressLogs}
         inputFolder={inputFolder}
+        onCancel={onCancelPipeline}
+        isCancelling={isCancelling}
       />
 
       {/* Interactive Workflow Stepper */}

@@ -73,6 +73,7 @@ export default function App() {
   };
   const [useLlm, setUseLlm] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("");
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
 
@@ -210,6 +211,61 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Connect SSE for real-time progress updates
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(`${API_BASE}/events`);
+      es.addEventListener("pipeline_progress", (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.stage) {
+            setCurrentStage(payload.stage);
+          }
+          if (payload.message) {
+            setProgressLogs((prev) => [...prev, `> ${payload.message}`]);
+          }
+        } catch {}
+      });
+      es.addEventListener("pipeline_error", (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.error) {
+            setProgressLogs((prev) => [...prev, `✗ Error: ${payload.error}`]);
+          }
+        } catch {}
+      });
+      es.addEventListener("pipeline_cancelled", () => {
+        setIsRunning(false);
+        setIsCancelling(false);
+        setCurrentStage("Cancelled");
+        setProgressLogs((prev) => [...prev, "🛑 Pipeline was safely cancelled."]);
+      });
+    } catch (e) {
+      console.warn("EventSource setup error:", e);
+    }
+    return () => {
+      es?.close();
+    };
+  }, []);
+
+  const handleCancelPipeline = async () => {
+    setIsCancelling(true);
+    setProgressLogs((prev) => [...prev, "🛑 Halting active pipeline execution..."]);
+    try {
+      await fetch(`${API_BASE}/pipeline/cancel`, { method: "POST" });
+    } catch (e) {
+      console.warn("Pipeline cancel request failed:", e);
+    } finally {
+      setTimeout(() => {
+        setIsRunning(false);
+        setIsCancelling(false);
+        setCurrentStage("Cancelled");
+        setProgressLogs((prev) => [...prev, "✓ Organization safely halted. No files were modified."]);
+      }, 500);
+    }
+  };
+
   // --- Category Actions ---
 
   const handleToggleCategory = async (catName: string) => {
@@ -301,7 +357,7 @@ export default function App() {
   ) => {
     if (!inputFolder.trim()) return;
     setIsRunning(true);
-    setCurrentStage("Scanning directory & computing content hashes...");
+    setCurrentStage("scan");
     setProgressLogs([`> Initiating scan on ${inputFolder}`]);
 
     const catsToUse = customCats || categories;
@@ -361,21 +417,21 @@ export default function App() {
       });
       setSelectedFileIds(preselected);
 
-      setCurrentStage("Classification Complete!");
+      setCurrentStage("finalize");
       setProgressLogs((prev) => [
         ...prev,
-        `✓ Processed ${data.files?.length || 0} files successfully!`,
+        `✓ Prepared ${data.files?.length || 0} classified files!`,
       ]);
 
       // Automatically transition to the Review tab
       setTimeout(() => {
+        setIsRunning(false);
         setActiveTab("review");
-      }, 700);
+      }, 750);
     } catch (err: any) {
       setProgressLogs((prev) => [...prev, `✗ Error: ${err.message}`]);
-      setCurrentStage("Failed");
-    } finally {
-      setIsRunning(false);
+      setCurrentStage("error");
+      setTimeout(() => setIsRunning(false), 2000);
     }
   };
 
@@ -632,6 +688,8 @@ export default function App() {
             fileCount={files.length}
             complexityLevel={complexityLevel}
             setComplexityLevel={setComplexityLevel}
+            onCancelPipeline={handleCancelPipeline}
+            isCancelling={isCancelling}
           />
         )}
 

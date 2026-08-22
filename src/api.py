@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -29,7 +30,7 @@ from .llm_provider import (
     load_settings,
     save_settings,
 )
-from .main_loop import Processor, load_records_jsonl, run_pipeline
+from .main_loop import PipelineCancelledException, Processor, load_records_jsonl, run_pipeline
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
 from .scanner import scan_files
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 db = DatabaseManager()
 processor = Processor(max_concurrent=5, db=db)
 clients: set[asyncio.Queue] = set()
+active_cancel_event: Optional[threading.Event] = None
 
 # In-memory latest pipeline results cache
 latest_pipeline_data: dict[str, Any] = {
@@ -57,6 +59,8 @@ async def broadcast_event(event_type: str, data: Any):
             await q.put(msg)
         except Exception:
             clients.discard(q)
+
+
 
 
 @asynccontextmanager
@@ -117,6 +121,30 @@ if frontend_dist.exists():
     @app.get("/")
     async def serve_frontend():
         return FileResponse(frontend_dist / "index.html")
+
+
+@app.get("/events")
+async def events_endpoint(request: Request):
+    """Server-Sent Events (SSE) stream for real-time progress updates."""
+    queue: asyncio.Queue = asyncio.Queue()
+    clients.add(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield {"event": msg.get("type", "message"), "data": json.dumps(msg.get("data", {}))}
+                except asyncio.TimeoutError:
+                    yield {"event": "ping", "data": ""}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            clients.discard(queue)
+
+    return EventSourceResponse(event_generator())
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +616,20 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
 
     await broadcast_event("pipeline_start", {"input_dir": str(input_path), "output_dir": str(out_path)})
 
+    loop = asyncio.get_running_loop()
+
+    def sync_progress_callback(stage: str, message: str):
+        try:
+            asyncio.run_coroutine_threadsafe(
+                broadcast_event("pipeline_progress", {"stage": stage, "message": message}),
+                loop,
+            )
+        except Exception:
+            pass
+
+    global active_cancel_event
+    active_cancel_event = threading.Event()
+
     try:
         # Execute pipeline in worker thread to prevent event loop blocking
         records, summary = await asyncio.to_thread(
@@ -598,11 +640,19 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
             dry_run=req.dry_run,
             db=db,
             strict_mode=is_custom_categories,
+            progress_callback=sync_progress_callback,
+            cancellation_token=active_cancel_event,
         )
+    except PipelineCancelledException:
+        logger.info("Pipeline execution safely cancelled by user.")
+        await broadcast_event("pipeline_cancelled", {"message": "Pipeline cancelled by user."})
+        return {"status": "cancelled", "files": [], "summary": None}
     except Exception as e:
         logger.exception("Pipeline execution failed: %s", e)
         await broadcast_event("pipeline_error", {"error": str(e)})
         raise HTTPException(status_code=500, detail=f"Pipeline execution error: {str(e)}")
+    finally:
+        active_cancel_event = None
 
     # Transform records into JSON serializable format for UI
     file_list = []
@@ -647,6 +697,18 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
         "files": file_list,
         "report_html_path": str(out_path / "review_report.html"),
     }
+
+
+@app.post("/pipeline/cancel")
+async def cancel_pipeline():
+    """Immediately halt any active running pipeline execution."""
+    global active_cancel_event
+    if active_cancel_event is not None:
+        active_cancel_event.set()
+        logger.info("Cancellation signal dispatched to active pipeline.")
+        await broadcast_event("pipeline_cancelled", {"message": "Pipeline cancellation requested."})
+        return {"status": "cancelling", "message": "Cancellation request dispatched"}
+    return {"status": "idle", "message": "No active pipeline running"}
 
 
 @app.get("/pipeline/latest")
