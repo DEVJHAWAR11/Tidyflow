@@ -556,6 +556,60 @@ export default function App() {
     }
   };
 
+  const handleReclassifyWithTier = async (tier: ComplexityLevel) => {
+    if (!inputFolder.trim() || isRunning) return;
+    setComplexityLevel(tier);
+    setIsRunning(true);
+    setCurrentStage("scan");
+    setProgressLogs([`> Re-synthesizing taxonomy for ${tier.toUpperCase()} granularity...`]);
+
+    try {
+      // 1. Synthesize the new category structure for this tier using AI
+      const chatRes = await fetch(`${API_BASE}/ai/chat-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Analyze directory files and generate custom ${tier} category taxonomy`,
+          history: [],
+          input_dir: inputFolder.trim(),
+          complexity_level: tier,
+          auto_discover: true,
+        }),
+      });
+
+      let nextCats = categories;
+      if (chatRes.ok) {
+        const chatData = await chatRes.json();
+        if (chatData.categories && Object.keys(chatData.categories).length > 0) {
+          const generated: Record<string, CategoryItem> = {};
+          Object.entries(chatData.categories).forEach(([name, c]: [string, any]) => {
+            generated[name] = {
+              name: c.name || name,
+              description: c.description || "",
+              keywords: c.keywords || [],
+              extensions: c.extensions || [],
+              active: c.active !== false,
+            };
+          });
+          nextCats = generated;
+          setCategories(generated);
+          // Persist to backend config
+          fetch(`${API_BASE}/categories`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ categories: generated }),
+          }).catch((e) => console.warn("Failed to persist reclassified categories:", e));
+        }
+      }
+
+      // 2. Re-run pipeline classification with the new tier's categories and threshold
+      await handleStartPipeline(nextCats, undefined, tier);
+    } catch (err: any) {
+      console.error("Reclassify failed:", err);
+      setIsRunning(false);
+    }
+  };
+
   // --- Apply Decisions ---
 
   const handleApplyDecisions = async () => {
@@ -859,6 +913,10 @@ export default function App() {
             inputFolder={inputFolder}
             onNavigateToSelectFolder={() => setActiveTab("select_folder")}
             onNavigateToSearch={() => setActiveTab("search")}
+            complexityLevel={complexityLevel}
+            setComplexityLevel={setComplexityLevel}
+            onReclassifyWithTier={handleReclassifyWithTier}
+            isReclassifying={isRunning}
           />
         )}
 

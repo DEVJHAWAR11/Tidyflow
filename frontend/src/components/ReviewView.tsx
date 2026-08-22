@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { ClassifiedFile, RunSummary, CategoryItem } from "../types";
+import { ClassifiedFile, RunSummary, CategoryItem, ComplexityLevel } from "../types";
 import { API_BASE } from "../config";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import { QuickTriageModal } from "./QuickTriageModal";
@@ -20,6 +20,10 @@ import {
   Edit2,
   Check,
   RotateCcw,
+  Grid2X2,
+  LayoutGrid,
+  Layers,
+  Plus,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -45,6 +49,10 @@ interface ReviewViewProps {
   inputFolder?: string;
   onNavigateToSelectFolder?: () => void;
   onNavigateToSearch?: () => void;
+  complexityLevel?: ComplexityLevel;
+  setComplexityLevel?: (lvl: ComplexityLevel) => void;
+  onReclassifyWithTier?: (tier: ComplexityLevel) => Promise<void>;
+  isReclassifying?: boolean;
 }
 
 export const ReviewView: React.FC<ReviewViewProps> = ({
@@ -68,6 +76,10 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   inputFolder = "",
   onNavigateToSelectFolder,
   onNavigateToSearch,
+  complexityLevel,
+  setComplexityLevel,
+  onReclassifyWithTier,
+  isReclassifying = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
@@ -381,6 +393,60 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     return Array.from(set).sort();
   }, [files, categoryOverrides]);
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    files.forEach((f) => {
+      const cat = categoryOverrides[f.file_id] || f.category || "Unknown";
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    return counts;
+  }, [files, categoryOverrides]);
+
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+
+  const handleCreateCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cat = newCatName.trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    if (!cat) return;
+
+    if (setCategories) {
+      setCategories((prev) => {
+        if (prev[cat]) return prev;
+        const updated = {
+          ...prev,
+          [cat]: {
+            name: cat,
+            description: "Custom user category",
+            keywords: [cat.toLowerCase()],
+            extensions: [],
+            active: true,
+          },
+        };
+        fetch(`${API_BASE}/categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categories: updated }),
+        }).catch((err) => console.warn("Failed to sync category:", err));
+        return updated;
+      });
+    }
+
+    if (selectedFileIds.size > 0) {
+      setCategoryOverrides((prev) => {
+        const next = { ...prev };
+        selectedFileIds.forEach((id) => {
+          next[id] = cat;
+        });
+        return next;
+      });
+    }
+
+    setFilterCategory(cat);
+    setNewCatName("");
+    setIsAddingCategory(false);
+  };
+
   const highConfidenceCount = useMemo(() => {
     return files.filter((f) => {
       const activeCat = categoryOverrides[f.file_id] || f.category;
@@ -435,19 +501,57 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         }}
       />
 
-      {/* Header with Title and Breadcrumb */}
-      <div>
-        <div className="flex items-center gap-2 text-[12px] font-mono text-[#615d59] dark:text-[#9b9a97] mb-1">
-          <span>Workspace</span>
-          <span>/</span>
-          <span className="text-[#0075de] dark:text-[#2383e2]">Review & Apply</span>
+      {/* Header with Title, Breadcrumb, and Minimal Granularity Switcher */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-[12px] font-mono text-[#615d59] dark:text-[#9b9a97] mb-1">
+            <span>Workspace</span>
+            <span>/</span>
+            <span className="text-[#0075de] dark:text-[#2383e2]">Review & Apply</span>
+          </div>
+          <h2 className="text-2xl md:text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
+            Review & Apply
+          </h2>
+          <p className="text-[14px] text-[#615d59] dark:text-[#9b9a97] mt-0.5">
+            Inspect predictions, reassign categories directly, and batch organize files.
+          </p>
         </div>
-        <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
-          Review & Apply
-        </h2>
-        <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
-          Inspect predictions, reassign categories directly, and batch organize files.
-        </p>
+
+        {/* Minimal Granularity Switcher */}
+        {complexityLevel && (
+          <div className="flex items-center p-1 rounded-xl bg-[#f2f2f7] dark:bg-[#161618] border border-[#e5e5e7] dark:border-[#2c2c2e] shrink-0 self-start md:self-auto shadow-2xs">
+            {[
+              { id: "low", label: "Simple", icon: Grid2X2 },
+              { id: "medium", label: "Balanced", icon: LayoutGrid },
+              { id: "high", label: "Detailed", icon: Layers },
+            ].map(({ id, label, icon: Icon }) => {
+              const isSelected = complexityLevel === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => {
+                    if (setComplexityLevel) setComplexityLevel(id as ComplexityLevel);
+                    if (onReclassifyWithTier) onReclassifyWithTier(id as ComplexityLevel);
+                  }}
+                  disabled={isReclassifying}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all cursor-pointer flex items-center gap-1.5 select-none ${
+                    isSelected
+                      ? "bg-[#ffffff] dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] shadow-xs font-semibold"
+                      : "text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]"
+                  }`}
+                  title={`Switch to ${label} classification tier`}
+                >
+                  {isReclassifying && isSelected ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0075de] dark:text-[#38bdf8]" />
+                  ) : (
+                    <Icon className="w-3.5 h-3.5" />
+                  )}
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 4 Metric Strip Cards */}
@@ -690,6 +794,83 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           >
             Clear
           </button>
+        </div>
+
+        {/* Category Filter Pills Row */}
+        <div className="w-full pt-2.5 border-t border-[#e6e6e6]/80 dark:border-[#2e2e2e] flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-[11.5px]">
+          <span className="text-[11px] font-semibold text-[#86868b] uppercase tracking-wider shrink-0 mr-1">
+            Categories:
+          </span>
+          <button
+            onClick={() => setFilterCategory("all")}
+            className={`px-2.5 py-1 rounded-lg border transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
+              filterCategory === "all"
+                ? "bg-[#0075de] text-white border-[#0075de] shadow-2xs font-semibold"
+                : "bg-[#f6f5f4] dark:bg-[#191919] text-[#615d59] dark:text-[#9b9a97] border-[#e6e6e6] dark:border-[#333333] hover:border-[#0075de]/40"
+            }`}
+          >
+            <span>All</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${filterCategory === "all" ? "bg-white/20 text-white" : "bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#615d59] dark:text-[#9b9a97]"}`}>
+              {files.length}
+            </span>
+          </button>
+
+          {uniqueCategories.map((c) => {
+            const isSelected = filterCategory === c;
+            const count = categoryCounts[c] || 0;
+            return (
+              <button
+                key={c}
+                onClick={() => setFilterCategory(isSelected ? "all" : c)}
+                className={`px-2.5 py-1 rounded-lg border transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? "bg-[#0075de] text-white border-[#0075de] shadow-2xs font-semibold"
+                    : "bg-[#f6f5f4] dark:bg-[#191919] text-[#615d59] dark:text-[#9b9a97] border-[#e6e6e6] dark:border-[#333333] hover:border-[#0075de]/40"
+                }`}
+              >
+                <span className="truncate max-w-[150px]" title={c}>{c}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? "bg-white/20 text-white" : "bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#615d59] dark:text-[#9b9a97]"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* Inline Add Category Folder */}
+          {isAddingCategory ? (
+            <form onSubmit={handleCreateCategory} className="flex items-center gap-1 shrink-0">
+              <input
+                type="text"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                placeholder="Folder name..."
+                autoFocus
+                className="bg-[#ffffff] dark:bg-[#191919] border border-[#0075de] text-[11.5px] rounded-lg px-2 py-0.5 text-[#000000] dark:text-[#ffffff] focus:outline-none w-32"
+              />
+              <button
+                type="submit"
+                className="px-2 py-0.5 bg-[#0075de] text-white rounded-lg text-[11px] font-bold cursor-pointer"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsAddingCategory(false); setNewCatName(""); }}
+                className="text-[#86868b] hover:text-[#000000] dark:hover:text-[#ffffff] text-xs px-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </form>
+          ) : (
+            <button
+              onClick={() => setIsAddingCategory(true)}
+              className="px-2.5 py-1 rounded-lg border border-dashed border-[#d1d1d6] dark:border-[#383838] hover:border-[#0075de] text-[#86868b] hover:text-[#0075de] text-[11px] font-medium transition shrink-0 flex items-center gap-1 cursor-pointer"
+              title="Create a new destination category folder"
+            >
+              <Plus className="w-3 h-3" />
+              <span>New Folder</span>
+            </button>
+          )}
         </div>
       </div>
 
