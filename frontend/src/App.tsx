@@ -107,7 +107,10 @@ export default function App() {
   };
 
   const [complexityLevel, setComplexityLevelState] = useState<ComplexityLevel>(() => {
-    return (localStorage.getItem("tidyflow_complexity_level") as ComplexityLevel) || "medium";
+    const saved = localStorage.getItem("tidyflow_complexity_level");
+    if (saved === "low" || saved === "medium" || saved === "high") return saved;
+    if (saved === "complex") return "high";
+    return "medium";
   });
   const setComplexityLevel = (lvl: ComplexityLevel) => {
     setComplexityLevelState(lvl);

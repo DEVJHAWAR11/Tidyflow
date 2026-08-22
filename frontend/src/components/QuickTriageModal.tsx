@@ -35,6 +35,15 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [customFolder, setCustomFolder] = useState("");
   const [showFullText, setShowFullText] = useState(false);
+  const [localCategories, setLocalCategories] = useState<string[]>(() => Array.from(new Set(categories)));
+
+  // Sync with incoming categories prop while preserving any newly added local categories
+  useEffect(() => {
+    setLocalCategories((prev) => {
+      const merged = new Set([...prev, ...categories]);
+      return Array.from(merged);
+    });
+  }, [categories]);
 
   // Queue of unclassified or low-confidence files
   const queue = files;
@@ -74,8 +83,11 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
 
   const handleCustomFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const folder = customFolder.trim();
+    const folder = customFolder.trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
     if (!folder) return;
+    if (!localCategories.includes(folder)) {
+      setLocalCategories((prev) => [...prev, folder]);
+    }
     handleAssign(folder);
     setCustomFolder("");
   };
@@ -103,9 +115,9 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
       } else {
         // Number keys 1-9 for quick category selection
         const num = parseInt(e.key, 10);
-        if (!isNaN(num) && num >= 1 && num <= Math.min(categories.length, 9)) {
+        if (!isNaN(num) && num >= 1 && num <= Math.min(localCategories.length, 9)) {
           e.preventDefault();
-          const targetCategory = categories[num - 1];
+          const targetCategory = localCategories[num - 1];
           if (targetCategory) {
             handleAssign(targetCategory);
           }
@@ -115,7 +127,7 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [categories, handleAssign, handleSkip, handlePrev, onClose]);
+  }, [localCategories, handleAssign, handleSkip, handlePrev, onClose]);
 
   if (!currentFile || queue.length === 0) {
     if (typeof document === "undefined") return null;
@@ -315,7 +327,7 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
                   1. Assign to Existing Category
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {categories.map((cat, idx) => {
+                  {localCategories.map((cat, idx) => {
                     const isNumShortcut = idx < 9;
                     const isSelected = currentAssignedCat === cat;
 

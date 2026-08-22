@@ -16,7 +16,6 @@ import {
   Grid2X2,
   LayoutGrid,
   Layers,
-  GitFork,
   Send,
   FileCode,
   CheckCircle2,
@@ -42,7 +41,7 @@ interface AiStructureAssistantProps {
 interface GranularityTier {
   id: ComplexityLevel;
   label: string;
-  target: string;
+  structure: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 }
@@ -50,31 +49,24 @@ interface GranularityTier {
 const GRANULARITY_TIERS: GranularityTier[] = [
   {
     id: "low",
-    label: "Broad",
-    target: "3-4 Folders",
-    description: "Flat, minimal top-level buckets for quick decluttering",
+    label: "Simple",
+    structure: "Flat Structure",
+    description: "Clean, flat top-level folders with no nested subdirectories",
     icon: Grid2X2,
   },
   {
     id: "medium",
     label: "Balanced",
-    target: "5-7 Folders",
-    description: "Functional folders with 1-level clean subfolders",
+    structure: "Subfolders",
+    description: "Functional organization with clean, 1-level subfolders",
     icon: LayoutGrid,
   },
   {
     id: "high",
-    label: "Granular",
-    target: "8-12 Folders",
-    description: "Specific categories by project, topic & file format",
+    label: "Detailed",
+    structure: "Deep Tree",
+    description: "Deep multi-level hierarchy by topic, project, date & format",
     icon: Layers,
-  },
-  {
-    id: "complex",
-    label: "Deep Tree",
-    target: "10+ Folders",
-    description: "Multi-level hierarchy, date routing & semantic rules",
-    icon: GitFork,
   },
 ];
 
@@ -297,18 +289,23 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
         {/* Granularity Selection Grid */}
         <div className="space-y-3">
           <label className="text-[12px] font-semibold uppercase tracking-wider text-[#86868b] block text-center">
-            Choose Classification Granularity & Strength
+            Choose Classification Granularity & Structure
           </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {GRANULARITY_TIERS.map((tier) => {
               const isSelected = currentLevel === tier.id;
               const Icon = tier.icon;
               return (
                 <button
                   key={tier.id}
-                  onClick={() => handleTierChange(tier.id)}
+                  onClick={() => {
+                    handleTierChange(tier.id);
+                    if (inputFolder.trim() && !isProcessing) {
+                      handleAutoSynthesize(tier.id);
+                    }
+                  }}
                   disabled={isProcessing}
-                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                     isSelected
                       ? "bg-[#0075de]/10 dark:bg-[#0075de]/20 border-[#0075de] dark:border-[#38bdf8] ring-1 ring-[#0075de]/50 shadow-xs"
                       : "bg-[#fafafc] dark:bg-[#242426] border-[#e5e5e7] dark:border-[#2c2c2e] hover:border-[#0075de]/50"
@@ -316,17 +313,21 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <div className={`p-2 rounded-lg ${isSelected ? "bg-[#0075de] text-white" : "bg-[#f2f2f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d]"}`}>
-                      <Icon className="w-4 h-4" />
+                      {isProcessing && isSelected ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-[#0075de]" />
+                      ) : (
+                        <Icon className="w-4 h-4" />
+                      )}
                     </div>
-                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d]">
-                      {tier.target}
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#e5e5ea] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#98989d]">
+                      {tier.structure}
                     </span>
                   </div>
                   <div>
-                    <h4 className="text-[13px] font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
+                    <h4 className="text-[13.5px] font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
                       {tier.label}
                     </h4>
-                    <p className="text-[11px] text-[#86868b] mt-0.5 leading-snug">
+                    <p className="text-[11.5px] text-[#86868b] mt-0.5 leading-snug">
                       {tier.description}
                     </p>
                   </div>
@@ -430,7 +431,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
                     ? "bg-[#ffffff] dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] shadow-xs font-semibold"
                     : "text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]"
                 }`}
-                title={`Switch to ${tier.label} (${tier.target}): ${tier.description}`}
+                title={`Switch to ${tier.label} (${tier.structure}): ${tier.description}`}
               >
                 {isProcessing && isSelected ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0075de] dark:text-[#38bdf8]" />
@@ -470,9 +471,11 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
 
           <button
             onClick={() => setActiveCategories({})}
-            className="px-2.5 py-1 rounded-lg text-[11.5px] font-medium text-[#86868b] hover:text-[#ff3b30] transition cursor-pointer"
+            className="px-3 py-1 rounded-lg bg-[#ff3b30]/10 hover:bg-[#ff3b30]/20 dark:bg-[#ff453a]/15 dark:hover:bg-[#ff453a]/25 text-[#ff3b30] dark:text-[#ff453a] border border-[#ff3b30]/30 hover:border-[#ff3b30]/60 text-[11.5px] font-semibold flex items-center gap-1.5 transition cursor-pointer active:scale-97 shadow-2xs"
+            title="Clear all categories in current blueprint"
           >
-            Clear Blueprint
+            <Trash2 className="w-3.5 h-3.5 text-[#ff3b30] dark:text-[#ff453a]" />
+            <span>Clear Blueprint</span>
           </button>
         </div>
 
