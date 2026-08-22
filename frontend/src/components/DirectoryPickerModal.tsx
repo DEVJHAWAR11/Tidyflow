@@ -41,6 +41,8 @@ interface DirectoryPickerModalProps {
   description?: string;
 }
 
+const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
+
 export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
   isOpen,
   onClose,
@@ -236,7 +238,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
               ) : (
                 <HardDrive className="w-3.5 h-3.5" />
               )}
-              <span>System Finder...</span>
+              <span>{isNativeLoading ? "Opening..." : (isMac ? "System Finder..." : "System Explorer...")}</span>
             </button>
 
             <button

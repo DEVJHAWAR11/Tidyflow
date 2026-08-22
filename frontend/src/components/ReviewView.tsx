@@ -64,6 +64,8 @@ interface ReviewViewProps {
   isReclassifying?: boolean;
 }
 
+const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
+
 export const ReviewView: React.FC<ReviewViewProps> = ({
   files,
   categories,
@@ -1415,7 +1417,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                   className="flex items-center gap-1.5 px-4 py-2 bg-[#0075de]/10 dark:bg-[#2383e2]/15 hover:bg-[#0075de]/20 text-[#0075de] dark:text-[#8bc5f8] text-[13px] font-semibold rounded-full cursor-pointer transition border border-[#0075de]/20"
                 >
                   <FolderOpen className="w-4 h-4" />
-                  <span>{openedPath === previewFile.abs_path ? "Opened in Finder!" : "Reveal in Finder"}</span>
+                  <span>{openedPath === previewFile.abs_path ? (isMac ? "Opened in Finder!" : "Opened in Explorer!") : (isMac ? "Reveal in Finder" : "Reveal in Explorer")}</span>
                 </button>
                 <button
                   onClick={() => setPreviewFile(null)}
