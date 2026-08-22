@@ -106,3 +106,15 @@ categories:
     - itr
     extensions: []
     active: true
+  Education_Documents:
+    name: Education_Documents
+    description: AI cluster discovered for 8 files
+    keywords: []
+    extensions: []
+    active: true
+  Misc_System_Files:
+    name: Misc_System_Files
+    description: AI cluster discovered for 2 files
+    keywords: []
+    extensions: []
+    active: true

@@ -27,6 +27,7 @@ def test_end_to_end_pipeline_inventory():
             input_dir=input_dir,
             output_dir=output_dir,
             staging_dir=output_dir / "Staging",
+            export_reports=True,
         )
 
         records, summary = run_pipeline(

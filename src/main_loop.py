@@ -104,7 +104,9 @@ def run_pipeline(
     logger.info("=== STEP 5: OCR processing ===")
     if progress_callback:
         progress_callback("extract", f"Performing OCR inspection on images & PDFs...")
-    processed_ocr, cached_ocr = run_ocr(records, config.ocr, config.output_dir)
+    ocr_cache_dir = Path("data/cache")
+    ocr_cache_dir.mkdir(parents=True, exist_ok=True)
+    processed_ocr, cached_ocr = run_ocr(records, config.ocr, ocr_cache_dir)
     summary.ocr_processed = processed_ocr
     summary.ocr_cached = cached_ocr
     check_cancelled()
@@ -149,12 +151,14 @@ def run_pipeline(
         logger.info("=== STEP 7: Batched LLM classification ===")
         if progress_callback:
             progress_callback("classify", f"Running AI language model classification with {config.llm.model}...")
+        llm_log_dir = Path("data/logs")
+        llm_log_dir.mkdir(parents=True, exist_ok=True)
         llm_count = classify_files_batched(
             records,
             config.llm,
             config.classification,
             config.categories,
-            config.output_dir,
+            llm_log_dir,
             strict_mode=strict_mode,
             cancellation_token=cancellation_token,
         )
@@ -177,13 +181,18 @@ def run_pipeline(
 
     summary.run_finished_at = datetime.now(timezone.utc)
 
-    # 8. Reports Generation
-    logger.info("=== STEP 8: Generating output reports ===")
-    if progress_callback:
-        progress_callback("finalize", "Building local database index and preparing review results...")
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    _save_records_jsonl(records, config.output_dir / "file_records.jsonl")
-    generate_reports(records, summary, config.output_dir, list(config.categories.keys()))
+    # 8. Reports Generation (Optional - only generated if export_reports is enabled)
+    internal_data_dir = Path("data")
+    internal_data_dir.mkdir(parents=True, exist_ok=True)
+    _save_records_jsonl(records, internal_data_dir / "file_records.jsonl")
+
+    if getattr(config, "export_reports", False):
+        logger.info("=== STEP 8: Generating output reports ===")
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        _save_records_jsonl(records, config.output_dir / "file_records.jsonl")
+        generate_reports(records, summary, config.output_dir, list(config.categories.keys()))
+    else:
+        logger.info("=== STEP 8: Report exports disabled (clean folder mode) ===")
 
     # 9. Optional Auto-Apply
     if auto_apply:
@@ -193,7 +202,7 @@ def run_pipeline(
             decisions, records, config.output_dir,
             dry_run=dry_run, move_mode=move_mode
         )
-        if not dry_run and manifest:
+        if not dry_run and manifest and getattr(config, "export_reports", False):
             write_copy_manifest(manifest, config.output_dir)
             if move_mode:
                 summary.moved_files = len(manifest)
