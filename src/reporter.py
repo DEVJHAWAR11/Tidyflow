@@ -12,7 +12,7 @@ import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 
 from .models import FileRecord, RunSummary
-from .utils import format_file_size
+from .utils import format_file_size, get_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ def _write_review_html(
     categories: list[str],
 ) -> None:
     """Render interactive HTML report using Jinja2."""
-    template_dir = Path(__file__).parent / "templates"
+    template_dir = get_resource_path("src/templates")
     template_dir.mkdir(parents=True, exist_ok=True)
     env = Environment(
         loader=FileSystemLoader(str(template_dir)),

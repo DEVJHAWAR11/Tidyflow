@@ -149,3 +149,77 @@ def format_file_size(nbytes: int | float) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024.0
     return f"{size:.1f} PB"
+
+
+# ---------------------------------------------------------------------------
+# Resource & App Data Path Resolution (PyInstaller & Dev Support)
+# ---------------------------------------------------------------------------
+
+def get_resource_path(relative_path: Path | str) -> Path:
+    """
+    Get absolute path to resource, works for dev and for PyInstaller bundle.
+    On macOS .app bundles, data files are located in Contents/Resources.
+    """
+    import sys
+    rel = Path(relative_path)
+
+    # 1. Check PyInstaller sys._MEIPASS and macOS Contents/Resources
+    if hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS)
+        # Direct check in _MEIPASS
+        if (base / rel).exists():
+            return base / rel
+        # Check in Contents/Resources (standard macOS bundle layout)
+        res_candidate = base.parent / "Resources" / rel
+        if res_candidate.exists():
+            return res_candidate
+        # Fallback to _MEIPASS path even if not yet created
+        return base / rel
+
+    # 2. Check relative to sys.executable if frozen
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        if (exe_dir / rel).exists():
+            return exe_dir / rel
+        res_candidate = exe_dir.parent / "Resources" / rel
+        if res_candidate.exists():
+            return res_candidate
+
+    # 3. Development: relative to project root
+    project_root = Path(__file__).resolve().parent.parent
+    candidate = project_root / rel
+    if candidate.exists():
+        return candidate
+
+    # 4. Fallback: relative to src package
+    src_dir = Path(__file__).resolve().parent
+    candidate_src = src_dir / rel
+    if candidate_src.exists():
+        return candidate_src
+
+    return candidate
+
+
+
+def get_app_data_dir() -> Path:
+    """
+    Get standard OS user data directory for TidyFlow database and user config.
+    macOS: ~/Library/Application Support/TidyFlow
+    Windows: %APPDATA%/TidyFlow
+    Linux: ~/.local/share/tidyflow
+    """
+    import os
+    import sys
+
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "TidyFlow"
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) / "TidyFlow" if appdata else Path.home() / "AppData" / "Roaming" / "TidyFlow"
+    else:
+        xdg_data = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg_data) / "tidyflow" if xdg_data else Path.home() / ".local" / "share" / "tidyflow"
+
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+

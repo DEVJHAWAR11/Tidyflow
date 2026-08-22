@@ -26,6 +26,7 @@ data/
 dist/
 build/
 *.spec
+!tidyflow.spec
 node_modules/
 .DS_Store
 organized_output/

@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any, List, Tuple
+
+from .utils import get_app_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,10 @@ class DatabaseManager:
     """Async SQLite database manager with WAL mode and background write batching."""
 
     def __init__(self, db_path: str | Path = "data/tidyflow.db"):
-        self.db_path = str(db_path)
+        if db_path == "data/tidyflow.db" and getattr(sys, "frozen", False):
+            self.db_path = str(get_app_data_dir() / "tidyflow.db")
+        else:
+            self.db_path = str(db_path)
         self.write_queue: asyncio.Queue | None = None
         self.writer_task: asyncio.Task | None = None
         self._init_db()

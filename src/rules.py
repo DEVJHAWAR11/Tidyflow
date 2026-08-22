@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from .config import CategoryConfig
 from .models import ClassificationResult, FileRecord
+from .utils import get_app_data_dir, get_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +129,21 @@ class RuleEngine:
         self.categories = categories or {}
 
     def _load_rules(self) -> list[dict[str, Any]]:
-        if not self.rules_file.exists():
+        target_path: Path | None = None
+        for candidate in [
+            self.rules_file,
+            get_app_data_dir() / "rules.yaml",
+            Path.cwd() / "rules.yaml",
+            get_resource_path("rules.yaml"),
+        ]:
+            if candidate and Path(candidate).exists():
+                target_path = Path(candidate)
+                break
+
+        if not target_path:
             return []
         try:
-            with open(self.rules_file, "r", encoding="utf-8") as f:
+            with open(target_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
                 return data.get("rules", []) if isinstance(data, dict) else []
         except Exception:

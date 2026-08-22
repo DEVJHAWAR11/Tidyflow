@@ -7,9 +7,18 @@ import shutil
 from pathlib import Path
 from typing import List, Union
 
-from fastmcp import FastMCP
-
-app = FastMCP("tidyflow-mcp-fs")
+try:
+    from fastmcp import FastMCP
+    app = FastMCP("tidyflow-mcp-fs")
+except Exception:
+    class _DummyFastMCP:
+        def tool(self):
+            def decorator(func):
+                return func
+            return decorator
+        def run(self):
+            pass
+    app = _DummyFastMCP()
 
 # Dynamically configured allow-list of directories
 ALLOWED_DIRECTORIES: List[Path] = []

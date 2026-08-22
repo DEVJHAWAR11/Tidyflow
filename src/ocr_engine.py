@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from .config import OcrConfig
 from .models import FileRecord
-from .utils import normalize_ocr_text
+from .utils import get_resource_path, normalize_ocr_text
 
 import os
 import shutil
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Lazy-initialised OCR engines
 _ocr_engine: Any = None
 _ocr_available: bool | None = None
-_MACOS_OCR_BIN = Path(__file__).resolve().parent.parent / "bin" / "macos_ocr"
+_MACOS_OCR_BIN = get_resource_path("bin/macos_ocr")
 
 
 def is_macos_ocr_available() -> bool:
@@ -36,7 +36,7 @@ def is_macos_ocr_available() -> bool:
         return True
     swiftc = shutil.which("swiftc")
     if swiftc:
-        swift_src = Path(__file__).resolve().parent / "native" / "macos_ocr.swift"
+        swift_src = get_resource_path("src/native/macos_ocr.swift")
         if swift_src.exists():
             try:
                 _MACOS_OCR_BIN.parent.mkdir(parents=True, exist_ok=True)
