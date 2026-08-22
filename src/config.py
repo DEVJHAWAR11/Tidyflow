@@ -133,7 +133,10 @@ class TidyConfig(BaseModel):
     def _resolve_input(cls, v: Any) -> Path:
         return Path(str(v)).resolve()
 
-    @field_validator("output_dir", "staging_dir", mode="before")
+    # Reporting & Exports
+    export_reports: bool = False
+
+    @field_validator("output_dir", mode="before")
     @classmethod
     def _resolve_output(cls, v: Any) -> Path:
         p = Path(str(v)).resolve()

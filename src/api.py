@@ -598,7 +598,7 @@ async def open_path_endpoint(req: OpenPathRequest):
             else:
                 # Open directly with OS default application (PDF reader, Word, Photos, etc.)
                 if target.is_file():
-                    os.startfile(norm_target)
+                    subprocess.Popen(f'cmd.exe /c start "" "{norm_target}"', shell=True)
                 else:
                     subprocess.Popen(f'explorer.exe "{norm_target}"', shell=True)
                 return {"status": "success", "message": f"Opened with default app: {target.name}"}
@@ -894,7 +894,11 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
     )
 
     if not req.dry_run and manifest:
-        write_copy_manifest(manifest, out_dir)
+        audit_dir = Path("data/manifests")
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        write_copy_manifest(manifest, audit_dir)
+        if getattr(req, "export_reports", False):
+            write_copy_manifest(manifest, out_dir)
 
     action_label = "simulated" if req.dry_run else ("moved" if req.move_mode else "copied")
     return {
