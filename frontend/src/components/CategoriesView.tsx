@@ -29,6 +29,7 @@ interface CategoriesViewProps {
   }) => Promise<void>;
   onDeleteCategory: (catName: string) => Promise<void>;
   onLoadPreset?: (cats: Record<string, CategoryItem>) => Promise<void>;
+  hideBreadcrumb?: boolean;
 }
 
 export const CategoriesView: React.FC<CategoriesViewProps> = ({
@@ -37,6 +38,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
   onAddCategory,
   onDeleteCategory,
   onLoadPreset,
+  hideBreadcrumb = false,
 }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [catName, setCatName] = useState("");
@@ -98,61 +100,111 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
   return (
     <div className="space-y-6 animate-fade-in max-w-6xl mx-auto">
       {/* Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
-        <div>
-          <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
-            <span>Workspace</span>
-            <span>/</span>
-            <span className="text-[#000000] dark:text-[#ffffff]">Categories</span>
+      {!hideBreadcrumb && (
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
+          <div>
+            <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
+              <span>Workspace</span>
+              <span>/</span>
+              <span className="text-[#000000] dark:text-[#ffffff]">Categories</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
+                Categories & Rules
+              </h2>
+              <span className="text-[12px] font-mono px-2.5 py-0.5 rounded-full bg-[#f1f0ee] dark:bg-[#2c2c2c] text-[#615d59] dark:text-[#9b9a97] font-semibold">
+                {activeCount} Active / {totalCount} Total
+              </span>
+            </div>
+            <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
+              Configure destination folders, keyword rules, and description criteria.
+            </p>
           </div>
+
           <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
-              Categories & Rules
-            </h2>
-            <span className="text-[12px] font-mono px-2.5 py-0.5 rounded-full bg-[#f1f0ee] dark:bg-[#2c2c2c] text-[#615d59] dark:text-[#9b9a97] font-semibold">
+            {/* Quick Search */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-[#a39e98] absolute left-3 top-3" />
+              <input
+                type="text"
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                placeholder="Search categories..."
+                className="bg-[#ffffff] dark:bg-[#202020] border border-[#e6e6e6] dark:border-[#333333] rounded-full pl-8 pr-3.5 py-1.5 text-[12px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] w-48 shadow-2xs"
+              />
+            </div>
+
+            {/* Reset / Default Preset Button */}
+            {onLoadPreset && (
+              <button
+                onClick={() => handleApplyPreset("standard", DEFAULT_STANDARD_CATEGORIES)}
+                className="px-3.5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] text-[#31302e] dark:text-[#d4d4d4] text-[12px] font-semibold rounded-full shadow-2xs flex items-center gap-1.5 cursor-pointer active:scale-97"
+                title="Reset all categories to default standard 18-folder taxonomy"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
+                <span>Reset Defaults</span>
+              </button>
+            )}
+
+            {/* Add Category Pill Button */}
+            <button
+              onClick={() => setIsAdding(true)}
+              className="px-4 py-2 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white text-[13px] font-semibold rounded-full shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-97"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Category</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hideBreadcrumb && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] shadow-2xs">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-bold text-[#000000] dark:text-[#ffffff]">
+              Global Rule Set
+            </span>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-[#f1f0ee] dark:bg-[#2c2c2c] text-[#615d59] dark:text-[#9b9a97] font-semibold">
               {activeCount} Active / {totalCount} Total
             </span>
           </div>
-          <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
-            Configure destination folders, keyword rules, and description criteria.
-          </p>
-        </div>
 
-        <div className="flex items-center gap-3">
-          {/* Quick Search */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-[#a39e98] absolute left-3 top-3" />
-            <input
-              type="text"
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-              placeholder="Search categories..."
-              className="bg-[#ffffff] dark:bg-[#202020] border border-[#e6e6e6] dark:border-[#333333] rounded-full pl-8 pr-3.5 py-1.5 text-[12px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] w-48 shadow-2xs"
-            />
-          </div>
+          <div className="flex items-center gap-3">
+            {/* Quick Search */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-[#a39e98] absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                placeholder="Search categories..."
+                className="bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-full pl-8 pr-3.5 py-1.5 text-[12px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] w-44 shadow-2xs"
+              />
+            </div>
 
-          {/* Reset / Default Preset Button */}
-          {onLoadPreset && (
+            {/* Reset / Default Preset Button */}
+            {onLoadPreset && (
+              <button
+                onClick={() => handleApplyPreset("standard", DEFAULT_STANDARD_CATEGORIES)}
+                className="px-3 py-1.5 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] text-[#31302e] dark:text-[#d4d4d4] text-[11.5px] font-semibold rounded-full shadow-2xs flex items-center gap-1.5 cursor-pointer active:scale-97"
+                title="Reset all categories to default standard 18-folder taxonomy"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
+                <span>Reset Defaults</span>
+              </button>
+            )}
+
+            {/* Add Category Pill Button */}
             <button
-              onClick={() => handleApplyPreset("standard", DEFAULT_STANDARD_CATEGORIES)}
-              className="px-3.5 py-2 bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] border border-[#e6e6e6] dark:border-[#383838] text-[#31302e] dark:text-[#d4d4d4] text-[12px] font-semibold rounded-full shadow-2xs flex items-center gap-1.5 cursor-pointer active:scale-97"
-              title="Reset all categories to default standard 18-folder taxonomy"
+              onClick={() => setIsAdding(true)}
+              className="px-3.5 py-1.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white text-[12px] font-semibold rounded-full shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-97"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-[#0075de] dark:text-[#2383e2]" />
-              <span>Reset Defaults</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Category</span>
             </button>
-          )}
-
-          {/* Add Category Pill Button */}
-          <button
-            onClick={() => setIsAdding(true)}
-            className="px-4 py-2 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white text-[13px] font-semibold rounded-full shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-97"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Category</span>
-          </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Preset Category Packs Quick Selector */}
       {onLoadPreset && (

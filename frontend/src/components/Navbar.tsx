@@ -3,7 +3,6 @@ import logoImg from "../assets/logo.png";
 import { TabType, BackendStatus } from "../types";
 import { 
   FolderKanban, 
-  Tags, 
   CheckCircle2, 
   Search, 
   Settings2, 
@@ -37,7 +36,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const navTabs: { id: TabType; label: string; icon: React.ReactNode; badge?: string | number }[] = [
     { id: "organize", label: "Organize", icon: <FolderKanban className="w-4 h-4" /> },
-    { id: "categories", label: "Categories", icon: <Tags className="w-4 h-4" /> },
     { 
       id: "review", 
       label: "Review & Apply", 
