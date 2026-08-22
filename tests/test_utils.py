@@ -2,6 +2,8 @@ from pathlib import Path
 from src.utils import (
     compute_sha256,
     format_file_size,
+    get_app_data_dir,
+    get_resource_path,
     is_safe_to_copy,
     is_secret_file,
     make_file_id,
@@ -67,3 +69,17 @@ def test_format_file_size():
     assert format_file_size(500) == "500 B"
     assert format_file_size(2048) == "2.0 KB"
     assert format_file_size(5 * 1024 * 1024) == "5.0 MB"
+
+
+def test_get_resource_path():
+    p = get_resource_path("config.yaml")
+    assert isinstance(p, Path)
+    assert p.name == "config.yaml"
+
+
+def test_get_app_data_dir():
+    app_dir = get_app_data_dir()
+    assert isinstance(app_dir, Path)
+    assert app_dir.exists()
+    assert "TidyFlow" in app_dir.name or "tidyflow" in app_dir.name
+

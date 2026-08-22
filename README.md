@@ -24,7 +24,9 @@
 - [🚀 Key Features](#-key-features)
 - [🧠 Architecture & How It Works](#-architecture--how-it-works)
 - [📦 Installation & Setup](#-installation--setup)
-- [🖥️ Running the Web UI (Recommended)](#️-running-the-web-ui-recommended)
+- [🖥️ Running the Desktop App (Recommended for Users)](#️-running-the-desktop-app-recommended-for-users)
+- [🌐 Running the Web UI via CLI](#-running-the-web-ui-via-cli)
+- [🔨 Building Standalone Executable (.app / .exe)](#-building-standalone-executable-app--exe)
 - [⌨️ Running via CLI](#️-running-via-cli)
 - [⚙️ Configuration (`config.yaml` & `.env`)](#️-configuration-configyaml--env)
 - [🎯 Interactive Modes & Workflows](#-interactive-modes--workflows)
@@ -158,13 +160,42 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 
 ---
 
-## 🖥️ Running the Web UI (Recommended)
+## 🖥️ Running the Desktop App (Recommended for Users)
 
-Start the unified FastAPI + React server:
+Launch TidyFlow in a dedicated native desktop window (uses macOS WebKit / Windows WebView2):
+```bash
+python3 desktop.py
+```
+This automatically starts the FastAPI backend server in the background and opens the TidyFlow native window. Closing the window cleanly shuts down the server.
+
+---
+
+## 🌐 Running the Web UI via CLI
+
+If you prefer running in a browser tab:
 ```bash
 python3 -m src.cli serve --host 127.0.0.1 --port 8000
 ```
 Open your browser at **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
+
+---
+
+## 🔨 Building Standalone Executable (.app / .dmg / .exe)
+
+To package TidyFlow into a 1-click standalone executable for normal users who do not have Python or Node.js installed:
+
+```bash
+# Automated 1-command build (compiles React frontend + Swift OCR binary + bundles with PyInstaller + creates DMG)
+python3 scripts/build_desktop.py
+```
+
+* **macOS**:
+  - `dist/TidyFlow.dmg` (1-Click drag-and-drop installer for macOS users)
+  - `dist/TidyFlow.app` (macOS Application bundle)
+* **Windows**:
+  - `dist/TidyFlow.exe` (1-Click Windows standalone executable)
+
+---
 
 ### Web UI Workflow:
 1. **AI Architect Tab**:

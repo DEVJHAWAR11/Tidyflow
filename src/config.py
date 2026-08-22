@@ -11,6 +11,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 
+from .utils import get_app_data_dir, get_resource_path
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -157,9 +159,10 @@ def load_config(config_path: str | Path | None = None) -> TidyConfig:
         candidate_paths.append(Path(config_path).resolve())
     else:
         candidate_paths.extend([
+            get_app_data_dir() / "config.yaml",
             Path.cwd() / "config.yaml",
             Path.cwd() / "config.yml",
-            Path(__file__).parent.parent / "config.yaml",
+            get_resource_path("config.yaml"),
         ])
 
     target_path: Path | None = None

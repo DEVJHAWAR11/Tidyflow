@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-import keyring
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -23,46 +22,72 @@ from .models import (
     LlmClassificationItem,
     LlmFilePayload,
 )
-from .utils import redact_secrets, text_contains_secrets, truncate
+from .utils import get_app_data_dir, redact_secrets, text_contains_secrets, truncate
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Keyring & Settings Storage (Backward Compatible)
+# App Settings Storage (File-Based in AppData with 0600 Permissions)
 # ---------------------------------------------------------------------------
 
+def _get_settings_file() -> Path:
+    return get_app_data_dir() / "settings.json"
+
+
 def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None):
-    """Save LLM credentials to OS Keyring."""
-    keyring.set_password("tidyflow", "provider", provider)
-    keyring.set_password("tidyflow", "api_key", api_key)
-    if custom_url and provider.lower() == "custom":
-        keyring.set_password("tidyflow", "custom_url", custom_url)
-    else:
+    """Save LLM credentials to local user app settings."""
+    settings_file = _get_settings_file()
+    data = {
+        "provider": provider or "",
+        "api_key": api_key or "",
+        "custom_url": custom_url if provider and provider.lower() == "custom" else None,
+    }
+    try:
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
         try:
-            keyring.delete_password("tidyflow", "custom_url")
+            settings_file.chmod(0o600)
         except Exception:
             pass
+    except Exception as e:
+        logger.warning("Could not save settings to file: %s", e)
 
 
 def get_stored_api_key(provider: str = "deepseek") -> str:
-    """Retrieve API key for given provider from keyring or environment."""
+    """Retrieve API key for given provider from local settings or environment."""
     load_dotenv()
-    key = keyring.get_password("tidyflow", "api_key") or ""
-    if not key or key == "secret123":
-        key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
-    return key
+    settings_file = _get_settings_file()
+    if settings_file.exists():
+        try:
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            key = data.get("api_key", "")
+            if key and key != "secret123":
+                return key
+        except Exception:
+            pass
+    return os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
 
 
 def load_settings() -> tuple[str, str, Optional[str]]:
-    """Retrieve LLM settings from Keyring or Environment variables."""
+    """Retrieve LLM settings from local settings file or Environment variables."""
     load_dotenv()
-    provider = keyring.get_password("tidyflow", "provider") or ""
-    api_key = keyring.get_password("tidyflow", "api_key") or ""
-    custom_url = keyring.get_password("tidyflow", "custom_url")
+    provider = ""
+    api_key = ""
+    custom_url = None
 
-    # If keyring contains dummy test values, ignore them
+    settings_file = _get_settings_file()
+    if settings_file.exists():
+        try:
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            provider = data.get("provider", "")
+            api_key = data.get("api_key", "")
+            custom_url = data.get("custom_url")
+        except Exception:
+            pass
+
+    # If settings contains dummy test values, ignore them
     if provider in ("dummy", "test", "") or api_key in ("secret123", ""):
         provider = ""
         api_key = ""
@@ -84,7 +109,6 @@ def load_settings() -> tuple[str, str, Optional[str]]:
                 provider = prov
 
     resolved_provider = provider or "deepseek"
-    # custom_url is only valid if provider is custom
     if resolved_provider.lower() != "custom":
         custom_url = None
 

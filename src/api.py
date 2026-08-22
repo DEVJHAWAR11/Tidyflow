@@ -34,6 +34,7 @@ from .main_loop import PipelineCancelledException, Processor, load_records_jsonl
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
 from .scanner import scan_files
+from .utils import get_app_data_dir, get_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ app.add_middleware(
 )
 
 # Mount frontend build if available
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+frontend_dist = get_resource_path("frontend/dist")
 if frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
@@ -261,16 +262,28 @@ async def get_categories():
 
 @app.post("/categories")
 async def save_categories(req: CategoriesUpdateRequest):
-    """Update or add categories in config.yaml."""
-    cfg_file = Path("config.yaml")
+    """Update or add categories in user config.yaml."""
+    cfg_file = get_app_data_dir() / "config.yaml"
     raw: dict[str, Any] = {}
     if cfg_file.exists():
-        with open(cfg_file, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            raw = {}
+    elif Path("config.yaml").exists():
+        try:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            raw = {}
 
     raw["categories"] = req.categories
-    with open(cfg_file, "w", encoding="utf-8") as f:
-        yaml.safe_dump(raw, f, sort_keys=False)
+    try:
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(raw, f, sort_keys=False)
+    except Exception as e:
+        logger.warning("Could not write categories to config.yaml: %s", e)
 
     return {"status": "success", "categories": req.categories}
 
@@ -280,7 +293,7 @@ async def save_categories(req: CategoriesUpdateRequest):
 async def get_settings():
     """Get current configuration and masked API key."""
     cfg = load_config()
-    provider, key, _ = load_settings()
+    provider, key, custom_url = load_settings()
     if not provider:
         provider = cfg.llm.provider
     masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else ("••••••••" if key else "")
@@ -300,34 +313,63 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(payload: SettingsPayload):
     """Save LLM credentials and configuration settings."""
-    if payload.api_key and payload.api_key.strip():
-        save_settings(payload.provider, payload.api_key.strip())
-        # Also update .env
-        env_path = Path(".env")
-        lines = []
-        if env_path.exists():
-            lines = env_path.read_text(encoding="utf-8").splitlines()
+    try:
+        clean_key = payload.api_key.strip() if payload.api_key else ""
+        if clean_key:
+            save_settings(payload.provider, clean_key)
+            # Set in current runtime environment immediately
+            os.environ[f"{payload.provider.upper()}_API_KEY"] = clean_key
+            os.environ["TIDYFLOW_API_KEY"] = clean_key
+            # Also try to update local .env if writable
+            try:
+                env_path = Path(".env")
+                lines = []
+                if env_path.exists():
+                    lines = env_path.read_text(encoding="utf-8").splitlines()
 
-        key_var = f"{payload.provider.upper()}_API_KEY"
-        new_lines = [l for l in lines if not l.startswith(f"{key_var}=") and not l.startswith("TIDYFLOW_API_KEY=")]
-        new_lines.append(f"{key_var}={payload.api_key.strip()}")
-        new_lines.append(f"TIDYFLOW_API_KEY={payload.api_key.strip()}")
-        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                key_var = f"{payload.provider.upper()}_API_KEY"
+                new_lines = [l for l in lines if not l.startswith(f"{key_var}=") and not l.startswith("TIDYFLOW_API_KEY=")]
+                new_lines.append(f"{key_var}={clean_key}")
+                new_lines.append(f"TIDYFLOW_API_KEY={clean_key}")
+                env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+        elif payload.provider:
+            # User switched provider without changing key
+            _, existing_key, _ = load_settings()
+            save_settings(payload.provider, existing_key)
 
-    # Update config.yaml
-    cfg_file = Path("config.yaml")
-    if cfg_file.exists():
-        with open(cfg_file, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        data.setdefault("llm", {})["provider"] = payload.provider
-        target_model = _resolve_provider_model(payload.provider, payload.model)
-        data["llm"]["model"] = target_model
-        data.setdefault("classification", {})["auto_copy_threshold"] = payload.auto_copy_threshold
-        data["max_file_size_mb"] = payload.max_file_size_mb
-        with open(cfg_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False)
+        # Update persistent config in app data dir
+        try:
+            cfg_file = get_app_data_dir() / "config.yaml"
+            data = {}
+            if cfg_file.exists():
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            elif Path("config.yaml").exists():
+                try:
+                    with open("config.yaml", "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                except Exception:
+                    data = {}
 
-    return {"status": "success", "message": "Settings updated"}
+            data.setdefault("llm", {})["provider"] = payload.provider
+            target_model = _resolve_provider_model(payload.provider, payload.model)
+            data["llm"]["model"] = target_model
+            if payload.auto_copy_threshold is not None:
+                data.setdefault("classification", {})["auto_copy_threshold"] = payload.auto_copy_threshold
+            if payload.max_file_size_mb is not None:
+                data["max_file_size_mb"] = payload.max_file_size_mb
+
+            with open(cfg_file, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, sort_keys=False)
+        except Exception as e:
+            logger.warning("Could not persist config.yaml: %s", e)
+
+        return {"status": "success", "message": "Settings updated"}
+    except Exception as e:
+        logger.error("Error in update_settings: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -352,15 +394,12 @@ def pick_native_directory(prompt: str = "Select Folder", initial_dir: Optional[s
     if sys.platform == "darwin":
         init_clause = f'default location POSIX file "{initial_dir}"' if initial_dir and os.path.exists(initial_dir) else ""
         script = f'''
-        tell application "System Events"
-            activate
-            try
-                set chosenFolder to choose folder with prompt "{prompt}" {init_clause}
-                return POSIX path of chosenFolder
-            on error number -128
-                return "CANCELLED"
-            end try
-        end tell
+        try
+            set chosenFolder to choose folder with prompt "{prompt}" {init_clause}
+            return POSIX path of chosenFolder
+        on error number -128
+            return "CANCELLED"
+        end try
         '''
         try:
             res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120)

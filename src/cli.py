@@ -191,9 +191,9 @@ def config_set_llm(
     api_key: str = typer.Argument(..., help="API Key"),
     custom_url: Optional[str] = typer.Option(None, "--custom-url", help="Custom OpenAI-compatible API base URL"),
 ):
-    """Configure and store LLM credentials in system Keyring."""
+    """Configure and store LLM credentials in local application settings."""
     save_settings(provider, api_key, custom_url)
-    console.print(f"[bold green]Successfully saved credentials for {provider} in system Keyring![/bold green]")
+    console.print(f"[bold green]Successfully saved credentials for {provider} in user settings![/bold green]")
 
 
 @app.command()

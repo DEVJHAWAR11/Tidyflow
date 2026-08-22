@@ -18,6 +18,11 @@ fastmcp>=0.1.0
 keyring>=24.0.0
 tqdm>=4.66.0
 
+# Desktop GUI & Packaging
+pywebview>=5.0.0
+pyinstaller>=6.0.0
+
+
 # Optional Office document extraction
 python-docx>=1.0.0
 openpyxl>=3.1.0

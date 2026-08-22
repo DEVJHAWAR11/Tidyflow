@@ -26,6 +26,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "keyring>=24.0.0",
     "tqdm>=4.66.0",
+    "pywebview>=5.0.0",
+    "pyinstaller>=6.0.0",
 ]
 
 [project.scripts]
