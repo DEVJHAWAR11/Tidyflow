@@ -18,6 +18,7 @@ from typing import Optional
 
 import httpx
 import uvicorn
+import src.api  # Direct import to assist PyInstaller dependency tracing
 
 # Configure logging
 logging.basicConfig(
