@@ -29,5 +29,16 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    proxy: {
+      "/api": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/status": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/settings": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/categories": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/pipeline": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/fs": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/search": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/events": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/ai": { target: "http://127.0.0.1:8000", changeOrigin: true },
+    },
   },
 }));

@@ -679,12 +679,16 @@ export default function App() {
       if (res.ok) {
         setSaveSettingsSuccess(true);
         setApiKeyInput("");
-        fetchSettings();
-        checkStatus();
+        await fetchSettings();
+        await checkStatus();
         setTimeout(() => setSaveSettingsSuccess(false), 3000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(`Failed to save settings: ${data.detail || data.message || res.statusText}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Save settings error:", e);
+      alert(`Failed to save settings: ${e.message || "Network error"}`);
     }
   };
 
