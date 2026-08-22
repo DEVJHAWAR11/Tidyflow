@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Sparkles,
   ChevronLeft,
@@ -117,8 +118,9 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
   }, [categories, handleAssign, handleSkip, handlePrev, onClose]);
 
   if (!currentFile || queue.length === 0) {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+    if (typeof document === "undefined") return null;
+    return createPortal(
+      <div className="fixed inset-0 z-[99999] bg-black/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
         <div className="bg-[#ffffff] dark:bg-[#202020] rounded-2xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-8 max-w-md w-full text-center space-y-4 shadow-2xl animate-scale-in">
           <div className="w-14 h-14 rounded-full bg-[#dcfce7] dark:bg-[#052e16] text-[#166534] dark:text-[#4ade80] flex items-center justify-center mx-auto text-2xl">
             <CheckCircle2 className="w-8 h-8" />
@@ -131,12 +133,13 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
           </p>
           <button
             onClick={onClose}
-            className="w-full py-2.5 bg-[#0075de] dark:bg-[#2383e2] text-white font-semibold rounded-lg hover:bg-[#005bab] transition cursor-pointer"
+            className="w-full py-2.5 bg-[#1d1d1f] hover:bg-[#000000] dark:bg-[#ffffff] dark:hover:bg-[#f0f0f0] text-white dark:text-[#000000] font-semibold rounded-xl transition cursor-pointer"
           >
             Return to Review Table
           </button>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
@@ -164,19 +167,19 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
 
   const progressPercent = Math.round(((currentIndex + 1) / queue.length) * 100);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-black/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
       <div className="bg-[#ffffff] dark:bg-[#1a1a1a] rounded-2xl border border-[#e6e6e6] dark:border-[#2e2e2e] w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in">
         {/* Top Header & Progress */}
         <div className="p-4 sm:p-5 border-b border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-between gap-4 bg-[#faf9f8] dark:bg-[#202020]">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-[#0075de]/10 dark:bg-[#2383e2]/20 text-[#0075de] dark:text-[#2383e2]">
+            <div className="p-2 rounded-xl bg-[#0075de]/10 dark:bg-[#2383e2]/20 text-[#0075de] dark:text-[#2383e2]">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-[#000000] dark:text-[#ffffff]">
-                  ⚡ Quick Triage Queue
+                  Quick Triage Queue
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#e8f4fd] dark:bg-[#0c3966]/40 text-[#0075de] dark:text-[#2383e2]">
                   {currentIndex + 1} of {queue.length}
@@ -397,14 +400,14 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
               <button
                 onClick={handlePrev}
                 disabled={currentIndex === 0}
-                className="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333333] text-[12px] font-medium text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] disabled:opacity-30 cursor-pointer flex items-center gap-1"
+                className="px-3.5 py-2 rounded-xl border border-[#e6e6e6] dark:border-[#383838] bg-[#ffffff] dark:bg-[#252525] hover:bg-[#f6f5f4] dark:hover:bg-[#2e2e2e] text-[12px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7] disabled:opacity-30 cursor-pointer flex items-center gap-1.5 shadow-2xs transition"
               >
                 <ChevronLeft className="w-4 h-4" /> Previous
               </button>
 
               <button
                 onClick={onClose}
-                className="px-5 py-2 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] text-white text-[12px] font-bold rounded-lg shadow-sm cursor-pointer transition"
+                className="px-5 py-2 bg-[#1d1d1f] hover:bg-[#000000] dark:bg-[#ffffff] dark:hover:bg-[#f0f0f0] text-white dark:text-[#000000] text-[12px] font-semibold rounded-xl shadow-2xs cursor-pointer transition"
               >
                 Finish Triage ({queue.length - currentIndex} remaining)
               </button>
@@ -412,7 +415,7 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
               <button
                 onClick={handleSkip}
                 disabled={currentIndex >= queue.length - 1}
-                className="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333333] text-[12px] font-medium text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] disabled:opacity-30 cursor-pointer flex items-center gap-1"
+                className="px-3.5 py-2 rounded-xl border border-[#e6e6e6] dark:border-[#383838] bg-[#ffffff] dark:bg-[#252525] hover:bg-[#f6f5f4] dark:hover:bg-[#2e2e2e] text-[12px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7] disabled:opacity-30 cursor-pointer flex items-center gap-1.5 shadow-2xs transition"
               >
                 Next <ChevronRight className="w-4 h-4" />
               </button>
@@ -420,6 +423,7 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

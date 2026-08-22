@@ -15,7 +15,6 @@ import {
   Sparkles,
   Send,
   Loader2,
-  Zap,
   FolderCheck,
   FolderOpen,
   Edit2,
@@ -433,22 +432,22 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
       {/* Unrecognized Files Action Banner */}
       {unrecognizedFiles.length > 0 && (
-        <div className="bg-gradient-to-r from-[#fffbeb] via-[#fef3c7] to-[#fffbeb] dark:from-[#2e230b] dark:via-[#3d2e0b] dark:to-[#2e230b] p-4 rounded-xl border border-[#f59e0b]/40 dark:border-[#92400e] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-[#f59e0b]/20 dark:bg-[#f59e0b]/30 text-[#b45309] dark:text-[#fcd34d] shrink-0">
-              <Zap className="w-5 h-5" />
+        <div className="bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3.5">
+            <div className="p-2.5 rounded-xl bg-[#fff7ed] dark:bg-[#451a03]/40 text-[#c2410c] dark:text-[#fb923c] border border-[#ffedd5] dark:border-[#9a3412]/30 shrink-0">
+              <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h4 className="text-sm font-bold text-[#92400e] dark:text-[#fef3c7]">
-                  {unrecognizedFiles.length} Unrecognized File{unrecognizedFiles.length > 1 ? "s" : ""} Need Review
+                <h4 className="text-[14px] font-semibold text-[#000000] dark:text-[#ffffff]">
+                  {unrecognizedFiles.length} Unrecognized File{unrecognizedFiles.length > 1 ? "s" : ""}
                 </h4>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#f59e0b]/20 text-[#b45309] dark:text-[#fcd34d]">
-                  Action Needed
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#fff7ed] dark:bg-[#451a03]/50 text-[#c2410c] dark:text-[#fb923c] border border-[#fed7aa]/60 dark:border-[#9a3412]/40">
+                  Needs Attention
                 </span>
               </div>
-              <p className="text-[12px] text-[#b45309] dark:text-[#fde68a]/90 mt-0.5">
-                These files didn't match your active categories. Use AI Auto-Clustering or Quick Triage to organize them in seconds.
+              <p className="text-[13px] text-[#615d59] dark:text-[#9b9a97] mt-0.5">
+                These files didn't match your active categories. You can auto-group them with AI or sort them manually.
               </p>
             </div>
           </div>
@@ -457,7 +456,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             <button
               onClick={handleRunAiCluster}
               disabled={isClustering}
-              className="flex-1 md:flex-none px-4 py-2 bg-[#f59e0b] hover:bg-[#d97706] text-white text-[12px] font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition disabled:opacity-50"
+              className="flex-1 md:flex-none px-3.5 py-2 bg-[#0075de] hover:bg-[#005bab] text-white text-[12px] font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition disabled:opacity-50"
             >
               {isClustering ? (
                 <>
@@ -467,17 +466,16 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               ) : (
                 <>
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>✨ Auto-Cluster with AI</span>
+                  <span>Auto-Cluster with AI</span>
                 </>
               )}
             </button>
 
             <button
               onClick={() => setIsTriageOpen(true)}
-              className="flex-1 md:flex-none px-4 py-2 bg-[#ffffff] dark:bg-[#202020] hover:bg-[#f8f8f8] dark:hover:bg-[#2a2a2a] text-[#92400e] dark:text-[#fcd34d] border border-[#f59e0b]/50 dark:border-[#78350f] text-[12px] font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition"
+              className="flex-1 md:flex-none px-3.5 py-2 bg-[#ffffff] dark:bg-[#282828] hover:bg-[#f6f5f4] dark:hover:bg-[#333333] text-[#1d1d1f] dark:text-[#f5f5f7] border border-[#e6e6e6] dark:border-[#383838] text-[12px] font-medium rounded-lg shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-97 transition"
             >
-              <Zap className="w-3.5 h-3.5" />
-              <span>⚡ Quick Triage Queue</span>
+              <span>Manual Triage Queue</span>
             </button>
           </div>
         </div>
