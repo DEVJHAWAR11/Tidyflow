@@ -39,6 +39,8 @@ const formatCompactLocation = (fullPath: string): string => {
   return parent;
 };
 
+const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
+
 export const SearchView: React.FC<SearchViewProps> = ({
   ftsQuery,
   setFtsQuery,
@@ -630,7 +632,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           title="Open and reveal file in Finder / File Explorer"
                         >
                           <FolderOpen className="w-3 h-3" />
-                          <span>{openedPath === previewItem.path ? "Opened!" : "Reveal in Finder"}</span>
+                          <span>{openedPath === previewItem.path ? "Opened!" : (isMac ? "Reveal in Finder" : "Reveal in Explorer")}</span>
                         </button>
                       </div>
                     </div>

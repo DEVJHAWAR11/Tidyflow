@@ -37,6 +37,8 @@ interface FolderSelectViewProps {
   onNavigateToReview?: () => void;
 }
 
+const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
+
 export const FolderSelectView: React.FC<FolderSelectViewProps> = ({
   inputFolder,
   setInputFolder,
@@ -253,7 +255,7 @@ export const FolderSelectView: React.FC<FolderSelectViewProps> = ({
             className="px-5 py-2 rounded-xl bg-[#0075de] hover:bg-[#005bab] dark:bg-[#2383e2] dark:hover:bg-[#1a73e8] text-white font-semibold text-[13px] shadow-sm flex items-center gap-2 cursor-pointer transition active:scale-95"
           >
             <FolderOpen className="w-4 h-4" />
-            <span>{isNativeBrowsing ? "Opening Dialog..." : "Choose with Finder..."}</span>
+            <span>{isNativeBrowsing ? "Opening Dialog..." : (isMac ? "Choose with Finder..." : "Choose with Explorer...")}</span>
           </button>
 
           <button

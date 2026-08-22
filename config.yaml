@@ -32,117 +32,70 @@ classification:
 duplicates:
   hamming_distance_threshold: 8
 categories:
-  Screenshots:
-    name: Screenshots
-    description: All screenshot images, typically with 'Screenshot' in the filename.
+  Academic:
+    name: Academic
+    description: Educational documents including mark sheets, admission letters, and
+      certificates.
     keywords:
-    - screenshot
-    - screen
-    - capture
-    - image
-    extensions:
-    - .jpg
-    - .jpeg
-    - .png
-    active: true
-  Resumes:
-    name: Resumes
-    description: Resume and CV documents, often with 'resume' or 'cv' in the name.
-    keywords:
-    - resume
-    - cv
-    - curriculum
-    - vitae
-    extensions:
-    - .pdf
-    - .docx
-    active: true
-  Courses/React_JS:
-    name: Courses/React_JS
-    description: Course completion reports, learning materials, and related files
-      for React JS.
-    keywords:
-    - react
-    - js
-    - course
-    - completion
-    - learning
-    - report
-    extensions:
-    - .zip
-    - .pptx
-    - .jpeg
-    - .jpg
-    - .png
-    - .pdf
-    active: true
-  Finance/Payments:
-    name: Finance/Payments
-    description: Payment receipts, invoices, and financial transaction documents.
-    keywords:
-    - payment
-    - receipt
-    - invoice
-    - bill
-    - gateway
-    - response
+    - 10th
+    - 12th
+    - marksheet
+    - admission
+    - admit
+    - degree
+    - transcript
+    - certificate
     extensions:
     - .pdf
     active: true
-  Development/Archives:
-    name: Development/Archives
-    description: Compressed archives and development-related files like tarballs and
-      zip files.
+  Identity_and_Personal:
+    name: Identity_and_Personal
+    description: Personal identification documents and personal photos (e.g., Aadhaar,
+      LinkedIn profile pictures).
     keywords:
-    - archive
-    - tar
-    - gz
-    - zip
-    - compress
-    - backup
-    extensions:
-    - .tar.gz
-    - .gz
-    - .zip
-    - .tbz2
-    active: true
-  Development/Databases:
-    name: Development/Databases
-    description: Database schema files and SQL scripts.
-    keywords:
-    - sql
-    - table
-    - schema
-    - database
-    - query
-    extensions:
-    - .sql
-    active: true
-  Applications:
-    name: Applications
-    description: Installer files for software applications.
-    keywords:
-    - installer
-    - dmg
-    - app
-    - setup
-    extensions:
-    - .dmg
-    - .exe
-    - .msi
-    active: true
-  Images:
-    name: Images
-    description: General image files that are not screenshots or course-related.
-    keywords:
-    - image
+    - aadhar
+    - aadhaar
+    - linkedin
     - photo
-    - picture
-    - icon
+    - profile
+    - id
+    - papa
+    - pic
     extensions:
+    - .pdf
     - .png
     - .jpg
-    - .jpeg
-    - .gif
-    - .bmp
+    active: true
+  Financial_and_Loan:
+    name: Financial_and_Loan
+    description: Financial documents such as loan applications, fee certificates,
+      and related paperwork.
+    keywords:
+    - loan
+    - application
+    - fee
+    - certificate
+    - vidyalaxmi
+    - education loan
+    - finance
+    - payment
+    extensions:
+    - .pdf
+    active: true
+  General:
+    name: General
+    description: Miscellaneous files that don't fit into other categories, like shortcuts
+      and system files.
+    keywords:
+    - desktop
+    - zoom
+    - shortcut
+    - ini
+    - lnk
+    - misc
+    - other
+    - general
+    extensions:
+    - .ini
+    - .lnk
     active: true

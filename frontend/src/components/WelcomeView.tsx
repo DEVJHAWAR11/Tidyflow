@@ -34,6 +34,8 @@ interface WelcomeViewProps {
   onOpenOutputFolder?: (path: string) => void;
 }
 
+const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
+
 export const WelcomeView: React.FC<WelcomeViewProps> = ({
   onSelectFolder,
   onOpenDirectoryPicker,
@@ -272,7 +274,7 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({
               className="px-5 py-2.5 rounded-xl bg-[#0075de] hover:bg-[#005bab] dark:bg-[#2383e2] dark:hover:bg-[#1a73e8] text-white font-semibold text-[13px] shadow-[0_2px_8px_rgba(0,117,222,0.35)] flex items-center gap-2 cursor-pointer transition active:scale-95"
             >
               <FolderOpen className="w-4 h-4" />
-              <span>{isNativeBrowsing ? "Opening Dialog..." : "Choose Folder with Finder..."}</span>
+              <span>{isNativeBrowsing ? "Opening Dialog..." : (isMac ? "Choose Folder with Finder..." : "Choose Folder with Explorer...")}</span>
             </button>
 
             <button

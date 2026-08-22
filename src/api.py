@@ -373,20 +373,45 @@ def pick_native_directory(prompt: str = "Select Folder", initial_dir: Optional[s
             return None
 
     elif sys.platform.startswith("win"):
+        # Primary: Tkinter with topmost flag brings the native Win32 dialog immediately to the foreground
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(
+                title=prompt,
+                initialdir=initial_dir if initial_dir and os.path.exists(initial_dir) else None,
+            )
+            root.destroy()
+            if folder:
+                return str(Path(folder).resolve())
+            return None
+        except Exception as tk_err:
+            logger.warning("Windows tkinter folder picker error: %s, attempting PowerShell fallback", tk_err)
+
+        # Fallback: PowerShell in STA mode with topmost form owner
         init = f"$f.SelectedPath = '{initial_dir}';" if initial_dir and os.path.exists(initial_dir) else ""
         script = f'''
         Add-Type -AssemblyName System.Windows.Forms
         $f = New-Object System.Windows.Forms.FolderBrowserDialog
         $f.Description = "{prompt}"
+        $f.ShowNewFolderButton = $true
         {init}
-        if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+        $form = New-Object System.Windows.Forms.Form
+        $form.TopMost = $true
+        $form.Visible = $false
+        if ($f.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {{
             Write-Output $f.SelectedPath
         }} else {{
             Write-Output "CANCELLED"
         }}
+        $form.Dispose()
         '''
         try:
-            res = subprocess.run(["powershell", "-Command", script], capture_output=True, text=True, timeout=120)
+            res = subprocess.run(["powershell", "-Sta", "-Command", script], capture_output=True, text=True, timeout=120)
             out = res.stdout.strip()
             if out == "CANCELLED" or res.returncode != 0:
                 return None
