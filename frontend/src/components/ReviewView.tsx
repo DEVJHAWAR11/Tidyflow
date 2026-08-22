@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { ClassifiedFile, RunSummary, CategoryItem } from "../types";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import { QuickTriageModal } from "./QuickTriageModal";
+import { WorkflowStepper } from "./WorkflowStepper";
+import { ApplySuccessModal } from "./ApplySuccessModal";
 import {
   Search,
   CheckCircle2,
@@ -34,6 +36,9 @@ interface ReviewViewProps {
   setApplyResultModal: (val: { count: number; action: string; output_dir: string } | null) => void;
   onApplyDecisions: () => Promise<void>;
   onNavigateToOrganize: () => void;
+  inputFolder?: string;
+  onNavigateToSelectFolder?: () => void;
+  onNavigateToSearch?: () => void;
 }
 
 export const ReviewView: React.FC<ReviewViewProps> = ({
@@ -51,6 +56,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   setApplyResultModal,
   onApplyDecisions,
   onNavigateToOrganize,
+  inputFolder = "",
+  onNavigateToSelectFolder,
+  onNavigateToSearch,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
@@ -264,6 +272,17 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-24">
+      {/* Interactive Workflow Stepper */}
+      <WorkflowStepper
+        currentStep="review"
+        inputFolder={inputFolder}
+        fileCount={files.length}
+        onNavigate={(step) => {
+          if (step === "select_folder" && onNavigateToSelectFolder) onNavigateToSelectFolder();
+          else if (step === "blueprint") onNavigateToOrganize();
+        }}
+      />
+
       {/* Header Bar */}
       <div className="border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
         <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
@@ -939,6 +958,26 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           </div>,
           document.body
         )}
+
+      {/* Success Celebration & Insights Modal */}
+      {applyResultModal && (
+        <ApplySuccessModal
+          isOpen={Boolean(applyResultModal)}
+          onClose={() => setApplyResultModal(null)}
+          count={applyResultModal.count}
+          action={applyResultModal.action}
+          outputDir={applyResultModal.output_dir}
+          onOpenFolder={(path) => handleOpenInExplorer(path)}
+          onNavigateToSearch={() => {
+            setApplyResultModal(null);
+            if (onNavigateToSearch) onNavigateToSearch();
+          }}
+          onOrganizeAnother={() => {
+            setApplyResultModal(null);
+            if (onNavigateToSelectFolder) onNavigateToSelectFolder();
+          }}
+        />
+      )}
     </div>
   );
 };

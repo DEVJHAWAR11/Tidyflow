@@ -75,5 +75,5 @@ export interface ChatMessage {
   isReady?: boolean;
 }
 
-export type TabType = "organize" | "categories" | "review" | "search" | "settings";
+export type TabType = "welcome" | "select_folder" | "organize" | "categories" | "review" | "search" | "settings";
 export type BackendStatus = "running" | "offline" | "checking";
