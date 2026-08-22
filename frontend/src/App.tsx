@@ -13,7 +13,6 @@ import { Navbar } from "./components/Navbar";
 import { GetStartedView } from "./components/GetStartedView";
 import { FolderSelectView } from "./components/FolderSelectView";
 import { OrganizeView } from "./components/OrganizeView";
-import { CategoriesView } from "./components/CategoriesView";
 import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
@@ -23,16 +22,25 @@ import { API_BASE } from "./config";
 import "./App.css";
 
 export default function App() {
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "categories">("general");
+
   const [activeTab, setActiveTabState] = useState<TabType>(() => {
     const hasOnboarded = localStorage.getItem("tidyflow_has_onboarded");
     if (!hasOnboarded) return "welcome";
     const savedTab = localStorage.getItem("tidyflow_active_tab") as TabType;
+    if (savedTab === "categories") return "settings";
     if (savedTab) return savedTab;
     const savedFolder = localStorage.getItem("tidyflow_input_folder");
     return savedFolder ? "organize" : "select_folder";
   });
 
   const setActiveTab = (tab: TabType) => {
+    if (tab === "categories") {
+      setSettingsSubTab("categories");
+      setActiveTabState("settings");
+      localStorage.setItem("tidyflow_active_tab", "settings");
+      return;
+    }
     setActiveTabState(tab);
     localStorage.setItem("tidyflow_active_tab", tab);
   };
@@ -811,23 +819,16 @@ export default function App() {
             backendStatus={backendStatus}
             onStartPipeline={handleStartPipeline}
             onNavigateToReview={() => setActiveTab("review")}
-            onNavigateToCategories={() => setActiveTab("categories")}
+            onNavigateToCategories={() => {
+              setSettingsSubTab("categories");
+              setActiveTab("settings");
+            }}
             onChangeFolder={() => setActiveTab("select_folder")}
             fileCount={files.length}
             complexityLevel={complexityLevel}
             setComplexityLevel={setComplexityLevel}
             onCancelPipeline={handleCancelPipeline}
             isCancelling={isCancelling}
-          />
-        )}
-
-        {activeTab === "categories" && (
-          <CategoriesView
-            categories={categories}
-            onToggleCategory={handleToggleCategory}
-            onAddCategory={handleAddCategory}
-            onDeleteCategory={handleDeleteCategory}
-            onLoadPreset={handleLoadPreset}
           />
         )}
 
@@ -870,7 +871,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === "settings" && (
+        {(activeTab === "settings" || activeTab === "categories") && (
           <SettingsView
             llmProvider={llmProvider}
             setLlmProvider={setLlmProvider}
@@ -883,6 +884,13 @@ export default function App() {
             setAutoThreshold={setAutoThreshold}
             saveSuccess={saveSettingsSuccess}
             onSaveSettings={handleSaveSettings}
+            subTab={settingsSubTab}
+            setSubTab={setSettingsSubTab}
+            categories={categories}
+            onToggleCategory={handleToggleCategory}
+            onAddCategory={handleAddCategory}
+            onDeleteCategory={handleDeleteCategory}
+            onLoadPreset={handleLoadPreset}
           />
         )}
       </main>
