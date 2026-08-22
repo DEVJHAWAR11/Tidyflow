@@ -23,12 +23,20 @@ import { API_BASE } from "./config";
 import "./App.css";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabType>(() => {
+  const [activeTab, setActiveTabState] = useState<TabType>(() => {
     const hasOnboarded = localStorage.getItem("tidyflow_has_onboarded");
     if (!hasOnboarded) return "welcome";
+    const savedTab = localStorage.getItem("tidyflow_active_tab") as TabType;
+    if (savedTab) return savedTab;
     const savedFolder = localStorage.getItem("tidyflow_input_folder");
     return savedFolder ? "organize" : "select_folder";
   });
+
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabState(tab);
+    localStorage.setItem("tidyflow_active_tab", tab);
+  };
+
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [hasLlmKey, setHasLlmKey] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -65,12 +73,15 @@ export default function App() {
   const setInputFolder = (path: string) => {
     setInputFolderState(path);
     if (path) localStorage.setItem("tidyflow_input_folder", path);
+    else localStorage.removeItem("tidyflow_input_folder");
   };
 
   const setOutputFolder = (path: string) => {
     setOutputFolderState(path);
     if (path) localStorage.setItem("tidyflow_output_folder", path);
+    else localStorage.removeItem("tidyflow_output_folder");
   };
+
   const [useLlm, setUseLlm] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -79,15 +90,114 @@ export default function App() {
 
   // Categories state
   const [categories, setCategories] = useState<Record<string, CategoryItem>>({});
-  const [customInstructions, setCustomInstructions] = useState("");
-  const [complexityLevel, setComplexityLevel] = useState<ComplexityLevel>("medium");
+  const [customInstructions, setCustomInstructionsState] = useState<string>(() => {
+    return localStorage.getItem("tidyflow_custom_instructions") || "";
+  });
+  const setCustomInstructions = (val: string) => {
+    setCustomInstructionsState(val);
+    localStorage.setItem("tidyflow_custom_instructions", val);
+  };
 
-  // Review & Apply state
-  const [files, setFiles] = useState<ClassifiedFile[]>([]);
-  const [summary, setSummary] = useState<RunSummary | null>(null);
-  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
-  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
-  const [filenameOverrides, setFilenameOverrides] = useState<Record<string, string>>({});
+  const [complexityLevel, setComplexityLevelState] = useState<ComplexityLevel>(() => {
+    return (localStorage.getItem("tidyflow_complexity_level") as ComplexityLevel) || "medium";
+  });
+  const setComplexityLevel = (lvl: ComplexityLevel) => {
+    setComplexityLevelState(lvl);
+    localStorage.setItem("tidyflow_complexity_level", lvl);
+  };
+
+  // Review & Apply state — persistent across tab changes and page reloads
+  const [files, setFilesState] = useState<ClassifiedFile[]>(() => {
+    try {
+      const saved = localStorage.getItem("tidyflow_cached_files");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const setFiles = (newFiles: ClassifiedFile[] | ((prev: ClassifiedFile[]) => ClassifiedFile[])) => {
+    setFilesState((prev) => {
+      const next = typeof newFiles === "function" ? newFiles(prev) : newFiles;
+      try {
+        localStorage.setItem("tidyflow_cached_files", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const [summary, setSummaryState] = useState<RunSummary | null>(() => {
+    try {
+      const saved = localStorage.getItem("tidyflow_cached_summary");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const setSummary = (s: RunSummary | null | ((prev: RunSummary | null) => RunSummary | null)) => {
+    setSummaryState((prev) => {
+      const next = typeof s === "function" ? s(prev) : s;
+      try {
+        if (next) localStorage.setItem("tidyflow_cached_summary", JSON.stringify(next));
+        else localStorage.removeItem("tidyflow_cached_summary");
+      } catch {}
+      return next;
+    });
+  };
+
+  const [selectedFileIds, setSelectedFileIdsState] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("tidyflow_selected_files");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const setSelectedFileIds: React.Dispatch<React.SetStateAction<Set<string>>> = (val) => {
+    setSelectedFileIdsState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      try {
+        localStorage.setItem("tidyflow_selected_files", JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
+  const [categoryOverrides, setCategoryOverridesState] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem("tidyflow_category_overrides");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const setCategoryOverrides: React.Dispatch<React.SetStateAction<Record<string, string>>> = (val) => {
+    setCategoryOverridesState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      try {
+        localStorage.setItem("tidyflow_category_overrides", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const [filenameOverrides, setFilenameOverridesState] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem("tidyflow_filename_overrides");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const setFilenameOverrides: React.Dispatch<React.SetStateAction<Record<string, string>>> = (val) => {
+    setFilenameOverridesState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      try {
+        localStorage.setItem("tidyflow_filename_overrides", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
   const [moveMode, setMoveMode] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [applyResultModal, setApplyResultModal] = useState<{
@@ -543,14 +653,25 @@ export default function App() {
   };
 
   const handleSelectFolder = (path: string) => {
-    setInputFolder(path);
-    if (!outputFolder || outputFolder.endsWith("/Organized_Output") || !outputFolder.trim()) {
+    if (path !== inputFolder) {
+      setInputFolder(path);
       setOutputFolder(`${path}/Organized_Output`);
+      setCategories({});
+      setCustomInstructions("");
+      setFiles([]);
+      setSummary(null);
+      setSelectedFileIds(new Set());
+      setCategoryOverrides({});
+      setFilenameOverrides({});
+      setProgressLogs([]);
+      setCurrentStage("");
+      localStorage.removeItem("tidyflow_cached_files");
+      localStorage.removeItem("tidyflow_cached_summary");
+      localStorage.removeItem("tidyflow_selected_files");
+      localStorage.removeItem("tidyflow_category_overrides");
+      localStorage.removeItem("tidyflow_filename_overrides");
+      localStorage.removeItem("tidyflow_custom_instructions");
     }
-    setCategories({});
-    setCustomInstructions("");
-    setCategoryOverrides({});
-    setFilenameOverrides({});
   };
 
   const handleOpenPath = async (path: string) => {
@@ -570,6 +691,13 @@ export default function App() {
     setOutputFolderState("");
     localStorage.removeItem("tidyflow_input_folder");
     localStorage.removeItem("tidyflow_output_folder");
+    localStorage.removeItem("tidyflow_cached_files");
+    localStorage.removeItem("tidyflow_cached_summary");
+    localStorage.removeItem("tidyflow_selected_files");
+    localStorage.removeItem("tidyflow_category_overrides");
+    localStorage.removeItem("tidyflow_filename_overrides");
+    localStorage.removeItem("tidyflow_custom_instructions");
+    localStorage.removeItem("tidyflow_complexity_level");
     setCategories({});
     setCustomInstructions("");
     setFiles([]);
@@ -667,7 +795,7 @@ export default function App() {
         {activeTab === "organize" && (
           <OrganizeView
             inputFolder={inputFolder}
-            setInputFolder={setInputFolder}
+            setInputFolder={handleSelectFolder}
             outputFolder={outputFolder}
             setOutputFolder={setOutputFolder}
             useLlm={useLlm}
@@ -707,6 +835,7 @@ export default function App() {
           <ReviewView
             files={files}
             categories={categories}
+            setCategories={setCategories}
             summary={summary}
             selectedFileIds={selectedFileIds}
             setSelectedFileIds={setSelectedFileIds}

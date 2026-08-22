@@ -25,6 +25,7 @@ import {
 interface ReviewViewProps {
   files: ClassifiedFile[];
   categories: Record<string, CategoryItem>;
+  setCategories?: React.Dispatch<React.SetStateAction<Record<string, CategoryItem>>>;
   summary: RunSummary | null;
   selectedFileIds: Set<string>;
   setSelectedFileIds: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -49,6 +50,7 @@ interface ReviewViewProps {
 export const ReviewView: React.FC<ReviewViewProps> = ({
   files,
   categories,
+  setCategories,
   selectedFileIds,
   setSelectedFileIds,
   categoryOverrides,
@@ -213,10 +215,40 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const handleApplyClusters = () => {
     if (!clusterModalData) return;
     const overrides = clusterModalData.category_overrides || {};
+    const clusters = clusterModalData.clusters || {};
+
     setCategoryOverrides((prev) => ({
       ...prev,
       ...overrides,
     }));
+
+    // Add discovered cluster categories to global category map and sync with backend
+    if (setCategories && Object.keys(clusters).length > 0) {
+      setCategories((prev) => {
+        const updated = { ...prev };
+        let hasChanges = false;
+        Object.keys(clusters).forEach((catName) => {
+          if (!updated[catName]) {
+            updated[catName] = {
+              name: catName,
+              description: `AI cluster discovered for ${clusters[catName].length} files`,
+              keywords: [],
+              extensions: [],
+              active: true,
+            };
+            hasChanges = true;
+          }
+        });
+        if (hasChanges) {
+          fetch(`${API_BASE}/categories`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ categories: updated }),
+          }).catch((e) => console.warn("Failed to sync new cluster categories:", e));
+        }
+        return updated;
+      });
+    }
 
     // Auto-select clustered files
     setSelectedFileIds((prev) => {
@@ -226,7 +258,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     });
 
     setAiFeedback(
-      `✓ Applied ${Object.keys(clusterModalData.clusters || {}).length} cluster categories to ${
+      `✓ Applied ${Object.keys(clusters).length} cluster categories to ${
         Object.keys(overrides).length
       } files!`
     );
@@ -240,6 +272,28 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         const next = new Set(prev);
         next.add(fileId);
         return next;
+      });
+    }
+
+    // If custom category was entered, register it globally
+    if (setCategories && category && !categories[category] && category !== "_Unsorted_Archive") {
+      setCategories((prev) => {
+        const updated = {
+          ...prev,
+          [category]: {
+            name: category,
+            description: "Custom user-assigned triage category",
+            keywords: [],
+            extensions: [],
+            active: true,
+          },
+        };
+        fetch(`${API_BASE}/categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categories: updated }),
+        }).catch((e) => console.warn("Failed to sync new triage category:", e));
+        return updated;
       });
     }
   };
