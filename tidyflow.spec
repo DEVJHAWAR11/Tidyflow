@@ -39,7 +39,7 @@ for cfg_file in ["config.yaml", "rules.yaml"]:
 # Collect package data & metadata
 datas += collect_data_files("uvicorn")
 datas += collect_data_files("sse_starlette")
-for pkg in ["fastmcp", "fastmcp-slim", "uvicorn", "sse_starlette", "fastapi", "pydantic", "tqdm", "keyring", "httpx", "httpcore", "starlette", "rich", "typer"]:
+for pkg in ["fastmcp", "fastmcp-slim", "uvicorn", "sse_starlette", "fastapi", "pydantic", "tqdm", "keyring", "httpx", "httpcore", "starlette", "rich", "typer", "pythonnet"]:
     try:
         datas += copy_metadata(pkg)
     except Exception:
@@ -49,6 +49,12 @@ try:
     datas += collect_data_files("webview")
 except Exception:
     pass
+
+if sys.platform == "win32":
+    try:
+        datas += collect_data_files("pythonnet")
+    except Exception:
+        pass
 
 # Hidden imports to ensure dynamic modules are packaged
 hiddenimports = [
@@ -112,7 +118,17 @@ for mod in ["uvicorn", "webview", "httpx", "httpcore", "starlette", "src"]:
 if sys.platform == "darwin":
     hiddenimports += ["webview.platforms.cocoa", "keyring.backends.macOS", "objc", "AppKit", "WebKit", "Foundation"]
 elif sys.platform == "win32":
-    hiddenimports += ["webview.platforms.winforms", "webview.platforms.edgechromium", "keyring.backends.Windows"]
+    hiddenimports += [
+        "clr",
+        "pythonnet",
+        "webview.platforms.winforms",
+        "webview.platforms.edgechromium",
+        "keyring.backends.Windows",
+    ]
+    try:
+        hiddenimports += collect_submodules("pythonnet")
+    except Exception:
+        pass
 
 
 # Icon determination
@@ -135,7 +151,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "scipy", "pytest", "tests"],
+    excludes=["matplotlib", "scipy", "pytest", "tests"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

@@ -8,13 +8,33 @@ and displays the React frontend in a native desktop window via pywebview.
 from __future__ import annotations
 
 import argparse
+import io
 import logging
+import multiprocessing
+import os
 import socket
 import sys
 import threading
 import time
 import webbrowser
 from typing import Optional
+
+# PyInstaller GUI safety on Windows: sys.stdout and sys.stderr are None when console=False
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+elif hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
+elif hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import httpx
 import uvicorn
@@ -80,7 +100,6 @@ class ServerThread(threading.Thread):
             self._stopped.wait(timeout=3.0)
 
 
-
 def wait_for_server(url: str, timeout: float = 10.0) -> bool:
     """Poll the backend server until it responds or timeout is reached."""
     start = time.time()
@@ -96,6 +115,8 @@ def wait_for_server(url: str, timeout: float = 10.0) -> bool:
 
 
 def main():
+    multiprocessing.freeze_support()
+
     parser = argparse.ArgumentParser(description="TidyFlow Universal AI File Organizer - Desktop")
     parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000, or auto-selected)")
@@ -130,7 +151,12 @@ def main():
             )
 
             # Start GUI loop (blocks until window is closed)
-            webview.start(debug=args.debug)
+            gui_engine = "edgechromium" if sys.platform == "win32" else None
+            try:
+                webview.start(debug=args.debug, gui=gui_engine, private_mode=False)
+            except Exception as gui_err:
+                logger.warning("Could not start with %s GUI engine: %s. Retrying with default...", gui_engine, gui_err)
+                webview.start(debug=args.debug)
         except ImportError:
             logger.warning("pywebview is not installed. Falling back to default web browser.")
             webbrowser.open(url)
@@ -163,3 +189,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

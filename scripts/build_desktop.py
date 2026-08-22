@@ -16,6 +16,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Fix Windows console UTF-8 encoding for emojis and Unicode output
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -31,7 +39,12 @@ def check_python_dependencies():
     if req_file.exists():
         print("📦 Ensuring all packages from requirements.txt are installed...")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller>=6.0.0", "pywebview>=5.0.0"], check=True)
+    
+    deps = ["pyinstaller>=6.0.0", "pywebview>=5.0.0"]
+    if sys.platform == "win32":
+        deps.append("pythonnet>=3.0.0")
+    
+    subprocess.run([sys.executable, "-m", "pip", "install", *deps], check=True)
     print("✅ All Python dependencies are installed and up to date!")
 
 
@@ -50,10 +63,10 @@ def build_frontend():
     # Check node_modules
     if not (frontend_dir / "node_modules").exists():
         print("📦 Installing frontend dependencies (npm install)...")
-        subprocess.run([npm, "install"], cwd=frontend_dir, check=True)
+        subprocess.run([npm, "install"], cwd=frontend_dir, check=True, shell=(sys.platform == "win32"))
 
     print("⚡ Compiling Vite production bundle (npm run build)...")
-    subprocess.run([npm, "run", "build"], cwd=frontend_dir, check=True)
+    subprocess.run([npm, "run", "build"], cwd=frontend_dir, check=True, shell=(sys.platform == "win32"))
     dist_dir = frontend_dir / "dist"
     if not dist_dir.exists() or not (dist_dir / "index.html").exists():
         print("❌ Frontend build failed: index.html not found in dist/")
@@ -117,10 +130,16 @@ def package_desktop():
         print("\nTo test, run:")
         print(f"  open '{app_path}'")
     elif sys.platform == "win32":
-        exe_path = ROOT_DIR / "dist" / "TidyFlow.exe"
+        exe_path = ROOT_DIR / "dist" / "TidyFlow" / "TidyFlow.exe"
+        if not exe_path.exists():
+            exe_path = ROOT_DIR / "dist" / "TidyFlow.exe"
         print(f"💻 Windows Executable: {exe_path}")
+        print("\nTo test, run:")
+        print(f"  .\\dist\\TidyFlow\\TidyFlow.exe")
     else:
-        bin_path = ROOT_DIR / "dist" / "TidyFlow"
+        bin_path = ROOT_DIR / "dist" / "TidyFlow" / "TidyFlow"
+        if not bin_path.exists():
+            bin_path = ROOT_DIR / "dist" / "TidyFlow"
         print(f"🐧 Linux Executable: {bin_path}")
 
 

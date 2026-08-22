@@ -1,5 +1,6 @@
 @echo off
 setlocal
+chcp 65001 >nul
 
 echo ============================================================
 echo 🚀 Building TidyFlow Standalone Desktop App for Windows
@@ -30,10 +31,11 @@ echo 🐍 Using Python: %PY_CMD%
 if %ERRORLEVEL% equ 0 (
     echo.
     echo 🎉 Windows build finished successfully!
-    echo 📁 Check the 'dist\TidyFlow.exe' executable.
+    echo 📁 Check the 'dist\TidyFlow\TidyFlow.exe' executable.
 ) else (
     echo.
     echo ❌ Build failed with error code %ERRORLEVEL%.
 )
 
 endlocal
+
