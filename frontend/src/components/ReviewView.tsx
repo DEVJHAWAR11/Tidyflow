@@ -18,6 +18,9 @@ import {
   Zap,
   FolderCheck,
   FolderOpen,
+  Edit2,
+  Check,
+  RotateCcw,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -28,6 +31,8 @@ interface ReviewViewProps {
   setSelectedFileIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   categoryOverrides: Record<string, string>;
   setCategoryOverrides: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  filenameOverrides?: Record<string, string>;
+  setFilenameOverrides?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   autoThreshold: number;
   outputFolder: string;
   moveMode: boolean;
@@ -49,6 +54,8 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   setSelectedFileIds,
   categoryOverrides,
   setCategoryOverrides,
+  filenameOverrides = {},
+  setFilenameOverrides,
   autoThreshold,
   moveMode,
   setMoveMode,
@@ -77,10 +84,75 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   } | null>(null);
   const [openedPath, setOpenedPath] = useState<string | null>(null);
 
+  // Filename editing state
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [editingFileName, setEditingFileName] = useState<string>("");
+
+  const handleStartEditFilename = (fileId: string, currentName: string) => {
+    setEditingFileId(fileId);
+    setEditingFileName(currentName);
+  };
+
+  const handleSaveFilename = (fileId: string) => {
+    if (setFilenameOverrides && editingFileName.trim()) {
+      setFilenameOverrides((prev) => ({
+        ...prev,
+        [fileId]: editingFileName.trim(),
+      }));
+    }
+    setEditingFileId(null);
+  };
+
+  const handleApplySuggestedFilename = (fileId: string, suggestedName: string) => {
+    if (setFilenameOverrides && suggestedName.trim()) {
+      setFilenameOverrides((prev) => ({
+        ...prev,
+        [fileId]: suggestedName.trim(),
+      }));
+    }
+  };
+
+  const handleRevertFilename = (fileId: string) => {
+    if (setFilenameOverrides) {
+      setFilenameOverrides((prev) => {
+        const next = { ...prev };
+        delete next[fileId];
+        return next;
+      });
+    }
+  };
+
+  const renameableFilesCount = useMemo(() => {
+    return files.filter(
+      (f) => f.suggested_filename && f.suggested_filename !== f.filename
+    ).length;
+  }, [files]);
+
+  const overriddenFilenamesCount = useMemo(() => {
+    return Object.keys(filenameOverrides).length;
+  }, [filenameOverrides]);
+
+  const handleApplyAllSuggestedFilenames = () => {
+    if (!setFilenameOverrides) return;
+    const updates: Record<string, string> = { ...filenameOverrides };
+    files.forEach((f) => {
+      if (f.suggested_filename && f.suggested_filename !== f.filename) {
+        updates[f.file_id] = f.suggested_filename;
+      }
+    });
+    setFilenameOverrides(updates);
+  };
+
+  const handleRevertAllFilenames = () => {
+    if (setFilenameOverrides) {
+      setFilenameOverrides({});
+    }
+  };
+
   const handleOpenInExplorer = async (filePath: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
-      const res = await fetch("http://localhost:8000/fs/open-path", {
+      const res = await fetch(`${API_BASE}/fs/open-path`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: filePath, reveal: true }),
@@ -107,7 +179,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     setIsClustering(true);
 
     try {
-      const res = await fetch("http://localhost:8000/ai/cluster-unrecognized", {
+      const res = await fetch(`${API_BASE}/ai/cluster-unrecognized`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -498,8 +570,30 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           </select>
         </div>
 
-        {/* Selection Quick Actions */}
-        <div className="flex items-center gap-2">
+        {/* Selection & Rename Quick Actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {renameableFilesCount > 0 && (
+            <button
+              onClick={handleApplyAllSuggestedFilenames}
+              title="Apply all AI suggested file renames"
+              className="px-3 py-1 text-[12px] font-medium bg-[#0075de]/10 dark:bg-[#0075de]/20 hover:bg-[#0075de]/20 dark:hover:bg-[#0075de]/30 text-[#0075de] dark:text-[#38bdf8] rounded-md border border-[#0075de]/30 transition cursor-pointer flex items-center gap-1.5 active:scale-97"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Accept All AI Renames ({renameableFilesCount})</span>
+            </button>
+          )}
+
+          {overriddenFilenamesCount > 0 && (
+            <button
+              onClick={handleRevertAllFilenames}
+              title="Revert all custom / AI renames back to original names"
+              className="px-2.5 py-1 text-[12px] font-medium text-[#86868b] hover:text-[#ff3b30] hover:bg-[#ff3b30]/10 rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Names ({overriddenFilenamesCount})</span>
+            </button>
+          )}
+
           <button
             onClick={selectAllFiltered}
             className="px-3 py-1 text-[12px] font-medium bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#000000] dark:text-[#ffffff] rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer"
@@ -600,14 +694,83 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                             </div>
                           )}
 
-                          <div className="min-w-0 max-w-sm">
-                            <p className="font-semibold text-[#000000] dark:text-[#ffffff] font-mono text-[12px] truncate">
-                              {file.filename}
-                            </p>
-                            {file.suggested_filename && file.suggested_filename !== file.filename && (
-                              <p className="text-[11px] text-[#0075de] dark:text-[#2383e2] font-mono truncate mt-0.5">
-                                ↳ Rename: {file.suggested_filename}
-                              </p>
+                          <div className="min-w-0 max-w-sm flex-1">
+                            {editingFileId === file.file_id ? (
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={editingFileName}
+                                  onChange={(e) => setEditingFileName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleSaveFilename(file.file_id);
+                                    if (e.key === "Escape") setEditingFileId(null);
+                                  }}
+                                  autoFocus
+                                  className="bg-[#f6f5f4] dark:bg-[#191919] border border-[#0075de] dark:border-[#38bdf8] rounded px-2 py-0.5 text-[12px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none w-full"
+                                />
+                                <button
+                                  onClick={() => handleSaveFilename(file.file_id)}
+                                  title="Save Rename"
+                                  className="p-1 text-[#1aae39] hover:bg-[#ecf7ed] dark:hover:bg-[#0c3917]/40 rounded cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingFileId(null)}
+                                  title="Cancel"
+                                  className="p-1 text-[#a39e98] hover:bg-[#f6f5f4] dark:hover:bg-[#282828] rounded cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="group/name flex items-center gap-1.5">
+                                <span
+                                  className={`font-semibold font-mono text-[12px] truncate ${
+                                    filenameOverrides[file.file_id]
+                                      ? "text-[#0075de] dark:text-[#38bdf8]"
+                                      : "text-[#000000] dark:text-[#ffffff]"
+                                  }`}
+                                  title={filenameOverrides[file.file_id] || file.filename}
+                                >
+                                  {filenameOverrides[file.file_id] || file.filename}
+                                </span>
+                                <button
+                                  onClick={() =>
+                                    handleStartEditFilename(
+                                      file.file_id,
+                                      filenameOverrides[file.file_id] || file.filename
+                                    )
+                                  }
+                                  title="Edit Filename"
+                                  className="opacity-0 group-hover/name:opacity-100 p-0.5 text-[#86868b] hover:text-[#0075de] dark:hover:text-[#38bdf8] transition cursor-pointer"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                                {filenameOverrides[file.file_id] && (
+                                  <button
+                                    onClick={() => handleRevertFilename(file.file_id)}
+                                    title="Revert to original name"
+                                    className="p-0.5 text-[#86868b] hover:text-[#ff3b30] transition cursor-pointer"
+                                  >
+                                    <RotateCcw className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Suggested Filename Badge */}
+                            {Boolean(file.suggested_filename && file.suggested_filename !== file.filename && !filenameOverrides[file.file_id]) && (
+                              <button
+                                onClick={() =>
+                                  handleApplySuggestedFilename(file.file_id, file.suggested_filename!)
+                                }
+                                title="Click to apply AI suggested rename"
+                                className="text-[11px] text-[#0075de] dark:text-[#38bdf8] hover:underline font-mono truncate mt-0.5 flex items-center gap-1 cursor-pointer text-left"
+                              >
+                                <span>↳ AI Suggests:</span>
+                                <span className="font-semibold">{file.suggested_filename}</span>
+                              </button>
                             )}
                           </div>
                         </div>

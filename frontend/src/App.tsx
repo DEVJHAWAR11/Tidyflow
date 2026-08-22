@@ -86,6 +86,7 @@ export default function App() {
   const [summary, setSummary] = useState<RunSummary | null>(null);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
+  const [filenameOverrides, setFilenameOverrides] = useState<Record<string, string>>({});
   const [moveMode, setMoveMode] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [applyResultModal, setApplyResultModal] = useState<{
@@ -391,12 +392,13 @@ export default function App() {
 
     files.forEach((f) => {
       const isApproved = selectedFileIds.has(f.file_id);
-      const override = categoryOverrides[f.file_id];
+      const overrideCat = categoryOverrides[f.file_id];
+      const targetName = filenameOverrides[f.file_id] || undefined;
       decisionList.push({
         file_id: f.file_id,
         approved: isApproved,
-        override_category: override || undefined,
-        target_filename: f.suggested_filename || undefined,
+        override_category: overrideCat || undefined,
+        target_filename: targetName,
       });
     });
 
@@ -491,6 +493,8 @@ export default function App() {
     }
     setCategories({});
     setCustomInstructions("");
+    setCategoryOverrides({});
+    setFilenameOverrides({});
   };
 
   const handleOpenPath = async (path: string) => {
@@ -516,6 +520,7 @@ export default function App() {
     setSummary(null);
     setSelectedFileIds(new Set());
     setCategoryOverrides({});
+    setFilenameOverrides({});
     setProgressLogs([]);
     setCurrentStage("");
     setComplexityLevel("medium");
@@ -649,6 +654,8 @@ export default function App() {
             setSelectedFileIds={setSelectedFileIds}
             categoryOverrides={categoryOverrides}
             setCategoryOverrides={setCategoryOverrides}
+            filenameOverrides={filenameOverrides}
+            setFilenameOverrides={setFilenameOverrides}
             autoThreshold={autoThreshold}
             outputFolder={outputFolder}
             moveMode={moveMode}
