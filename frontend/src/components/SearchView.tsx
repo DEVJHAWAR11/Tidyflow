@@ -30,6 +30,15 @@ interface SearchViewProps {
   onClear: () => void;
 }
 
+const formatCompactLocation = (fullPath: string): string => {
+  if (!fullPath) return "";
+  const normalized = fullPath.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 1) return "";
+  const parent = parts[parts.length - 2];
+  return parent;
+};
+
 export const SearchView: React.FC<SearchViewProps> = ({
   ftsQuery,
   setFtsQuery,
@@ -253,6 +262,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
               const snippetHtml = item.snippet || item.extracted_text || "";
               const hasLongText = (item.extracted_text || "").length > 250;
               const extension = item.extension || (fileName.includes(".") ? "." + fileName.split(".").pop() : "");
+              const locationFolder = formatCompactLocation(item.path);
 
               return (
                 <div
@@ -297,21 +307,30 @@ export const SearchView: React.FC<SearchViewProps> = ({
                         <h4 className="font-semibold text-[13.5px] text-[#000000] dark:text-[#ffffff] font-mono truncate">
                           {fileName}
                         </h4>
-                        <div className="flex items-center gap-1.5 text-[11px] text-[#615d59] dark:text-[#9b9a97] font-mono mt-0.5">
+                        <div className="flex items-center gap-2 text-[11px] text-[#615d59] dark:text-[#9b9a97] font-mono mt-0.5 flex-wrap">
                           {item.file_size_bytes ? (
-                            <span>{formatBytes(item.file_size_bytes)} · </span>
+                            <span>{formatBytes(item.file_size_bytes)}</span>
                           ) : null}
-                          <span className="truncate max-w-md">{item.path}</span>
+                          {item.file_size_bytes && locationFolder && <span>·</span>}
+                          {locationFolder && (
+                            <span
+                              className="text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] transition font-mono inline-flex items-center gap-1 cursor-default"
+                              title={item.path}
+                            >
+                              <FolderOpen className="w-3 h-3 text-[#a39e98] shrink-0" />
+                              <span className="truncate max-w-[180px]">{locationFolder}</span>
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleCopyPath(item.path)}
                             className="p-0.5 hover:text-[#000000] dark:hover:text-[#ffffff] rounded transition cursor-pointer"
-                            title="Copy full file path"
+                            title={`Copy full path: ${item.path}`}
                           >
                             {isCopied ? (
                               <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             ) : (
-                              <Copy className="w-3 h-3" />
+                              <Copy className="w-3 h-3 text-[#a39e98]" />
                             )}
                           </button>
                           {isCopied && (
@@ -322,7 +341,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           <button
                             type="button"
                             onClick={(e) => handleOpenInExplorer(item.path, e)}
-                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-0.5 text-[10px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f0eee9] dark:hover:bg-[#333333] px-1"
+                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-1 text-[10.5px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f0eee9] dark:hover:bg-[#333333] px-1.5 py-0.5 rounded-md border border-[#e6e6e6] dark:border-[#383838]"
                             title="Open and reveal in Finder / File Explorer"
                           >
                             {openedPath === item.path ? (
@@ -579,17 +598,18 @@ export const SearchView: React.FC<SearchViewProps> = ({
 
                 {/* Right Column: Metadata & Extracted Text Inspector */}
                 <div className="md:col-span-5 flex flex-col space-y-3.5 min-h-0 overflow-y-auto pr-1">
-                  {/* File Path & Copy */}
+                  {/* File Location & Copy */}
                   <div className="bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] space-y-1.5 shrink-0">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97]">
-                        File Path
+                        Location
                       </span>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => handleCopyPath(previewItem.path)}
                           className="text-[11px] font-semibold text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] flex items-center gap-1 cursor-pointer"
+                          title="Copy full file path"
                         >
                           {copiedPath === previewItem.path ? (
                             <>
@@ -599,7 +619,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           ) : (
                             <>
                               <Copy className="w-3 h-3" />
-                              <span>Copy</span>
+                              <span>Copy Path</span>
                             </>
                           )}
                         </button>
@@ -614,8 +634,9 @@ export const SearchView: React.FC<SearchViewProps> = ({
                         </button>
                       </div>
                     </div>
-                    <p className="font-mono text-[11px] text-[#31302e] dark:text-[#d4d4d4] break-all leading-relaxed">
-                      {previewItem.path}
+                    <p className="font-mono text-[11px] text-[#31302e] dark:text-[#d4d4d4] truncate leading-relaxed flex items-center gap-1.5" title={previewItem.path}>
+                      <FolderOpen className="w-3.5 h-3.5 text-[#a39e98] shrink-0" />
+                      <span className="truncate">{formatCompactLocation(previewItem.path) || "Root"} / {previewItem.path.split("/").pop()}</span>
                     </p>
                   </div>
 
