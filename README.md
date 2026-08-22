@@ -26,7 +26,7 @@
 - [📦 Installation & Setup](#-installation--setup)
 - [🖥️ Running the Desktop App (Recommended for Users)](#️-running-the-desktop-app-recommended-for-users)
 - [🌐 Running the Web UI via CLI](#-running-the-web-ui-via-cli)
-- [🔨 Building Standalone Executable (.app / .exe)](#-building-standalone-executable-app--exe)
+- [🔨 Building & Packaging Standalone Apps (macOS & Windows)](#-building--packaging-standalone-apps-macos--windows)
 - [⌨️ Running via CLI](#️-running-via-cli)
 - [⚙️ Configuration (`config.yaml` & `.env`)](#️-configuration-configyaml--env)
 - [🎯 Interactive Modes & Workflows](#-interactive-modes--workflows)
@@ -180,20 +180,68 @@ Open your browser at **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
 
 ---
 
-## 🔨 Building Standalone Executable (.app / .dmg / .exe)
+## 🔨 Building & Packaging Standalone Apps (macOS & Windows)
 
-To package TidyFlow into a 1-click standalone executable for normal users who do not have Python or Node.js installed:
+TidyFlow can be packaged into a **1-click standalone desktop application** for distribution to end-users. The bundled executable contains the compiled React frontend, FastAPI backend server, and native OCR engines so users **do not need Python, Node.js, or any developer tools installed**.
+
+### Prerequisites (For Builders)
+* **Python 3.10+** (with project dependencies: `pip install -r requirements.txt`)
+* **Node.js 18+ & npm** (for Vite frontend compilation)
+* **macOS** (optional): Xcode Command Line Tools (`xcode-select --install`) to compile the native Apple Vision Swift OCR binary.
+* **Windows**: WebView2 runtime (pre-installed on modern Windows 10 and 11).
+
+---
+
+### 🍏 Building on macOS
+
+Run the automated 1-command build script:
 
 ```bash
-# Automated 1-command build (compiles React frontend + Swift OCR binary + bundles with PyInstaller + creates DMG)
 python3 scripts/build_desktop.py
+# or
+./scripts/build_desktop.sh
 ```
 
-* **macOS**:
-  - `dist/TidyFlow.dmg` (1-Click drag-and-drop installer for macOS users)
-  - `dist/TidyFlow.app` (macOS Application bundle)
-* **Windows**:
-  - `dist/TidyFlow.exe` (1-Click Windows standalone executable)
+#### What it does automatically:
+1. **Frontend**: Compiles the React SPA via Vite (`npm run build` ➔ `frontend/dist`).
+2. **Native OCR**: Compiles `src/native/macos_ocr.swift` using `swiftc` into a high-performance Apple Vision OCR binary (`bin/macos_ocr`).
+3. **App Bundle**: Packages the application into `dist/TidyFlow.app` with PyInstaller.
+4. **Installer**: Generates `dist/TidyFlow.dmg` containing a drag-and-drop installer with an `/Applications` shortcut.
+
+#### macOS Distribution Outputs:
+* 📦 **`dist/TidyFlow.dmg`** *(Recommended)*: Distribute this 1-click DMG installer to macOS users. Users double-click the DMG and drag **TidyFlow** into their **Applications** folder.
+* 📱 **`dist/TidyFlow.app`**: Direct application bundle that can be launched immediately (`open dist/TidyFlow.app`).
+
+---
+
+### 🪟 Building on Windows
+
+Run the build script in Command Prompt or PowerShell:
+
+```cmd
+python scripts\build_desktop.py
+:: or
+scripts\build_desktop.bat
+```
+
+#### What it does automatically:
+1. **Frontend**: Compiles the React SPA via Vite (`npm run build`).
+2. **OCR Engine**: Bundles the PaddleOCR fallback engine.
+3. **App Bundle**: Packages `TidyFlow.exe` with PyInstaller utilizing Microsoft Edge WebView2.
+
+#### Windows Distribution Outputs:
+* 💻 **`dist/TidyFlow.exe`** (or `dist/TidyFlow/` folder): Self-contained executable. Users simply double-click `TidyFlow.exe` to launch the app.
+
+---
+
+### ⚙️ How Packaging Works Under the Hood
+
+| Component | Technical Implementation |
+| :--- | :--- |
+| **PyInstaller Spec** | [`tidyflow.spec`](file:///Users/arpan/Tidyflow/tidyflow.spec) specifies bundle targets, static resource mapping, and metadata hooks for FastAPI, Uvicorn, and FastMCP. |
+| **Native Webview Window** | [`desktop.py`](file:///Users/arpan/Tidyflow/desktop.py) spawns FastAPI on an isolated background thread and opens a native Cocoa (macOS WebKit) or Windows (WebView2) desktop frame via `pywebview`. |
+| **Cross-Platform User Data** | User configuration (`config.yaml`), LLM API keys (`settings.json`), and SQLite databases (`tidyflow.db`) are saved in the OS application support directory (`~/Library/Application Support/TidyFlow` on macOS, `%APPDATA%\TidyFlow` on Windows) with secure user-only permissions (`0600`). |
+| **Native Folder Pickers** | macOS triggers native AppleScript `choose folder` dialogs without requiring accessibility entitlements; Windows invokes Win32 `FolderBrowserDialog`. |
 
 ---
 
