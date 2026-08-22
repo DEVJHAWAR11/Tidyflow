@@ -1,3 +1,5 @@
+import React from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircle2,
   FolderOpen,
@@ -34,8 +36,13 @@ export const ApplySuccessModal: React.FC<ApplySuccessModalProps> = ({
 
   const isCopy = action === "copy_to_organized";
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] bg-black/50 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="bg-[#ffffff] dark:bg-[#1e1e1e] border border-[#e6e6e6] dark:border-[#333333] rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl space-y-6 relative overflow-hidden text-center">
         {/* Ambient celebration glow */}
         <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-b from-[#1aae39]/25 to-transparent rounded-full blur-3xl pointer-events-none" />
@@ -118,6 +125,7 @@ export const ApplySuccessModal: React.FC<ApplySuccessModalProps> = ({
           <span>Full audit report generated at {outputDir}/audit_report.json</span>
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

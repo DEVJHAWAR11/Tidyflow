@@ -5,6 +5,7 @@ import {
   PRESET_PACKS,
   DEFAULT_STANDARD_CATEGORIES,
 } from "../utils/presetCategories";
+import { saveCategorySnapshot } from "../utils/categoryHistory";
 import {
   Plus,
   Trash2,
@@ -69,6 +70,17 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
       extensions: extList,
     });
 
+    saveCategorySnapshot(`Created Folder: ${trimmed}`, "manual_edit", {
+      ...categories,
+      [trimmed]: {
+        name: trimmed,
+        description: catDesc.trim() || trimmed,
+        keywords: kwList,
+        extensions: extList,
+        active: true,
+      },
+    });
+
     setIsAdding(false);
     setCatName("");
     setCatDesc("");
@@ -79,6 +91,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
   const handleApplyPreset = async (presetId: string, presetCats: Record<string, CategoryItem>) => {
     if (onLoadPreset) {
       await onLoadPreset(presetCats);
+      saveCategorySnapshot(`${presetId.toUpperCase()} Preset Pack`, "preset", presetCats);
       setJustLoadedPreset(presetId);
       setTimeout(() => setJustLoadedPreset(null), 2500);
     }

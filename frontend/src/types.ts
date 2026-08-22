@@ -76,6 +76,17 @@ export interface ChatMessage {
   complexityLevel?: ComplexityLevel;
 }
 
+export interface CategorySnapshot {
+  id: string;
+  timestamp: number;
+  label: string;
+  trigger: "tier_switch" | "ai_synthesis" | "preset" | "manual_edit" | "ai_edit" | "restore" | "init";
+  complexity_level?: ComplexityLevel;
+  categories: Record<string, CategoryItem>;
+  categoryCount: number;
+  folderNames: string[];
+}
+
 export type ComplexityLevel = "low" | "medium" | "high";
 export type TabType = "welcome" | "select_folder" | "organize" | "categories" | "review" | "search" | "settings";
 export type BackendStatus = "running" | "offline" | "checking";

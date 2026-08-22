@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { API_BASE } from "../config";
 import {
   Folder,
@@ -201,8 +202,13 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="bg-[#ffffff] dark:bg-[#1e1e1e] w-full max-w-2xl rounded-2xl border border-[#e6e6e6] dark:border-[#333333] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
         {/* Header */}
         <div className="p-4 px-6 border-b border-[#e6e6e6] dark:border-[#2d2d2d] flex items-center justify-between bg-[#fafafa] dark:bg-[#252525]">
@@ -485,6 +491,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

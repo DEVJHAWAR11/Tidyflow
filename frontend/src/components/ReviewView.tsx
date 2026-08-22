@@ -1,11 +1,19 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { ClassifiedFile, RunSummary, CategoryItem, ComplexityLevel } from "../types";
+import { ClassifiedFile, RunSummary, CategoryItem, ComplexityLevel, CategorySnapshot } from "../types";
 import { API_BASE } from "../config";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
+import {
+  loadCategorySnapshots,
+  saveCategorySnapshot,
+  deleteCategorySnapshot,
+  clearCategoryHistory,
+} from "../utils/categoryHistory";
 import { QuickTriageModal } from "./QuickTriageModal";
 import { WorkflowStepper } from "./WorkflowStepper";
 import { ApplySuccessModal } from "./ApplySuccessModal";
+import { TierChangeConfirmModal } from "./TierChangeConfirmModal";
+import { CategoryHistoryModal } from "./CategoryHistoryModal";
 import {
   Search,
   CheckCircle2,
@@ -24,6 +32,7 @@ import {
   LayoutGrid,
   Layers,
   Plus,
+  History,
 } from "lucide-react";
 
 interface ReviewViewProps {
@@ -96,6 +105,114 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     category_overrides: Record<string, string>;
   } | null>(null);
   const [openedPath, setOpenedPath] = useState<string | null>(null);
+
+  // History & Tier Confirmation state
+  const [snapshots, setSnapshots] = useState<CategorySnapshot[]>(() => loadCategorySnapshots());
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isTierConfirmOpen, setIsTierConfirmOpen] = useState(false);
+  const [pendingTier, setPendingTier] = useState<ComplexityLevel>("medium");
+  const [proposedCategories, setProposedCategories] = useState<Record<string, CategoryItem>>({});
+  const [isLoadingProposal, setIsLoadingProposal] = useState(false);
+
+  // Keep snapshots fresh from storage
+  useEffect(() => {
+    setSnapshots(loadCategorySnapshots());
+  }, [files, complexityLevel]);
+
+  const handleTierSelect = async (tier: ComplexityLevel) => {
+    if (tier === complexityLevel) return;
+    setPendingTier(tier);
+    setIsTierConfirmOpen(true);
+    setIsLoadingProposal(true);
+    setProposedCategories({});
+
+    try {
+      const payload = {
+        message: `Analyze directory files and generate custom ${tier} category taxonomy`,
+        history: [],
+        input_dir: inputFolder || undefined,
+        current_categories: undefined,
+        complexity_level: tier,
+        auto_discover: true,
+      };
+      const res = await fetch(`${API_BASE}/ai/chat-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.categories) {
+          const parsedCats: Record<string, CategoryItem> = {};
+          Object.entries(data.categories).forEach(([name, c]: [string, any]) => {
+            parsedCats[name] = {
+              name: c.name || name,
+              description: c.description || "",
+              keywords: c.keywords || [],
+              extensions: c.extensions || [],
+              active: c.active !== false,
+            };
+          });
+          setProposedCategories(parsedCats);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to prefetch proposed categories for review:", err);
+    } finally {
+      setIsLoadingProposal(false);
+    }
+  };
+
+  const handleConfirmTierChange = () => {
+    if (setComplexityLevel) setComplexityLevel(pendingTier);
+    if (Object.keys(proposedCategories).length > 0 && setCategories) {
+      setCategories(proposedCategories);
+      const updatedSnaps = saveCategorySnapshot(
+        `${pendingTier.charAt(0).toUpperCase() + pendingTier.slice(1)} Tier Re-Classification`,
+        "tier_switch",
+        proposedCategories,
+        pendingTier
+      );
+      setSnapshots(updatedSnaps);
+      fetch(`${API_BASE}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: proposedCategories }),
+      }).catch((e) => console.warn("Failed to persist categories:", e));
+    }
+    if (onReclassifyWithTier) {
+      onReclassifyWithTier(pendingTier);
+    }
+    setIsTierConfirmOpen(false);
+  };
+
+  const handleRestoreSnapshot = (snap: CategorySnapshot) => {
+    if (setCategories) {
+      setCategories(snap.categories);
+    }
+    if (setComplexityLevel && snap.complexity_level) {
+      setComplexityLevel(snap.complexity_level);
+    }
+    fetch(`${API_BASE}/categories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categories: snap.categories }),
+    }).catch((e) => console.warn("Failed to persist restored snapshot:", e));
+
+    if (onReclassifyWithTier) {
+      onReclassifyWithTier(snap.complexity_level || "medium");
+    }
+  };
+
+  const handleDeleteSnapshot = (id: string) => {
+    const next = deleteCategorySnapshot(id);
+    setSnapshots(next);
+  };
+
+  const handleClearHistory = () => {
+    clearCategoryHistory();
+    setSnapshots([]);
+  };
 
   // Filename editing state
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
@@ -529,10 +646,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               return (
                 <button
                   key={id}
-                  onClick={() => {
-                    if (setComplexityLevel) setComplexityLevel(id as ComplexityLevel);
-                    if (onReclassifyWithTier) onReclassifyWithTier(id as ComplexityLevel);
-                  }}
+                  onClick={() => handleTierSelect(id as ComplexityLevel)}
                   disabled={isReclassifying}
                   className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all cursor-pointer flex items-center gap-1.5 select-none ${
                     isSelected
@@ -781,6 +895,15 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <span>Reset Categories ({Object.keys(categoryOverrides).length})</span>
             </button>
           )}
+
+          <button
+            onClick={() => setIsHistoryOpen(true)}
+            title="View category version history & restore previous snapshots"
+            className="px-2.5 py-1 text-[12px] font-medium bg-[#f6f5f4] dark:bg-[#282828] hover:bg-[#eae8e5] dark:hover:bg-[#333333] text-[#1d1d1f] dark:text-[#f5f5f7] rounded-md border border-[#e6e6e6] dark:border-[#383838] transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+          >
+            <History className="w-3.5 h-3.5 text-[#0075de] dark:text-[#38bdf8]" />
+            <span>History ({snapshots.length})</span>
+          </button>
 
           <button
             onClick={selectAllFiltered}
@@ -1228,7 +1351,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-[99999] flex items-center justify-center p-4"
+            className="fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm z-[99999] flex items-center justify-center p-4 animate-fade-in"
             onClick={() => setPreviewFile(null)}
           >
             <div
@@ -1243,8 +1366,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                       {previewFile.filename}
                     </h3>
                     <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97]">
-                      {formatBytes(previewFile.file_size_bytes)} · Predicted Category:{" "}
+                      {formatBytes(previewFile.file_size_bytes)} · Category:{" "}
                       <strong>{categoryOverrides[previewFile.file_id] || previewFile.category}</strong>
+                      {previewFile.confidence !== undefined && ` (${Math.round(previewFile.confidence * 100)}% confidence)`}
                     </p>
                   </div>
                 </div>
@@ -1257,16 +1381,18 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               </div>
 
               <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-                <div>
-                  <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
-                    Classification Summary
-                  </h4>
-                  <p className="text-[13px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
-                    {previewFile.reason || "Matched by keyword and file extension rules."}
-                  </p>
-                </div>
+                {previewFile.reason && (
+                  <div>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
+                      Classification Summary
+                    </h4>
+                    <p className="text-[13px] text-[#000000] dark:text-[#ffffff] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e]">
+                      {previewFile.reason}
+                    </p>
+                  </div>
+                )}
 
-                {previewFile.extracted_text && (
+                {previewFile.extracted_text ? (
                   <div>
                     <h4 className="text-[11px] font-semibold uppercase tracking-eyebrow text-[#615d59] dark:text-[#9b9a97] mb-1">
                       Extracted Text & OCR Content
@@ -1274,6 +1400,10 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                     <pre className="text-[12px] font-mono text-[#31302e] dark:text-[#d4d4d4] bg-[#f6f5f4] dark:bg-[#191919] p-3 rounded-lg border border-[#e6e6e6] dark:border-[#2e2e2e] whitespace-pre-wrap max-h-60 overflow-y-auto">
                       {previewFile.extracted_text}
                     </pre>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center p-6 text-[#615d59] dark:text-[#9b9a97] text-[13px]">
+                    No extracted text snippet available for this file.
                   </div>
                 )}
               </div>
@@ -1304,7 +1434,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 bg-[#000000]/60 backdrop-blur-xs z-[99999] flex items-center justify-center p-4"
+            className="fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm z-[99999] flex items-center justify-center p-4 animate-fade-in"
             onClick={() => setApplyResultModal(null)}
           >
             <div
@@ -1358,7 +1488,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 bg-[#000000]/70 backdrop-blur-md z-[99999] flex items-center justify-center p-4"
+            className="fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm z-[99999] flex items-center justify-center p-4 animate-fade-in"
             onClick={() => setClusterModalData(null)}
           >
             <div
@@ -1463,6 +1593,36 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           }}
         />
       )}
+
+      {/* Tier Switch Confirmation Modal */}
+      {complexityLevel && (
+        <TierChangeConfirmModal
+          isOpen={isTierConfirmOpen}
+          currentTier={complexityLevel}
+          targetTier={pendingTier}
+          currentCategories={categories}
+          proposedCategories={proposedCategories}
+          isLoadingProposal={isLoadingProposal}
+          fileCount={files.length}
+          onClose={() => {
+            setIsTierConfirmOpen(false);
+            setProposedCategories({});
+          }}
+          onConfirm={handleConfirmTierChange}
+          context="review"
+        />
+      )}
+
+      {/* Category Version History Modal */}
+      <CategoryHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        snapshots={snapshots}
+        currentCategories={categories}
+        onRestoreSnapshot={handleRestoreSnapshot}
+        onDeleteSnapshot={handleDeleteSnapshot}
+        onClearHistory={handleClearHistory}
+      />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { RotateCcw, X } from "lucide-react";
 
 interface ResetWorkspaceModalProps {
@@ -20,8 +21,13 @@ export const ResetWorkspaceModal: React.FC<ResetWorkspaceModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fade-in">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="bg-[#ffffff] dark:bg-[#1c1c1e] rounded-2xl border border-[#e5e5e7] dark:border-[#2c2c2e] shadow-xl max-w-md w-full p-6 space-y-5 animate-scale-in">
         {/* Modal Header */}
         <div className="flex items-start justify-between gap-3">
@@ -92,6 +98,7 @@ export const ResetWorkspaceModal: React.FC<ResetWorkspaceModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
