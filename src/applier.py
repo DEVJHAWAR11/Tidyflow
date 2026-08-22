@@ -142,6 +142,21 @@ def apply_decisions(
             else:
                 logger.info("Copied %s -> %s [OK]", rec.filename, dest_path)
 
+            if db is not None:
+                try:
+                    import sqlite3
+                    db_path = getattr(db, "db_path", "data/tidyflow.db")
+                    conn = sqlite3.connect(db_path)
+                    status_str = "moved" if move_mode else "copied"
+                    conn.execute(
+                        "UPDATE files SET category = ?, new_path = ?, status = ?, suggested_filename = ?, last_updated = CURRENT_TIMESTAMP WHERE path = ?",
+                        (category, str(dest_path), status_str, filename, str(rec.abs_path))
+                    )
+                    conn.commit()
+                    conn.close()
+                except Exception as db_err:
+                    logger.warning("Failed to update DB for %s: %s", rec.filename, db_err)
+
         manifest_entry = CopyManifestEntry(
             original_path=rec.abs_path,
             destination_path=dest_path,

@@ -347,15 +347,15 @@ class DatabaseManager:
                                thumbnail_b64, file_size_bytes, extension, suggested_filename, reason,
                                '' as snippet
                         FROM files
-                        WHERE path LIKE ? OR category LIKE ? OR extracted_text LIKE ?
+                        WHERE path LIKE ? OR new_path LIKE ? OR category LIKE ? OR suggested_filename LIKE ? OR extracted_text LIKE ?
                         ORDER BY id DESC
                         LIMIT 30
                     """
-                    cursor.execute(sql_like, (like_param, like_param, like_param))
+                    cursor.execute(sql_like, (like_param, like_param, like_param, like_param, like_param))
                     rows = cursor.fetchall()
                     for row in rows:
                         d = dict(row)
-                        src_text = d.get("extracted_text") or d.get("path") or ""
+                        src_text = d.get("extracted_text") or d.get("category") or d.get("new_path") or d.get("path") or ""
                         d["snippet"] = _make_like_snippet(src_text, clean_query)
                         results.append(d)
 
