@@ -9,19 +9,19 @@ from src.ai_assistant import (
 )
 
 
-def test_fallback_heuristic_academic():
-    res = _fallback_heuristic_structure("I am a student at university. Organize my homework, lecture notes and research papers.")
+def test_fallback_heuristic_media():
+    res = _fallback_heuristic_structure("Sort my media, photo snapshots, video recordings and design assets.")
     assert "categories" in res
     assert res["is_ready"] is True
-    assert any("Lecture_Notes" in k or "Assignments" in k for k in res["categories"].keys())
+    assert any("Photos" in k or "Media" in k or "Recordings" in k for k in res["categories"].keys())
     assert len(res["categories"]) >= 2
 
 
-def test_fallback_heuristic_freelance():
-    res = _fallback_heuristic_structure("Freelance work: sort client invoices, contracts and final deliverables.")
+def test_fallback_heuristic_documents():
+    res = _fallback_heuristic_structure("General workspace: sort reports, documents, and spreadsheets.")
     assert "categories" in res
     assert res["is_ready"] is True
-    assert any("Client_Work" in k or "Invoices" in k for k in res["categories"].keys())
+    assert any("Documents" in k for k in res["categories"].keys())
 
 
 def test_fallback_heuristic_developer():
@@ -144,3 +144,14 @@ def test_chat_generate_structure_auto_discover():
     assert "categories" in res
     assert res["is_ready"] is True
     assert len(res["categories"]) > 0
+
+
+def test_complexity_tiers_three_levels():
+    from src.ai_assistant import _get_complexity_guidelines
+    low_guide = _get_complexity_guidelines("low")
+    assert "SIMPLE" in low_guide or "FLAT" in low_guide
+    med_guide = _get_complexity_guidelines("medium")
+    assert "BALANCED" in med_guide
+    high_guide = _get_complexity_guidelines("high")
+    assert "DETAILED" in high_guide
+

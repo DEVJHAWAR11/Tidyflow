@@ -28,28 +28,21 @@ def _get_complexity_guidelines(complexity_level: str = "medium") -> str:
     level = (complexity_level or "medium").lower().strip()
     if level == "low":
         return """\
-CLASSIFICATION COMPLEXITY LEVEL: BROAD (LOW)
-- Target: 3 to 4 broad, clean top-level categories only (e.g., "Documents", "Media", "Work_Files", "Archives").
-- Nesting: FLAT STRUCTURE ONLY. Do NOT use subfolders (no "/" in category names).
+CLASSIFICATION COMPLEXITY LEVEL: SIMPLE (BROAD)
+- Structure: FLAT STRUCTURE ONLY. Do NOT use subfolders (no "/" in category names).
+- Organization: Broad, clean top-level categories (e.g., "Documents", "Media", "Development", "Archives").
 - Goal: Rapid, clean decluttering with minimal mental overhead."""
-    elif level == "high":
+    elif level in ("high", "complex"):
         return """\
-CLASSIFICATION COMPLEXITY LEVEL: GRANULAR (HIGH)
-- Target: 8 to 12 specific, detailed categories.
-- Nesting: Use 1-2 levels of subfolders (e.g., "Finance/Invoices_2026", "Finance/Receipts", "Academic/Lecture_Notes", "Academic/Assignments", "Code/Python_Scripts", "Media/Screenshots").
-- Keywords & Extensions: Provide 6 to 10 precise keywords and targeted file extensions for each category."""
-    elif level == "complex":
-        return """\
-CLASSIFICATION COMPLEXITY LEVEL: DEEP & HIERARCHICAL (COMPLEX)
-- Target: 10 to 16 deeply tailored, multi-level hierarchical categories (2-3 levels deep, e.g. "Work/Client_Projects/Alpha_Deliverables", "Finance/Taxes/FY2026/Invoices", "Development/Backend/Configs", "Personal/Medical_Records").
-- Date & Project Detection: Include date-aware or project-aware folder hierarchies where relevant.
-- Behavioral Rules: Formulate rich "custom_instructions" specifying file renaming patterns, date-prefixing rules, and OCR-based routing."""
+CLASSIFICATION COMPLEXITY LEVEL: DETAILED (DEEP HIERARCHY)
+- Structure: Multi-level hierarchical categories (1-2 levels of subfolders, e.g., "Documents/Reports", "Documents/Notes", "Media/Photos", "Media/Screenshots", "Development/Source_Code", "Development/Data").
+- Date & Project Detection: Include date-aware or project-aware folder hierarchies where relevant based on actual files.
+- Keywords & Extensions: Provide precise keywords and targeted file extensions for each category."""
     else:  # medium / balanced (default)
         return """\
-CLASSIFICATION COMPLEXITY LEVEL: BALANCED (MEDIUM)
-- Target: 5 to 7 well-structured functional categories (e.g. "Work/Client_Reports", "Finance/Invoices", "Development/Source_Code", "Media/Images", "Personal/Notes").
-- Nesting: 1 level of clean subfolders where logical (use "/" if needed).
-- Keywords & Extensions: 4 to 8 distinct keywords and matching extensions per category."""
+CLASSIFICATION COMPLEXITY LEVEL: BALANCED (STANDARD)
+- Structure: Well-structured functional categories with 1 level of clean subfolders where logical (e.g., "Documents/General", "Media/Images", "Development/Code", "Archives").
+- Keywords & Extensions: Distinct keywords and matching extensions per category."""
 
 
 def _build_structure_chat_system_prompt(complexity_level: str = "medium") -> str:
@@ -929,127 +922,239 @@ def _cluster_sample_filenames_heuristically(filenames: list[str], complexity: st
 
 
 def _generate_thematic_categories(msg_lower: str, complexity: str) -> dict[str, dict[str, Any]]:
-    """Generate default thematic categories when no filenames are provided."""
-    if any(w in msg_lower for w in ["student", "academic", "university", "college", "lecture", "homework", "study"]):
+    """Generate default objective categories when no filenames are provided."""
+    # Development / Code focused request
+    if any(w in msg_lower for w in ["developer", "code", "programming", "script", "software", "source"]):
         if complexity == "low":
             return {
-                "Course_Notes": {
-                    "name": "Course_Notes",
-                    "description": "Lecture slides, class notes, and summaries",
-                    "keywords": ["lecture", "notes", "chapter", "slide"],
-                    "extensions": [".pdf", ".pptx", ".docx"],
+                "Source_Code": {
+                    "name": "Source_Code",
+                    "description": "Source code files and scripts",
+                    "keywords": ["code", "script", "python", "js", "ts", "cpp"],
+                    "extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".rs", ".go"],
                     "active": True,
                 },
-                "Assignments": {
-                    "name": "Assignments",
-                    "description": "Homework, problem sets, and lab reports",
-                    "keywords": ["assignment", "homework", "lab", "report"],
-                    "extensions": [".pdf", ".docx", ".py", ".zip"],
+                "Data_and_Configs": {
+                    "name": "Data_and_Configs",
+                    "description": "Configuration files, databases, and datasets",
+                    "keywords": ["data", "json", "yaml", "config", "sql", "database"],
+                    "extensions": [".json", ".yaml", ".yml", ".sql", ".db", ".sqlite"],
                     "active": True,
                 },
-                "Study_Material": {
-                    "name": "Study_Material",
-                    "description": "Textbooks, papers, and exam prep",
-                    "keywords": ["paper", "book", "exam", "syllabus"],
-                    "extensions": [".pdf"],
+                "Documentation": {
+                    "name": "Documentation",
+                    "description": "Technical notes, guides, and specifications",
+                    "keywords": ["readme", "api", "docs", "guide", "notes"],
+                    "extensions": [".md", ".txt", ".pdf"],
                     "active": True,
                 },
             }
         else:
             return {
-                "Academic/Lecture_Notes": {
-                    "name": "Academic/Lecture_Notes",
-                    "description": "Lecture slides, class notes, and summaries",
-                    "keywords": ["lecture", "notes", "chapter", "slide", "class", "syllabus"],
-                    "extensions": [".pdf", ".pptx", ".docx", ".md", ".txt"],
+                "Development/Source_Code": {
+                    "name": "Development/Source_Code",
+                    "description": "Application source code, scripts, and modules",
+                    "keywords": ["import", "function", "class", "def", "const", "export"],
+                    "extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".rs", ".go", ".cpp", ".c"],
                     "active": True,
                 },
-                "Academic/Assignments": {
-                    "name": "Academic/Assignments",
-                    "description": "Homework, problem sets, and essays",
-                    "keywords": ["assignment", "homework", "lab", "essay", "report", "submission"],
-                    "extensions": [".pdf", ".docx", ".py", ".zip"],
+                "Development/Data_and_Configs": {
+                    "name": "Development/Data_and_Configs",
+                    "description": "Database exports, schema files, JSON/YAML datasets",
+                    "keywords": ["json", "yaml", "schema", "database", "dump", "export", "config"],
+                    "extensions": [".json", ".yaml", ".yml", ".xml", ".sql", ".db", ".sqlite"],
                     "active": True,
                 },
-                "Academic/Research_Papers": {
-                    "name": "Academic/Research_Papers",
-                    "description": "Academic papers, journal articles, and reading material",
-                    "keywords": ["paper", "journal", "doi", "abstract", "ieee", "arxiv"],
-                    "extensions": [".pdf"],
+                "Development/Documentation": {
+                    "name": "Development/Documentation",
+                    "description": "API specifications, architecture guides, and Markdown notes",
+                    "keywords": ["readme", "api", "architecture", "specification", "guide", "documentation"],
+                    "extensions": [".md", ".txt", ".pdf"],
                     "active": True,
                 },
-                "Academic/Projects_and_Code": {
-                    "name": "Academic/Projects_and_Code",
-                    "description": "Course code repositories, scripts, and project datasets",
-                    "keywords": ["project", "code", "dataset", "jupyter", "ipynb"],
-                    "extensions": [".py", ".ipynb", ".zip", ".csv"],
+                "Cold_Storage/Archives": {
+                    "name": "Cold_Storage/Archives",
+                    "description": "Compressed source bundles and release packages",
+                    "keywords": ["archive", "backup", "tar", "zip", "dist", "release"],
+                    "extensions": [".zip", ".tar", ".gz", ".tar.gz", ".7z", ".rar"],
                     "active": True,
                 },
             }
 
-    if any(w in msg_lower for w in ["freelance", "client", "contract", "agency", "consulting"]):
+    # Media / Photos focused request
+    if any(w in msg_lower for w in ["photo", "image", "media", "video", "audio", "recording", "design"]):
+        if complexity == "low":
+            return {
+                "Photos": {
+                    "name": "Photos",
+                    "description": "Images, photos, and camera shots",
+                    "keywords": ["photo", "picture", "camera", "image"],
+                    "extensions": [".jpg", ".jpeg", ".png", ".heic", ".raw", ".tiff"],
+                    "active": True,
+                },
+                "Recordings": {
+                    "name": "Recordings",
+                    "description": "Video clips, screen recordings, and audio tracks",
+                    "keywords": ["video", "audio", "recording", "screen recording", "podcast"],
+                    "extensions": [".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a"],
+                    "active": True,
+                },
+                "Design_Assets": {
+                    "name": "Design_Assets",
+                    "description": "Vector icons, illustrations, and design files",
+                    "keywords": ["icon", "logo", "vector", "asset", "design"],
+                    "extensions": [".svg", ".ai", ".psd", ".fig"],
+                    "active": True,
+                },
+            }
+        else:
+            return {
+                "Media/Photos": {
+                    "name": "Media/Photos",
+                    "description": "Photography, high-resolution camera captures, and image shots",
+                    "keywords": ["photo", "picture", "camera", "portrait", "landscape"],
+                    "extensions": [".jpg", ".jpeg", ".png", ".heic", ".raw", ".tiff"],
+                    "active": True,
+                },
+                "Media/Design_Assets": {
+                    "name": "Media/Design_Assets",
+                    "description": "Vector graphics, SVG icons, Figma/PSD files, and illustrations",
+                    "keywords": ["icon", "logo", "vector", "illustration", "asset", "design"],
+                    "extensions": [".svg", ".ai", ".psd", ".eps", ".fig"],
+                    "active": True,
+                },
+                "Media/Recordings": {
+                    "name": "Media/Recordings",
+                    "description": "Screen recordings, video captures, demos, and clips",
+                    "keywords": ["screen recording", "screencast", "recording", "video", "capture"],
+                    "extensions": [".mp4", ".mov", ".mkv", ".webm", ".avi"],
+                    "active": True,
+                },
+                "Media/Audio": {
+                    "name": "Media/Audio",
+                    "description": "Voice memos, podcasts, audio tracks, and sound effects",
+                    "keywords": ["audio", "recording", "podcast", "soundtrack", "music"],
+                    "extensions": [".mp3", ".wav", ".flac", ".m4a", ".aac"],
+                    "active": True,
+                },
+            }
+
+    # Standard general taxonomy by complexity
+    if complexity == "low":
         return {
-            "Client_Work/Contracts_and_NDAs": {
-                "name": "Client_Work/Contracts_and_NDAs",
-                "description": "Client agreements, NDAs, statements of work",
-                "keywords": ["contract", "agreement", "nda", "sow", "proposal", "terms"],
-                "extensions": [".pdf", ".docx"],
+            "Documents": {
+                "name": "Documents",
+                "description": "General text files, PDFs, reports, and spreadsheets",
+                "keywords": ["document", "pdf", "report", "notes", "file"],
+                "extensions": [".pdf", ".docx", ".xlsx", ".txt", ".md"],
                 "active": True,
             },
-            "Client_Work/Invoices_and_Billing": {
-                "name": "Client_Work/Invoices_and_Billing",
-                "description": "Invoices, payment receipts, and estimates",
-                "keywords": ["invoice", "bill", "payment", "estimate", "due", "receipt"],
-                "extensions": [".pdf", ".xlsx", ".csv"],
+            "Media": {
+                "name": "Media",
+                "description": "Photos, illustrations, videos, and audio recordings",
+                "keywords": ["photo", "image", "screenshot", "video", "audio"],
+                "extensions": [".png", ".jpg", ".jpeg", ".mp4", ".mp3", ".heic"],
                 "active": True,
             },
-            "Client_Work/Deliverables": {
-                "name": "Client_Work/Deliverables",
-                "description": "Client project files, assets, and reports",
-                "keywords": ["deliverable", "final", "draft", "asset", "design", "presentation"],
-                "extensions": [".pdf", ".png", ".jpg", ".zip", ".pptx"],
+            "Development": {
+                "name": "Development",
+                "description": "Source code scripts, datasets, and configs",
+                "keywords": ["code", "script", "data", "json", "config"],
+                "extensions": [".py", ".js", ".ts", ".json", ".sql", ".sh"],
+                "active": True,
+            },
+            "Archives": {
+                "name": "Archives",
+                "description": "Zip files, installers, and compressed packages",
+                "keywords": ["zip", "archive", "installer", "backup"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg", ".pkg"],
                 "active": True,
             },
         }
-
-    # Standard default
-    return {
-        "Documents/General": {
-            "name": "Documents/General",
-            "description": "General text, PDFs, and Office documents",
-            "keywords": ["document", "report", "notes"],
-            "extensions": [".pdf", ".docx", ".txt"],
-            "active": True,
-        },
-        "Media/Images": {
-            "name": "Media/Images",
-            "description": "Photos, illustrations, and graphic assets",
-            "keywords": ["photo", "image", "screenshot"],
-            "extensions": [".png", ".jpg", ".jpeg", ".heic"],
-            "active": True,
-        },
-        "Finance/Receipts_and_Bills": {
-            "name": "Finance/Receipts_and_Bills",
-            "description": "Invoices, payment receipts, and financial statements",
-            "keywords": ["receipt", "invoice", "statement", "total"],
-            "extensions": [".pdf", ".csv", ".xlsx"],
-            "active": True,
-        },
-        "Development/Code": {
-            "name": "Development/Code",
-            "description": "Scripts, datasets, and programming files",
-            "keywords": ["code", "script", "json", "python"],
-            "extensions": [".py", ".js", ".ts", ".json"],
-            "active": True,
-        },
-        "Archives": {
-            "name": "Archives",
-            "description": "Zip files, installers, and compressed packages",
-            "keywords": ["zip", "tar", "archive", "installer"],
-            "extensions": [".zip", ".tar", ".gz", ".dmg"],
-            "active": True,
-        },
-    }
+    elif complexity in ("high", "complex"):
+        return {
+            "Documents/Reports_and_Notes": {
+                "name": "Documents/Reports_and_Notes",
+                "description": "Text documents, research reports, and notes",
+                "keywords": ["report", "document", "notes", "summary", "memo"],
+                "extensions": [".pdf", ".docx", ".txt", ".md"],
+                "active": True,
+            },
+            "Documents/Spreadsheets": {
+                "name": "Documents/Spreadsheets",
+                "description": "Data tables, financial models, and tracking sheets",
+                "keywords": ["spreadsheet", "budget", "forecast", "tracking", "data"],
+                "extensions": [".xlsx", ".xls", ".csv", ".tsv"],
+                "active": True,
+            },
+            "Media/Photos": {
+                "name": "Media/Photos",
+                "description": "Photography, camera captures, and image shots",
+                "keywords": ["photo", "picture", "camera", "portrait", "landscape"],
+                "extensions": [".jpg", ".jpeg", ".png", ".heic", ".raw"],
+                "active": True,
+            },
+            "Media/Screenshots": {
+                "name": "Media/Screenshots",
+                "description": "Screen captures and quick recordings",
+                "keywords": ["screenshot", "screen shot", "capture", "snip"],
+                "extensions": [".png", ".jpg", ".webp"],
+                "active": True,
+            },
+            "Development/Source_Code": {
+                "name": "Development/Source_Code",
+                "description": "Source code files, scripts, and modules",
+                "keywords": ["import", "function", "class", "def", "const"],
+                "extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"],
+                "active": True,
+            },
+            "Development/Data_and_Configs": {
+                "name": "Development/Data_and_Configs",
+                "description": "Configuration files, schemas, and dataset exports",
+                "keywords": ["json", "yaml", "config", "schema", "database", "sql"],
+                "extensions": [".json", ".yaml", ".yml", ".sql", ".csv"],
+                "active": True,
+            },
+            "Archives_and_Installers": {
+                "name": "Archives_and_Installers",
+                "description": "Compressed archives, packages, and installer images",
+                "keywords": ["archive", "backup", "installer", "setup", "zip"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg", ".pkg"],
+                "active": True,
+            },
+        }
+    else:
+        # Medium / Balanced (default)
+        return {
+            "Documents/General": {
+                "name": "Documents/General",
+                "description": "General text, PDFs, and Office documents",
+                "keywords": ["document", "report", "notes"],
+                "extensions": [".pdf", ".docx", ".txt"],
+                "active": True,
+            },
+            "Media/Images": {
+                "name": "Media/Images",
+                "description": "Photos, illustrations, and graphic assets",
+                "keywords": ["photo", "image", "screenshot"],
+                "extensions": [".png", ".jpg", ".jpeg", ".heic"],
+                "active": True,
+            },
+            "Development/Code": {
+                "name": "Development/Code",
+                "description": "Scripts, datasets, and programming files",
+                "keywords": ["code", "script", "json", "python"],
+                "extensions": [".py", ".js", ".ts", ".json"],
+                "active": True,
+            },
+            "Archives": {
+                "name": "Archives",
+                "description": "Zip files, installers, and compressed packages",
+                "keywords": ["zip", "tar", "archive", "installer"],
+                "extensions": [".zip", ".tar", ".gz", ".dmg"],
+                "active": True,
+            },
+        }
 
 
 def _fallback_heuristic_review_command(

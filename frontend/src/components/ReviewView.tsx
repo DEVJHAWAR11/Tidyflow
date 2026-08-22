@@ -275,15 +275,16 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       });
     }
 
-    // If custom category was entered, register it globally
-    if (setCategories && category && !categories[category] && category !== "_Unsorted_Archive") {
+    // If custom category was entered, register it globally and persist
+    if (setCategories && category && category !== "_Unsorted_Archive") {
       setCategories((prev) => {
+        if (prev[category]) return prev;
         const updated = {
           ...prev,
           [category]: {
             name: category,
             description: "Custom user-assigned triage category",
-            keywords: [],
+            keywords: [category.toLowerCase()],
             extensions: [],
             active: true,
           },

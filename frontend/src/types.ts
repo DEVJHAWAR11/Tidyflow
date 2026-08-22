@@ -76,6 +76,6 @@ export interface ChatMessage {
   complexityLevel?: ComplexityLevel;
 }
 
-export type ComplexityLevel = "low" | "medium" | "high" | "complex";
+export type ComplexityLevel = "low" | "medium" | "high";
 export type TabType = "welcome" | "select_folder" | "organize" | "categories" | "review" | "search" | "settings";
 export type BackendStatus = "running" | "offline" | "checking";
