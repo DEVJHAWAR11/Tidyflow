@@ -30,3 +30,13 @@ async def test_api_post_rules():
         res = await client.post("/rules", json={"rules": [{"category": "Finance/Invoices", "contains": "invoice"}]})
         assert res.status_code == 200
         assert "successfully" in res.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_api_cancel_pipeline():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.post("/pipeline/cancel")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] in ("cancelling", "idle")

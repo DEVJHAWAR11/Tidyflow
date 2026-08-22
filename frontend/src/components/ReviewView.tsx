@@ -166,11 +166,14 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     }
   };
 
-  // Unrecognized or low confidence files queue
+  // Unrecognized or low confidence files queue (only files that still need review/categorization)
   const unrecognizedFiles = useMemo(() => {
     return files.filter((f) => {
       const activeCat = categoryOverrides[f.file_id] || f.category;
-      return activeCat === "Unknown" || f.confidence < autoThreshold;
+      if (activeCat === "Unknown") return true;
+      // If user or AI explicitly assigned a valid category (via clustering or dropdown), it is resolved
+      if (categoryOverrides[f.file_id]) return false;
+      return f.confidence < autoThreshold;
     });
   }, [files, categoryOverrides, autoThreshold]);
 
@@ -296,9 +299,13 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const filteredFiles = useMemo(() => {
     return files.filter((f) => {
       const activeCat = categoryOverrides[f.file_id] || f.category;
+      const isResolved = Boolean(categoryOverrides[f.file_id] && categoryOverrides[f.file_id] !== "Unknown");
+      const effectiveConf = isResolved ? 1.0 : f.confidence;
+
       if (filterCategory !== "all" && activeCat !== filterCategory) return false;
-      if (filterConfidence === "high" && f.confidence < autoThreshold) return false;
-      if (filterConfidence === "review" && f.confidence >= autoThreshold) return false;
+      if (filterConfidence === "high" && (effectiveConf < autoThreshold || activeCat === "Unknown")) return false;
+      if (filterConfidence === "review" && (effectiveConf >= autoThreshold && activeCat !== "Unknown")) return false;
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesName = f.filename.toLowerCase().includes(q);
@@ -319,6 +326,19 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     });
     return Array.from(set).sort();
   }, [files, categoryOverrides]);
+
+  const highConfidenceCount = useMemo(() => {
+    return files.filter((f) => {
+      const activeCat = categoryOverrides[f.file_id] || f.category;
+      if (activeCat === "Unknown") return false;
+      if (categoryOverrides[f.file_id]) return true;
+      return f.confidence >= autoThreshold;
+    }).length;
+  }, [files, categoryOverrides, autoThreshold]);
+
+  const needsReviewCount = useMemo(() => {
+    return files.length - highConfidenceCount;
+  }, [files.length, highConfidenceCount]);
 
   const toggleSelect = (fileId: string) => {
     setSelectedFileIds((prev) => {
@@ -349,7 +369,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     filteredFiles.length > 0 && filteredFiles.every((f) => selectedFileIds.has(f.file_id));
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-24">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-16">
       {/* Interactive Workflow Stepper */}
       <WorkflowStepper
         currentStep="review"
@@ -357,16 +377,16 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         fileCount={files.length}
         onNavigate={(step) => {
           if (step === "select_folder" && onNavigateToSelectFolder) onNavigateToSelectFolder();
-          else if (step === "blueprint") onNavigateToOrganize();
+          else if (step === "blueprint" && onNavigateToOrganize) onNavigateToOrganize();
         }}
       />
 
-      {/* Header Bar */}
-      <div className="border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
-        <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
+      {/* Header with Title and Breadcrumb */}
+      <div>
+        <div className="flex items-center gap-2 text-[12px] font-mono text-[#615d59] dark:text-[#9b9a97] mb-1">
           <span>Workspace</span>
           <span>/</span>
-          <span className="text-[#000000] dark:text-[#ffffff]">Review & Apply</span>
+          <span className="text-[#0075de] dark:text-[#2383e2]">Review & Apply</span>
         </div>
         <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
           Review & Apply
@@ -397,7 +417,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             High Confidence (≥{Math.round(autoThreshold * 100)}%)
           </p>
           <p className="text-2xl font-bold text-[#166534] dark:text-[#4ade80] mt-1">
-            {files.filter((f) => f.confidence >= autoThreshold).length}
+            {highConfidenceCount}
           </p>
         </div>
 
@@ -406,7 +426,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             Needs Review
           </p>
           <p className="text-2xl font-bold text-[#dd5b00] dark:text-[#fb923c] mt-1">
-            {files.filter((f) => f.confidence < autoThreshold).length}
+            {needsReviewCount}
           </p>
         </div>
       </div>
@@ -659,7 +679,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 {filteredFiles.map((file) => {
                   const isSelected = selectedFileIds.has(file.file_id);
                   const currentCat = categoryOverrides[file.file_id] || file.category;
-                  const isHighConf = file.confidence >= autoThreshold;
+                  const isOverridden = Boolean(categoryOverrides[file.file_id] && categoryOverrides[file.file_id] !== "Unknown");
+                  const effectiveConfidence = isOverridden ? 1.0 : file.confidence;
+                  const isHighConf = effectiveConfidence >= autoThreshold && currentCat !== "Unknown";
                   const catStyle = getStickerStyle(currentCat);
 
                   return (
@@ -800,13 +822,14 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
                       {/* Category Selector */}
                       <td className="p-3">
-                        <div className="inline-flex items-center">
+                        <div className="flex items-center gap-2">
                           <select
                             value={currentCat}
                             onChange={(e) => {
+                              const newCat = e.target.value;
                               setCategoryOverrides((prev) => ({
                                 ...prev,
-                                [file.file_id]: e.target.value,
+                                [file.file_id]: newCat,
                               }));
                             }}
                             className={`px-2.5 py-1 rounded-md text-[12px] font-medium font-mono border focus:outline-none focus:ring-1 focus:ring-[#0075de] dark:focus:ring-[#2383e2] cursor-pointer ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}
@@ -831,7 +854,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                               className={`h-full rounded-full ${
                                 isHighConf ? "bg-[#1aae39] dark:bg-[#4ade80]" : "bg-[#dd5b00] dark:bg-[#fb923c]"
                               }`}
-                              style={{ width: `${Math.round(file.confidence * 100)}%` }}
+                              style={{ width: `${Math.round(effectiveConfidence * 100)}%` }}
                             />
                           </div>
                           <span
@@ -841,7 +864,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                                 : "bg-[#fef3eb] dark:bg-[#4a1c07]/40 text-[#9a3412] dark:text-[#fb923c]"
                             }`}
                           >
-                            {Math.round(file.confidence * 100)}%
+                            {isOverridden ? "100% (Assigned)" : `${Math.round(file.confidence * 100)}%`}
                           </span>
                         </div>
                       </td>

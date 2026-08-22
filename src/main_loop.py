@@ -29,6 +29,11 @@ from .scanner import scan_directory
 logger = logging.getLogger(__name__)
 
 
+class PipelineCancelledException(Exception):
+    """Raised when pipeline execution is halted by the user."""
+    pass
+
+
 def run_pipeline(
     config: TidyConfig,
     *,
@@ -38,6 +43,8 @@ def run_pipeline(
     dry_run: bool = True,
     db: Optional[Any] = None,
     strict_mode: bool = False,
+    progress_callback: Optional[Any] = None,
+    cancellation_token: Optional[Any] = None,
 ) -> tuple[list[FileRecord], RunSummary]:
     """
     Execute the complete universal file organization pipeline.
@@ -53,39 +60,59 @@ def run_pipeline(
     8. Interactive reports and inventory exports
     9. Optional safe copy/move execution
     """
+    def check_cancelled():
+        if cancellation_token and hasattr(cancellation_token, "is_set") and cancellation_token.is_set():
+            logger.info("Pipeline execution cancelled by user.")
+            raise PipelineCancelledException("Pipeline was halted by user.")
+
     summary = RunSummary(run_started_at=datetime.now(timezone.utc))
 
     # 1. Scan
     logger.info("=== STEP 1: Scanning directory: %s ===", config.input_dir)
+    if progress_callback:
+        progress_callback("scan", f"Scanning '{config.input_dir.name}' and discovering files...")
     records = scan_directory(config)
     summary.total_scanned = sum(1 for r in records if not r.skipped)
     summary.total_skipped = sum(1 for r in records if r.skipped)
+    check_cancelled()
 
     # 2. Visual Metadata
     logger.info("=== STEP 2: Extracting visual metadata & thumbnails ===")
     extract_metadata(records, thumbnail_max_dim=config.thumbnail_max_dim)
+    check_cancelled()
 
     # 3. Hashing & Deduplication
     logger.info("=== STEP 3: Content hashing & duplicate detection ===")
+    if progress_callback:
+        progress_callback("scan", f"Computing SHA-256 hashes & duplicate detection on {summary.total_scanned} files...")
     summary.exact_duplicates = assign_exact_duplicate_groups(records)
     compute_perceptual_hashes(records)
     summary.near_duplicates = assign_near_duplicate_groups(
         records,
         hamming_threshold=config.duplicates.hamming_distance_threshold,
     )
+    check_cancelled()
 
     # 4. Direct Text Extraction
     logger.info("=== STEP 4: Direct text extraction ===")
+    if progress_callback:
+        progress_callback("extract", f"Extracting text & document structure from {summary.total_scanned} files...")
     summary.text_extracted = extract_all_text(records)
+    check_cancelled()
 
     # 5. OCR
     logger.info("=== STEP 5: OCR processing ===")
+    if progress_callback:
+        progress_callback("extract", f"Performing OCR inspection on images & PDFs...")
     processed_ocr, cached_ocr = run_ocr(records, config.ocr, config.output_dir)
     summary.ocr_processed = processed_ocr
     summary.ocr_cached = cached_ocr
+    check_cancelled()
 
     # 6. Rule Engine & Fast-Path Heuristics
     logger.info("=== STEP 6: Keyword scoring & rules evaluation ===")
+    if progress_callback:
+        progress_callback("classify", f"Evaluating rules and keyword match heuristics...")
     rule_engine = RuleEngine(categories=config.categories)
     for rec in records:
         if not rec.skipped:
@@ -115,10 +142,13 @@ def run_pipeline(
                     source="heuristic_high_confidence",
                 )
                 summary.heuristic_classified += 1
+    check_cancelled()
 
     # 7. Batched LLM Classification
     if use_llm and config.llm.enabled:
         logger.info("=== STEP 7: Batched LLM classification ===")
+        if progress_callback:
+            progress_callback("classify", f"Running AI language model classification with {config.llm.model}...")
         llm_count = classify_files_batched(
             records,
             config.llm,
@@ -126,10 +156,12 @@ def run_pipeline(
             config.categories,
             config.output_dir,
             strict_mode=strict_mode,
+            cancellation_token=cancellation_token,
         )
         summary.llm_classified = llm_count
     else:
         logger.info("=== STEP 7: LLM classification skipped ===")
+    check_cancelled()
 
     # Aggregate stats
     for rec in records:
@@ -147,6 +179,8 @@ def run_pipeline(
 
     # 8. Reports Generation
     logger.info("=== STEP 8: Generating output reports ===")
+    if progress_callback:
+        progress_callback("finalize", "Building local database index and preparing review results...")
     config.output_dir.mkdir(parents=True, exist_ok=True)
     _save_records_jsonl(records, config.output_dir / "file_records.jsonl")
     generate_reports(records, summary, config.output_dir, list(config.categories.keys()))

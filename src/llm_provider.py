@@ -188,6 +188,7 @@ def classify_files_batched(
     output_dir: Path,
     *,
     strict_mode: bool = False,
+    cancellation_token: Optional[Any] = None,
 ) -> int:
     """
     Send batches of 30-40 compact FileRecord payloads to LLM.
@@ -251,6 +252,10 @@ def classify_files_batched(
     client = httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0, read=180.0))
 
     for batch_idx, batch in enumerate(tqdm(batches, desc="LLM batches", unit="batch")):
+        if cancellation_token and hasattr(cancellation_token, "is_set") and cancellation_token.is_set():
+            logger.info("LLM classification cancelled by token.")
+            break
+
         payloads = [_make_payload(r) for r in batch]
         user_message = json.dumps([p.model_dump() for p in payloads], default=str)
 
