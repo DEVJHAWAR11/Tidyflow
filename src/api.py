@@ -544,48 +544,86 @@ class OpenPathRequest(BaseModel):
 @app.post("/fs/open-path")
 async def open_path_endpoint(req: OpenPathRequest):
     """Open or reveal a file/folder in the OS native File Explorer or Finder."""
-    target = Path(req.path).resolve()
+    raw_path = (req.path or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="Path cannot be empty")
+
+    target = Path(raw_path).resolve()
+
+    # If target does not exist directly on disk, try resolving against DB (e.g. if file was moved or renamed)
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {req.path}")
+        try:
+            row = await db.execute_read(
+                "SELECT new_path, path FROM files WHERE path = ? OR new_path = ? LIMIT 1",
+                (raw_path, raw_path)
+            )
+            if row:
+                candidate = row[0].get("new_path") or row[0].get("path")
+                if candidate and Path(candidate).resolve().exists():
+                    target = Path(candidate).resolve()
+        except Exception as db_err:
+            logger.warning("Error checking DB for moved path %s: %s", raw_path, db_err)
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {raw_path}")
 
     import sys
     import subprocess
+    import os
 
     try:
         if sys.platform == "darwin":
-            # On macOS, `open -R` reveals and highlights the specific file in Finder
-            if req.reveal and target.is_file():
-                cmd = ["open", "-R", str(target)]
+            if req.reveal:
+                if target.is_file():
+                    cmd = ["open", "-R", str(target)]
+                else:
+                    cmd = ["open", str(target)]
+                subprocess.Popen(cmd)
+                return {"status": "success", "message": f"Revealed in Finder: {target.name}"}
             else:
-                cmd = ["open", str(target if target.is_dir() else target.parent)]
-            subprocess.Popen(cmd)
-            return {"status": "success", "message": f"Revealed in Finder: {target.name}"}
+                # Open directly in default application (Preview, etc.)
+                cmd = ["open", str(target)]
+                subprocess.Popen(cmd)
+                return {"status": "success", "message": f"Opened: {target.name}"}
 
         elif sys.platform.startswith("win"):
-            if req.reveal and target.is_file():
-                cmd = ["explorer.exe", f"/select,{str(target)}"]
+            norm_target = os.path.normpath(str(target))
+            if req.reveal:
+                if target.is_file():
+                    # On Windows, explorer.exe /select,"C:\path\to\file" opens Explorer and selects the exact file.
+                    subprocess.Popen(f'explorer.exe /select,"{norm_target}"', shell=True)
+                else:
+                    subprocess.Popen(f'explorer.exe "{norm_target}"', shell=True)
+                return {"status": "success", "message": f"Revealed in File Explorer: {target.name}"}
             else:
-                cmd = ["explorer.exe", str(target if target.is_dir() else target.parent)]
-            subprocess.Popen(cmd)
-            return {"status": "success", "message": "Opened in File Explorer"}
+                # Open directly with OS default application (PDF reader, Word, Photos, etc.)
+                if target.is_file():
+                    os.startfile(norm_target)
+                else:
+                    subprocess.Popen(f'explorer.exe "{norm_target}"', shell=True)
+                return {"status": "success", "message": f"Opened with default app: {target.name}"}
 
         else:
             # Linux (freedesktop / xdg-open)
-            try:
-                if req.reveal and target.is_file():
-                    subprocess.Popen([
-                        "dbus-send", "--session", "--dest=org.freedesktop.FileManager1",
-                        "--type=method_call", "/org/freedesktop/FileManager1",
-                        "org.freedesktop.FileManager1.ShowItems",
-                        f"array:string:file://{target}", "string:"
-                    ])
-                    return {"status": "success", "message": "Revealed in File Manager"}
-            except Exception:
-                pass
+            if req.reveal:
+                try:
+                    if target.is_file():
+                        subprocess.Popen([
+                            "dbus-send", "--session", "--dest=org.freedesktop.FileManager1",
+                            "--type=method_call", "/org/freedesktop/FileManager1",
+                            "org.freedesktop.FileManager1.ShowItems",
+                            f"array:string:file://{target}", "string:"
+                        ])
+                        return {"status": "success", "message": f"Revealed in File Manager: {target.name}"}
+                except Exception:
+                    pass
 
-            folder = target if target.is_dir() else target.parent
-            subprocess.Popen(["xdg-open", str(folder)])
-            return {"status": "success", "message": "Opened in File Manager"}
+                folder = target if target.is_dir() else target.parent
+                subprocess.Popen(["xdg-open", str(folder)])
+                return {"status": "success", "message": "Opened containing folder"}
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+                return {"status": "success", "message": f"Opened: {target.name}"}
 
     except Exception as e:
         logger.error("Failed to open path in file explorer: %s", e)

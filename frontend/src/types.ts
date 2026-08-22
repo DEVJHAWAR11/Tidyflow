@@ -51,6 +51,8 @@ export interface FtsResultItem {
   id?: number;
   file_id?: string;
   path: string;
+  new_path?: string;
+  status?: string;
   category?: string;
   confidence_score?: number;
   confidence?: number;

@@ -52,12 +52,42 @@ export const SearchView: React.FC<SearchViewProps> = ({
 }) => {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [openedPath, setOpenedPath] = useState<string | null>(null);
+  const [launchedPath, setLaunchedPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [inlineThumbnails, setInlineThumbnails] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<FtsResultItem | null>(null);
 
+const getEffectivePath = (item: FtsResultItem): string => {
+  if (item.new_path && (item.status === "moved" || item.status === "copied")) {
+    return item.new_path;
+  }
+  return item.path;
+};
+
+  const handleLaunchFile = async (filePath: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!filePath) return;
+    try {
+      const res = await fetch(`${API_BASE}/fs/open-path`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath, reveal: false }),
+      });
+      if (res.ok) {
+        setLaunchedPath(filePath);
+        setTimeout(() => setLaunchedPath(null), 2500);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Failed to open file directly:", errData);
+      }
+    } catch (err) {
+      console.error("Failed to open file directly:", err);
+    }
+  };
+
   const handleOpenInExplorer = async (filePath: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!filePath) return;
     try {
       const res = await fetch(`${API_BASE}/fs/open-path`, {
         method: "POST",
@@ -66,7 +96,10 @@ export const SearchView: React.FC<SearchViewProps> = ({
       });
       if (res.ok) {
         setOpenedPath(filePath);
-        setTimeout(() => setOpenedPath(null), 2000);
+        setTimeout(() => setOpenedPath(null), 2500);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Failed to open file in explorer:", errData);
       }
     } catch (err) {
       console.error("Failed to open file in explorer:", err);
@@ -340,17 +373,35 @@ export const SearchView: React.FC<SearchViewProps> = ({
                               Copied!
                             </span>
                           )}
+                          {/* 1. Open directly in default application */}
                           <button
                             type="button"
-                            onClick={(e) => handleOpenInExplorer(item.path, e)}
-                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-1 text-[10.5px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f0eee9] dark:hover:bg-[#333333] px-1.5 py-0.5 rounded-md border border-[#e6e6e6] dark:border-[#383838]"
-                            title="Open and reveal in Finder / File Explorer"
+                            onClick={(e) => handleLaunchFile(getEffectivePath(item), e)}
+                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-1 text-[10.5px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#e8f4fd] dark:hover:bg-[#0c3966]/40 px-1.5 py-0.5 rounded-md border border-[#e6e6e6] dark:border-[#383838]"
+                            title="Open file directly in default application"
                           >
-                            {openedPath === item.path ? (
+                            {launchedPath === getEffectivePath(item) ? (
                               <span className="text-emerald-600 dark:text-emerald-400 font-sans font-medium">Opened!</span>
                             ) : (
                               <>
-                                <FolderOpen className="w-3 h-3 text-[#0075de] dark:text-[#2383e2]" />
+                                <Eye className="w-3 h-3 text-[#0075de] dark:text-[#2383e2]" />
+                                <span>Open</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* 2. Reveal in Finder / File Explorer */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenInExplorer(getEffectivePath(item), e)}
+                            className="p-0.5 hover:text-[#0075de] dark:hover:text-[#2383e2] rounded transition cursor-pointer flex items-center gap-1 text-[10.5px] text-[#615d59] dark:text-[#9b9a97] hover:bg-[#f0eee9] dark:hover:bg-[#333333] px-1.5 py-0.5 rounded-md border border-[#e6e6e6] dark:border-[#383838]"
+                            title={isMac ? "Reveal in Finder" : "Reveal in File Explorer"}
+                          >
+                            {openedPath === getEffectivePath(item) ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-sans font-medium">Revealed!</span>
+                            ) : (
+                              <>
+                                <FolderOpen className="w-3 h-3 text-[#615d59] dark:text-[#9b9a97]" />
                                 <span>Reveal</span>
                               </>
                             )}
@@ -627,12 +678,21 @@ export const SearchView: React.FC<SearchViewProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleOpenInExplorer(previewItem.path)}
+                          onClick={() => handleLaunchFile(getEffectivePath(previewItem))}
                           className="text-[11px] font-semibold text-[#0075de] dark:text-[#2383e2] hover:underline flex items-center gap-1 cursor-pointer bg-[#0075de]/10 dark:bg-[#2383e2]/15 px-2 py-0.5 rounded border border-[#0075de]/20"
-                          title="Open and reveal file in Finder / File Explorer"
+                          title="Open file directly in default application"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>{launchedPath === getEffectivePath(previewItem) ? "Opened File!" : "Open File"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenInExplorer(getEffectivePath(previewItem))}
+                          className="text-[11px] font-semibold text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff] hover:underline flex items-center gap-1 cursor-pointer bg-[#f0eee9] dark:bg-[#2c2c2c] px-2 py-0.5 rounded border border-[#e6e6e6] dark:border-[#383838]"
+                          title={isMac ? "Reveal in Finder" : "Reveal in File Explorer"}
                         >
                           <FolderOpen className="w-3 h-3" />
-                          <span>{openedPath === previewItem.path ? "Opened!" : (isMac ? "Reveal in Finder" : "Reveal in Explorer")}</span>
+                          <span>{openedPath === getEffectivePath(previewItem) ? "Revealed!" : (isMac ? "Reveal in Finder" : "Reveal in Explorer")}</span>
                         </button>
                       </div>
                     </div>
