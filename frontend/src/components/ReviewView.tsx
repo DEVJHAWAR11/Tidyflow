@@ -724,17 +724,31 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                                 </button>
                               </div>
                             ) : (
-                              <div className="group/name flex items-center gap-1.5">
-                                <span
-                                  className={`font-semibold font-mono text-[12px] truncate ${
-                                    filenameOverrides[file.file_id]
-                                      ? "text-[#0075de] dark:text-[#38bdf8]"
-                                      : "text-[#000000] dark:text-[#ffffff]"
-                                  }`}
-                                  title={filenameOverrides[file.file_id] || file.filename}
-                                >
-                                  {filenameOverrides[file.file_id] || file.filename}
-                                </span>
+                              <div className="group/name flex items-center gap-2 flex-wrap">
+                                {filenameOverrides[file.file_id] ? (
+                                  <>
+                                    <span
+                                      className="font-bold font-mono text-[12px] text-[#0075de] dark:text-[#38bdf8] truncate"
+                                      title={`Renamed to: ${filenameOverrides[file.file_id]}`}
+                                    >
+                                      {filenameOverrides[file.file_id]}
+                                    </span>
+                                    <span
+                                      className="text-[11px] font-mono text-[#86868b] line-through truncate max-w-[140px]"
+                                      title={`Original: ${file.filename}`}
+                                    >
+                                      {file.filename}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span
+                                    className="font-semibold font-mono text-[12px] text-[#000000] dark:text-[#ffffff] truncate"
+                                    title={file.filename}
+                                  >
+                                    {file.filename}
+                                  </span>
+                                )}
+
                                 <button
                                   onClick={() =>
                                     handleStartEditFilename(
@@ -742,36 +756,39 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                                       filenameOverrides[file.file_id] || file.filename
                                     )
                                   }
-                                  title="Edit Filename"
+                                  title="Edit Filename Manually"
                                   className="opacity-0 group-hover/name:opacity-100 p-0.5 text-[#86868b] hover:text-[#0075de] dark:hover:text-[#38bdf8] transition cursor-pointer"
                                 >
                                   <Edit2 className="w-3 h-3" />
                                 </button>
-                                {filenameOverrides[file.file_id] && (
-                                  <button
-                                    onClick={() => handleRevertFilename(file.file_id)}
-                                    title="Revert to original name"
-                                    className="p-0.5 text-[#86868b] hover:text-[#ff3b30] transition cursor-pointer"
-                                  >
-                                    <RotateCcw className="w-3 h-3" />
-                                  </button>
-                                )}
                               </div>
                             )}
 
-                            {/* Suggested Filename Badge */}
-                            {Boolean(file.suggested_filename && file.suggested_filename !== file.filename && !filenameOverrides[file.file_id]) && (
+                            {/* Toggleable AI Rename Chip */}
+                            {filenameOverrides[file.file_id] ? (
+                              <button
+                                onClick={() => handleRevertFilename(file.file_id)}
+                                title="Click to deselect AI rename and keep original filename"
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-md text-[11px] font-mono bg-[#0075de]/15 dark:bg-[#0075de]/25 text-[#0075de] dark:text-[#38bdf8] border border-[#0075de]/30 hover:bg-[#ff3b30]/15 hover:text-[#ff3b30] hover:border-[#ff3b30]/30 transition group/chip cursor-pointer"
+                              >
+                                <Check className="w-3 h-3 group-hover/chip:hidden text-[#0075de] dark:text-[#38bdf8]" />
+                                <X className="w-3 h-3 hidden group-hover/chip:inline text-[#ff3b30]" />
+                                <span>Rename active</span>
+                                <span className="text-[10px] text-[#86868b] group-hover/chip:text-[#ff3b30]">(click to deselect ✕)</span>
+                              </button>
+                            ) : file.suggested_filename && file.suggested_filename !== file.filename ? (
                               <button
                                 onClick={() =>
                                   handleApplySuggestedFilename(file.file_id, file.suggested_filename!)
                                 }
-                                title="Click to apply AI suggested rename"
-                                className="text-[11px] text-[#0075de] dark:text-[#38bdf8] hover:underline font-mono truncate mt-0.5 flex items-center gap-1 cursor-pointer text-left"
+                                title="Click to select AI suggested rename"
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-md text-[11px] font-mono bg-[#f2f2f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#a1a1a6] hover:bg-[#0075de]/10 hover:text-[#0075de] dark:hover:text-[#38bdf8] hover:border-[#0075de]/30 border border-transparent transition cursor-pointer"
                               >
-                                <span>↳ AI Suggests:</span>
-                                <span className="font-semibold">{file.suggested_filename}</span>
+                                <Sparkles className="w-3 h-3 text-[#0075de] dark:text-[#38bdf8]" />
+                                <span>AI Suggests:</span>
+                                <span className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{file.suggested_filename}</span>
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </td>
