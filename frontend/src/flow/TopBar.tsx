@@ -2,7 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Search, Settings2, Moon, Sun, Check, ArrowLeft } from "lucide-react";
 import { Pill, Dot } from "./ui";
 import type { TopBarProps, FlowStep } from "./contracts";
-import logoImg from "../assets/logo.png";
+import { Wizard } from "../wizard/Wizard";
 
 const STEPS: { id: FlowStep; label: string; number: number }[] = [
   { id: "home", label: "Folder", number: 1 },
@@ -35,9 +35,7 @@ export function TopBar({
           className="flex items-center gap-2.5 rounded-[8px] py-1 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
           aria-label="TidyFlow home"
         >
-          <div className="w-[26px] h-[26px] rounded-[7px] bg-tf-surface border border-tf-border flex items-center justify-center shrink-0 overflow-hidden">
-            <img src={logoImg} alt="" className="w-[22px] h-[22px] object-contain" />
-          </div>
+          <Wizard size={28} className="text-tf-ink shrink-0" />
           <span className="text-[14px] font-semibold text-tf-ink tracking-tight hidden sm:inline">
             TidyFlow
           </span>

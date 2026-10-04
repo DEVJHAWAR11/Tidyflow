@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { Check, Loader2, AlertTriangle, CircleSlash } from "lucide-react";
 import { Screen, Button, Card, ease } from "./ui";
-import { FolderIcon, FileIcon } from "./icons";
+import { SortingWizard } from "../wizard/scenes";
 import { folderLabel } from "../utils/folderVisuals";
 import type { SortingScreenProps } from "./contracts";
 
@@ -10,12 +10,6 @@ const CHECKLIST_STAGES = [
   { id: "extract", label: "Read contents" },
   { id: "classify", label: "Choose folders" },
   { id: "finalize", label: "Finish" },
-];
-
-const DROPPING_FILES = [
-  { ext: "pdf", x: -14, delay: 0 },
-  { ext: "jpg", x: 0, delay: 0.55 },
-  { ext: "docx", x: 14, delay: 1.1 },
 ];
 
 function getStageTitle(stage: string): string {
@@ -103,31 +97,8 @@ export function SortingScreen({
 
   return (
     <Screen className="max-w-[420px] mx-auto pt-[12vh] pb-16 px-4 text-center">
-      {/* Calm Illustration */}
-      <div className="h-[120px] relative flex items-end justify-center select-none overflow-visible">
-        {DROPPING_FILES.map((item) => (
-          <motion.div
-            key={item.ext}
-            className="absolute bottom-9 pointer-events-none z-0"
-            style={{ x: item.x }}
-            animate={{
-              y: [-34, -20, 8],
-              opacity: [0, 1, 0],
-              scale: [1, 1, 0.9],
-            }}
-            transition={{
-              duration: 1.6,
-              repeat: Infinity,
-              ease: "easeInOut",
-              delay: item.delay,
-              times: [0, 0.35, 1],
-            }}
-          >
-            <FileIcon extension={item.ext} size={28} />
-          </motion.div>
-        ))}
-        <FolderIcon name="" glyph={false} size={56} className="relative z-10" />
-      </div>
+      {/* The wizard sorts while the user waits */}
+      <SortingWizard />
 
       {/* Title */}
       <div className="mt-6 min-h-[28px] flex items-center justify-center">

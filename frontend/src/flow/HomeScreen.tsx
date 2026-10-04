@@ -16,6 +16,7 @@ import {
 import { Screen, Card, Button, StepHeader, SectionTitle } from "./ui";
 import { FolderIcon } from "./icons";
 import { folderLabel } from "../utils/folderVisuals";
+import { WizardHello } from "../wizard/scenes";
 import type { HomeScreenProps } from "./contracts";
 
 function getLocationIcon(name: string) {
@@ -47,12 +48,15 @@ export function HomeScreen({
 
   return (
     <Screen className="max-w-[760px] mx-auto pt-10 pb-16 px-4">
-      {/* Page Header */}
-      <StepHeader
-        align="left"
-        title="Tidy up a folder"
-        subtitle="Choose a folder. TidyFlow proposes a set of folders, shows where every file would go, and changes nothing until you approve."
-      />
+      {/* Page Header (the wizard waves hello on first launch only) */}
+      <div className="flex items-center justify-between gap-6">
+        <StepHeader
+          align="left"
+          title="Tidy up a folder"
+          subtitle="Choose a folder. TidyFlow proposes a set of folders, shows where every file would go, and changes nothing until you approve."
+        />
+        <WizardHello />
+      </div>
 
       {/* Status Notice (only one, placed under header) */}
       {!backendOnline ? (
