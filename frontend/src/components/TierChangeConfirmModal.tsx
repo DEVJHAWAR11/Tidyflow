@@ -6,7 +6,7 @@ import {
   LayoutGrid,
   Layers,
   ArrowRight,
-  Sparkles,
+  SlidersHorizontal,
   History,
   X,
   Check,
@@ -97,7 +97,7 @@ export const TierChangeConfirmModal: React.FC<TierChangeConfirmModalProps> = ({
         <div className="p-5 border-b border-[#e5e5e7] dark:border-[#2c2c2e] flex items-start justify-between gap-3 bg-[#fafafc] dark:bg-[#222224]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#0075de]/10 text-[#0075de] dark:text-[#38bdf8] flex items-center justify-center shrink-0">
-              <Sparkles className="w-5 h-5" />
+              <SlidersHorizontal className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-base font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
@@ -287,8 +287,9 @@ export const TierChangeConfirmModal: React.FC<TierChangeConfirmModalProps> = ({
                           key={name}
                           className="p-2 rounded-lg bg-[#ffffff] dark:bg-[#1c1c1e] border border-[#e5e5e7] dark:border-[#2c2c2e] text-[11.5px]"
                         >
-                          <span className="font-bold text-[#1d1d1f] dark:text-[#f5f5f7] truncate block">
-                            📁 {name}
+                          <span className="font-bold text-[#1d1d1f] dark:text-[#f5f5f7] truncate flex items-center gap-1.5">
+                            <Folder className="w-3.5 h-3.5 text-[#0075de] shrink-0" />
+                            <span>{name}</span>
                           </span>
                           {cat.description && (
                             <span className="text-[10.5px] text-[#86868b] line-clamp-1">

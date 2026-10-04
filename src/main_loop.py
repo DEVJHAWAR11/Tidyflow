@@ -70,7 +70,7 @@ def run_pipeline(
     # 1. Scan
     logger.info("=== STEP 1: Scanning directory: %s ===", config.input_dir)
     if progress_callback:
-        progress_callback("scan", f"Scanning '{config.input_dir.name}' and discovering files...")
+        progress_callback("scan", f"Looking for files in {config.input_dir.name}…")
     records = scan_directory(config)
     summary.total_scanned = sum(1 for r in records if not r.skipped)
     summary.total_skipped = sum(1 for r in records if r.skipped)
@@ -84,7 +84,7 @@ def run_pipeline(
     # 3. Hashing & Deduplication
     logger.info("=== STEP 3: Content hashing & duplicate detection ===")
     if progress_callback:
-        progress_callback("scan", f"Computing SHA-256 hashes & duplicate detection on {summary.total_scanned} files...")
+        progress_callback("scan", f"Found {summary.total_scanned} files. Checking for duplicates…")
     summary.exact_duplicates = assign_exact_duplicate_groups(records)
     compute_perceptual_hashes(records)
     summary.near_duplicates = assign_near_duplicate_groups(
@@ -96,14 +96,14 @@ def run_pipeline(
     # 4. Direct Text Extraction
     logger.info("=== STEP 4: Direct text extraction ===")
     if progress_callback:
-        progress_callback("extract", f"Extracting text & document structure from {summary.total_scanned} files...")
+        progress_callback("extract", f"Reading what's inside {summary.total_scanned} files…")
     summary.text_extracted = extract_all_text(records)
     check_cancelled()
 
     # 5. OCR
     logger.info("=== STEP 5: OCR processing ===")
     if progress_callback:
-        progress_callback("extract", f"Performing OCR inspection on images & PDFs...")
+        progress_callback("extract", "Reading text in images and PDFs…")
     ocr_cache_dir = Path("data/cache")
     ocr_cache_dir.mkdir(parents=True, exist_ok=True)
     processed_ocr, cached_ocr = run_ocr(records, config.ocr, ocr_cache_dir)
@@ -114,7 +114,7 @@ def run_pipeline(
     # 6. Rule Engine & Fast-Path Heuristics
     logger.info("=== STEP 6: Keyword scoring & rules evaluation ===")
     if progress_callback:
-        progress_callback("classify", f"Evaluating rules and keyword match heuristics...")
+        progress_callback("classify", "Matching files to your folders…")
     rule_engine = RuleEngine(categories=config.categories)
     for rec in records:
         if not rec.skipped:
@@ -150,7 +150,7 @@ def run_pipeline(
     if use_llm and config.llm.enabled:
         logger.info("=== STEP 7: Batched LLM classification ===")
         if progress_callback:
-            progress_callback("classify", f"Running AI language model classification with {config.llm.model}...")
+            progress_callback("classify", "Asking the AI where each file belongs…")
         llm_log_dir = Path("data/logs")
         llm_log_dir.mkdir(parents=True, exist_ok=True)
         llm_count = classify_files_batched(

@@ -8,7 +8,6 @@ import {
   Database,
   Layers,
   Terminal,
-  Sparkles,
   AlertTriangle,
   XCircle,
   X,
@@ -102,7 +101,6 @@ export const ScanProgressOverlay: React.FC<ScanProgressOverlayProps> = ({
             <div>
               <h3 className="text-[15px] font-bold text-[#1d1d1f] dark:text-[#f5f5f7] flex items-center gap-2">
                 <span>{isCancelling ? "Halting Organization..." : "Analyzing Workspace"}</span>
-                {!isCancelling && <Sparkles className="w-3.5 h-3.5 text-[#0075de]" />}
               </h3>
               <p className="text-[11.5px] text-[#86868b] font-mono truncate max-w-xs">
                 {inputFolder}

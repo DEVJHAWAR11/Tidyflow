@@ -13,7 +13,7 @@ import {
   FileSearch,
   Search,
   FileCode,
-  Sparkles,
+  FolderTree,
   RotateCcw,
   Layers,
   Check,
@@ -224,7 +224,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
         <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-4 shadow-2xs space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+              <FolderTree className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
               <span className="text-[13px] font-bold text-[#000000] dark:text-[#ffffff]">
                 Predefined Category Packs
               </span>
@@ -254,7 +254,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
                   }`}
                   title={`${pack.description} (${Object.keys(pack.categories).length} folders)`}
                 >
-                  <span>{pack.emoji}</span>
+                  {pack.emoji ? <span>{pack.emoji}</span> : null}
                   <span className="font-medium">{pack.name}</span>
                   <span className="text-[10px] opacity-75 font-mono">
                     ({Object.keys(pack.categories).length})
@@ -388,7 +388,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
                 onClick={() => handleApplyPreset("standard", DEFAULT_STANDARD_CATEGORIES)}
                 className="px-5 py-2.5 bg-[#0075de] hover:bg-[#005bab] text-white text-[13px] font-semibold rounded-full shadow-xs cursor-pointer active:scale-97 flex items-center gap-2"
               >
-                <Sparkles className="w-4 h-4" />
+                <FolderTree className="w-4 h-4" />
                 <span>Load Default 18 Categories</span>
               </button>
             )}

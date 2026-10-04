@@ -5,7 +5,7 @@ import {
   FolderOpen,
   Search,
   RotateCcw,
-  Sparkles,
+  Check,
   ShieldCheck,
   FolderDown,
   X,
@@ -63,7 +63,7 @@ export const ApplySuccessModal: React.FC<ApplySuccessModalProps> = ({
         {/* Title & Subtitle */}
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-[#1aae39]/10 text-[#1aae39] dark:text-[#4ade80] text-[11px] font-bold uppercase mb-2">
-            <Sparkles className="w-3 h-3" />
+            <Check className="w-3 h-3" />
             <span>Success</span>
           </div>
 

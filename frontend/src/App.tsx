@@ -1,237 +1,230 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { AnimatePresence } from "motion/react";
 import {
   CategoryItem,
   ClassifiedFile,
   RunSummary,
   ApplyDecisionItem,
   FtsResultItem,
-  TabType,
   BackendStatus,
   ComplexityLevel,
 } from "./types";
-import { Navbar } from "./components/Navbar";
-import { GetStartedView } from "./components/GetStartedView";
-import { FolderSelectView } from "./components/FolderSelectView";
+import type { AppView, DoneResult, FlowStep, QuickLocation } from "./flow/contracts";
+import { TopBar } from "./flow/TopBar";
+import { HomeScreen } from "./flow/HomeScreen";
+import { PlanScreen } from "./flow/PlanScreen";
+import { SortingScreen } from "./flow/SortingScreen";
+import { PreviewScreen } from "./flow/PreviewScreen";
+import { DoneScreen } from "./flow/DoneScreen";
+import { Screen } from "./flow/ui";
 import { OrganizeView } from "./components/OrganizeView";
 import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
 import { DirectoryPickerModal } from "./components/DirectoryPickerModal";
-import { ResetWorkspaceModal } from "./components/ResetWorkspaceModal";
 import { API_BASE } from "./config";
 import "./App.css";
 
-export default function App() {
-  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "categories">("general");
+/** Read a JSON value from localStorage, falling back when missing or corrupt. */
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? (JSON.parse(saved) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-  const [activeTab, setActiveTabState] = useState<TabType>(() => {
-    const hasOnboarded = localStorage.getItem("tidyflow_has_onboarded");
-    if (!hasOnboarded) return "welcome";
-    const savedTab = localStorage.getItem("tidyflow_active_tab") as TabType;
-    if (savedTab === "categories") return "settings";
-    if (savedTab) return savedTab;
-    const savedFolder = localStorage.getItem("tidyflow_input_folder");
-    return savedFolder ? "organize" : "select_folder";
-  });
+function saveJson(key: string, value: unknown) {
+  try {
+    if (value === null || value === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
 
-  const setActiveTab = (tab: TabType) => {
-    if (tab === "categories") {
-      setSettingsSubTab("categories");
-      setActiveTabState("settings");
-      localStorage.setItem("tidyflow_active_tab", "settings");
-      return;
-    }
-    setActiveTabState(tab);
-    localStorage.setItem("tidyflow_active_tab", tab);
+/** useState that mirrors its value into localStorage. */
+function usePersistentState<T>(key: string, fallback: T) {
+  const [value, setValue] = useState<T>(() => loadJson(key, fallback));
+  const set: React.Dispatch<React.SetStateAction<T>> = (next) => {
+    setValue((prev) => {
+      const v = typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+      saveJson(key, v);
+      return v;
+    });
   };
+  return [value, set] as const;
+}
+
+/** Which folder plan and source folder a set of results was produced from. */
+interface ResultMeta {
+  inputDir: string;
+  categories: string[];
+}
+
+function sameNames(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  const sa = new Set(a);
+  return b.every((x) => sa.has(x));
+}
+
+function toCategoryItems(raw: Record<string, any>): Record<string, CategoryItem> {
+  const out: Record<string, CategoryItem> = {};
+  Object.entries(raw).forEach(([name, c]) => {
+    if (name === "Unknown") return; // catch-all for unsorted files, not a real folder
+    out[name] = {
+      name: c?.name || name,
+      description: c?.description || "",
+      keywords: c?.keywords || [],
+      extensions: c?.extensions || [],
+      active: c?.active !== false,
+    };
+  });
+  return out;
+}
+
+export default function App() {
+  // --- Navigation ---
+  const [view, setView] = usePersistentState<AppView>("tidyflow_view", "flow");
+  const [step, setStepState] = usePersistentState<FlowStep>("tidyflow_step", "home");
+  const setStep = (s: FlowStep) => {
+    setStepState(s);
+    setView("flow");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const [advancedMode, setAdvancedMode] = usePersistentState<boolean>("tidyflow_advanced_mode", false);
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [hasLlmKey, setHasLlmKey] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerTarget, setFolderPickerTarget] = useState<"source" | "destination">("source");
-  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [quickLocations, setQuickLocations] = useState<QuickLocation[]>([]);
 
-  // Dark mode theme state
+  // --- Theme ---
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem("tidyflow_theme");
     if (saved) return saved === "dark";
     return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
-
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add("dark");
-      localStorage.setItem("tidyflow_theme", "dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-      localStorage.setItem("tidyflow_theme", "light");
-    }
+    document.documentElement.classList.toggle("dark", darkMode);
+    localStorage.setItem("tidyflow_theme", darkMode ? "dark" : "light");
   }, [darkMode]);
-
   const toggleDarkMode = () => setDarkMode((prev) => !prev);
 
-  // Organize tab state — restored from localStorage or fetched from quick locations
-  const [inputFolder, setInputFolderState] = useState<string>(() => {
-    return localStorage.getItem("tidyflow_input_folder") || "";
-  });
-  const [outputFolder, setOutputFolderState] = useState<string>(() => {
-    return localStorage.getItem("tidyflow_output_folder") || "";
-  });
-
+  // --- Folders ---
+  const [inputFolder, setInputFolderState] = useState<string>(() => localStorage.getItem("tidyflow_input_folder") || "");
+  const [outputFolder, setOutputFolderState] = useState<string>(() => localStorage.getItem("tidyflow_output_folder") || "");
   const setInputFolder = (path: string) => {
     setInputFolderState(path);
     if (path) localStorage.setItem("tidyflow_input_folder", path);
     else localStorage.removeItem("tidyflow_input_folder");
   };
-
   const setOutputFolder = (path: string) => {
     setOutputFolderState(path);
     if (path) localStorage.setItem("tidyflow_output_folder", path);
     else localStorage.removeItem("tidyflow_output_folder");
   };
 
+  // --- Sorting run ---
   const [useLlm, setUseLlm] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("");
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
+  const [sortError, setSortError] = useState<string | null>(null);
 
-  // Categories state
+  // --- Folder plan ---
   const [categories, setCategories] = useState<Record<string, CategoryItem>>({});
-  const [customInstructions, setCustomInstructionsState] = useState<string>(() => {
-    return localStorage.getItem("tidyflow_custom_instructions") || "";
-  });
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
+  const [customInstructions, setCustomInstructionsState] = useState<string>(
+    () => localStorage.getItem("tidyflow_custom_instructions") || ""
+  );
   const setCustomInstructions = (val: string) => {
     setCustomInstructionsState(val);
     localStorage.setItem("tidyflow_custom_instructions", val);
   };
-
   const [complexityLevel, setComplexityLevelState] = useState<ComplexityLevel>(() => {
     const saved = localStorage.getItem("tidyflow_complexity_level");
     if (saved === "low" || saved === "medium" || saved === "high") return saved;
-    if (saved === "complex") return "high";
     return "medium";
   });
   const setComplexityLevel = (lvl: ComplexityLevel) => {
     setComplexityLevelState(lvl);
     localStorage.setItem("tidyflow_complexity_level", lvl);
   };
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isRefining, setIsRefining] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [assistantNote, setAssistantNote] = useState<string | null>(null);
+  // Folders that came from the no-AI fallback; offered for regeneration once AI works.
+  const [planIsBasic, setPlanIsBasic] = usePersistentState<boolean>("tidyflow_plan_basic", false);
+  const [planChat, setPlanChat] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
 
-  // Review & Apply state — persistent across tab changes and page reloads
-  const [files, setFilesState] = useState<ClassifiedFile[]>(() => {
-    try {
-      const saved = localStorage.getItem("tidyflow_cached_files");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const setFiles = (newFiles: ClassifiedFile[] | ((prev: ClassifiedFile[]) => ClassifiedFile[])) => {
-    setFilesState((prev) => {
-      const next = typeof newFiles === "function" ? newFiles(prev) : newFiles;
-      try {
-        localStorage.setItem("tidyflow_cached_files", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const [summary, setSummaryState] = useState<RunSummary | null>(() => {
-    try {
-      const saved = localStorage.getItem("tidyflow_cached_summary");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-  const setSummary = (s: RunSummary | null | ((prev: RunSummary | null) => RunSummary | null)) => {
-    setSummaryState((prev) => {
-      const next = typeof s === "function" ? s(prev) : s;
-      try {
-        if (next) localStorage.setItem("tidyflow_cached_summary", JSON.stringify(next));
-        else localStorage.removeItem("tidyflow_cached_summary");
-      } catch {}
-      return next;
-    });
-  };
-
-  const [selectedFileIds, setSelectedFileIdsState] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem("tidyflow_selected_files");
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
+  // --- Results ---
+  const [files, setFiles] = usePersistentState<ClassifiedFile[]>("tidyflow_cached_files", []);
+  const [summary, setSummary] = usePersistentState<RunSummary | null>("tidyflow_cached_summary", null);
+  const [resultMeta, setResultMeta] = usePersistentState<ResultMeta | null>("tidyflow_result_meta", null);
+  const [selectedIdList, setSelectedIdList] = usePersistentState<string[]>("tidyflow_selected_files", []);
+  const selectedFileIds = useMemo(() => new Set(selectedIdList), [selectedIdList]);
   const setSelectedFileIds: React.Dispatch<React.SetStateAction<Set<string>>> = (val) => {
-    setSelectedFileIdsState((prev) => {
-      const next = typeof val === "function" ? val(prev) : val;
-      try {
-        localStorage.setItem("tidyflow_selected_files", JSON.stringify(Array.from(next)));
-      } catch {}
-      return next;
+    setSelectedIdList((prev) => {
+      const next = typeof val === "function" ? val(new Set(prev)) : val;
+      return Array.from(next);
     });
   };
-
-  const [categoryOverrides, setCategoryOverridesState] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem("tidyflow_category_overrides");
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-  const setCategoryOverrides: React.Dispatch<React.SetStateAction<Record<string, string>>> = (val) => {
-    setCategoryOverridesState((prev) => {
-      const next = typeof val === "function" ? val(prev) : val;
-      try {
-        localStorage.setItem("tidyflow_category_overrides", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const [filenameOverrides, setFilenameOverridesState] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem("tidyflow_filename_overrides");
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-  const setFilenameOverrides: React.Dispatch<React.SetStateAction<Record<string, string>>> = (val) => {
-    setFilenameOverridesState((prev) => {
-      const next = typeof val === "function" ? val(prev) : val;
-      try {
-        localStorage.setItem("tidyflow_filename_overrides", JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
+  const [categoryOverrides, setCategoryOverrides] = usePersistentState<Record<string, string>>(
+    "tidyflow_category_overrides",
+    {}
+  );
+  const [filenameOverrides, setFilenameOverrides] = usePersistentState<Record<string, string>>(
+    "tidyflow_filename_overrides",
+    {}
+  );
 
   const [moveMode, setMoveMode] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [applyResultModal, setApplyResultModal] = useState<{
-    count: number;
-    action: string;
-    output_dir: string;
-  } | null>(null);
+  const [doneResult, setDoneResult] = usePersistentState<DoneResult | null>("tidyflow_done_result", null);
+  const [undoState, setUndoState] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [undoMessage, setUndoMessage] = useState<string | null>(null);
 
-  // Search tab state
+  // --- Search ---
   const [ftsQuery, setFtsQuery] = useState("");
   const [ftsResults, setFtsResults] = useState<FtsResultItem[]>([]);
   const [isSearchingFts, setIsSearchingFts] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Settings state
+  // --- Settings ---
   const [llmProvider, setLlmProvider] = useState("deepseek");
   const [selectedModel, setSelectedModel] = useState("deepseek-v4-flash");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [autoThreshold, setAutoThreshold] = useState(0.85);
   const [maskedKey, setMaskedKey] = useState("");
   const [saveSettingsSuccess, setSaveSettingsSuccess] = useState(false);
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "categories">("general");
 
-  // --- API Handlers ---
+  // --- Derived ---
+  const activeFolderNames = useMemo(
+    () => Object.values(categories).filter((c) => c.active).map((c) => c.name),
+    [categories]
+  );
+  const hasResults = files.length > 0;
+  const resultsAreForThisFolder = hasResults && resultMeta?.inputDir === inputFolder;
+  const isStale =
+    hasResults && (!resultMeta || !resultsAreForThisFolder || !sameNames(resultMeta.categories, activeFolderNames));
+  const renameSuggestions = useMemo(
+    () => files.filter((f) => f.suggested_filename && f.suggested_filename !== f.filename),
+    [files]
+  );
+
+  const reachableSteps: FlowStep[] = useMemo(() => {
+    const steps: FlowStep[] = ["home"];
+    if (inputFolder) steps.push("plan");
+    if (hasResults && resultsAreForThisFolder) steps.push("preview");
+    return steps;
+  }, [inputFolder, hasResults, resultsAreForThisFolder]);
+
+  // --- API: status, settings, categories, latest results ---
 
   const checkStatus = async () => {
     try {
@@ -240,6 +233,7 @@ export default function App() {
         const data = await res.json();
         setBackendStatus("running");
         setHasLlmKey(data.has_llm_key);
+        setAiError(data.llm_error || null);
       } else {
         setBackendStatus("offline");
       }
@@ -253,12 +247,17 @@ export default function App() {
       const res = await fetch(`${API_BASE}/categories`);
       if (res.ok) {
         const data = await res.json();
-        if (data.categories && Object.keys(data.categories).length > 0) {
-          setCategories(data.categories);
+        // The saved plan is global; only use it if it was made for the folder now selected.
+        const planFolder = localStorage.getItem("tidyflow_plan_folder");
+        const currentFolder = localStorage.getItem("tidyflow_input_folder") || "";
+        if (data.categories && Object.keys(data.categories).length > 0 && planFolder === currentFolder) {
+          setCategories(toCategoryItems(data.categories));
         }
       }
     } catch (e) {
       console.error("Failed to load categories:", e);
+    } finally {
+      setCategoriesLoaded(true);
     }
   };
 
@@ -277,30 +276,27 @@ export default function App() {
     }
   };
 
+  /** The backend is the source of truth for the last run; drop any locally cached copy that disagrees. */
   const fetchLatestReport = async () => {
     try {
       const res = await fetch(`${API_BASE}/pipeline/latest`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.files && data.files.length > 0) {
-          setFiles(data.files);
-          setSummary(data.summary);
-          if (data.output_dir) setOutputFolder(data.output_dir);
-          if (data.input_dir) setInputFolder(data.input_dir);
-
-          // Pre-select high confidence files
-          const initialSelected = new Set<string>();
-          data.files.forEach((f: ClassifiedFile) => {
-            if (
-              f.confidence >= autoThreshold &&
-              f.category !== "Unknown" &&
-              f.action === "copy_to_organized"
-            ) {
-              initialSelected.add(f.file_id);
-            }
-          });
-          setSelectedFileIds(initialSelected);
-        }
+      if (!res.ok) return;
+      const data = await res.json();
+      const latest: ClassifiedFile[] = data.files || [];
+      if (latest.length === 0) {
+        clearResults();
+        return;
+      }
+      const sameRun =
+        files.length === latest.length && latest.every((f) => files.some((g) => g.file_id === f.file_id));
+      setFiles(latest);
+      setSummary(data.summary);
+      setResultMeta({ inputDir: data.input_dir || "", categories: data.categories || [] });
+      if (!sameRun) {
+        // A different run than the one cached here: reset per-file choices.
+        setCategoryOverrides({});
+        setFilenameOverrides({});
+        setSelectedFileIds(new Set(latest.filter((f) => f.action === "copy_to_organized").map((f) => f.file_id)));
       }
     } catch (e) {
       console.error("Failed to fetch latest report:", e);
@@ -312,27 +308,19 @@ export default function App() {
     fetchCategories();
     fetchSettings();
     fetchLatestReport();
-
-    // If no folder stored in localStorage, set default from system locations
-    if (!inputFolder) {
-      fetch(`${API_BASE}/fs/quick-locations`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.locations && data.locations.length > 0) {
-            const downloads = data.locations.find((l: any) => l.name === "Downloads");
-            const defPath = downloads ? downloads.path : data.locations[0].path;
-            setInputFolder(defPath);
-            setOutputFolder(`${defPath}/Organized_Output`);
-          }
-        })
-        .catch((err) => console.error("Could not fetch default location:", err));
-    }
+    fetch(`${API_BASE}/fs/quick-locations`)
+      .then((res) => res.json())
+      .then((data) => {
+        const locs: QuickLocation[] = data.locations || [];
+        setQuickLocations(locs);
+      })
+      .catch((err) => console.error("Could not fetch quick locations:", err));
 
     const interval = setInterval(checkStatus, 6000);
     return () => clearInterval(interval);
   }, []);
 
-  // Connect SSE for real-time progress updates
+  // Live progress from the backend while sorting
   useEffect(() => {
     let es: EventSource | null = null;
     try {
@@ -340,146 +328,213 @@ export default function App() {
       es.addEventListener("pipeline_progress", (e) => {
         try {
           const payload = JSON.parse(e.data);
-          if (payload.stage) {
-            setCurrentStage(payload.stage);
-          }
-          if (payload.message) {
-            setProgressLogs((prev) => [...prev, `> ${payload.message}`]);
-          }
+          if (payload.stage) setCurrentStage(payload.stage);
+          if (payload.message) setProgressLogs((prev) => [...prev, `> ${payload.message}`]);
         } catch {}
       });
       es.addEventListener("pipeline_error", (e) => {
         try {
           const payload = JSON.parse(e.data);
-          if (payload.error) {
-            setProgressLogs((prev) => [...prev, `✗ Error: ${payload.error}`]);
-          }
+          if (payload.error) setProgressLogs((prev) => [...prev, `✗ Error: ${payload.error}`]);
         } catch {}
       });
       es.addEventListener("pipeline_cancelled", () => {
         setIsRunning(false);
         setIsCancelling(false);
         setCurrentStage("Cancelled");
-        setProgressLogs((prev) => [...prev, "🛑 Pipeline was safely cancelled."]);
       });
     } catch (e) {
       console.warn("EventSource setup error:", e);
     }
-    return () => {
-      es?.close();
-    };
+    return () => es?.close();
   }, []);
 
-  const handleCancelPipeline = async () => {
-    setIsCancelling(true);
-    setProgressLogs((prev) => [...prev, "🛑 Halting active pipeline execution..."]);
+  // A sorting screen with nothing running (e.g. after an app restart) has nothing to show.
+  useEffect(() => {
+    if (step === "sorting" && !isRunning && !sortError && currentStage !== "Cancelled") {
+      setStepState(hasResults && resultsAreForThisFolder ? "preview" : inputFolder ? "plan" : "home");
+    }
+    if (step === "done" && !doneResult) setStepState("home");
+    if ((step === "plan" || step === "preview") && !inputFolder) setStepState("home");
+  }, [step]);
+
+  // --- Folder plan actions ---
+
+  const persistCategories = (cats: Record<string, CategoryItem>) => {
+    fetch(`${API_BASE}/categories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categories: cats }),
+    }).catch((e) => console.warn("Failed to save folders:", e));
+  };
+
+  const updateCategories = (cats: Record<string, CategoryItem>) => {
+    setCategories(cats);
+    persistCategories(cats);
+    localStorage.setItem("tidyflow_plan_folder", inputFolder);
+  };
+
+  /** Setter for the advanced editors, which save to the backend themselves. */
+  const setCategoriesFromEditor: React.Dispatch<React.SetStateAction<Record<string, CategoryItem>>> = (v) => {
+    setCategories(v);
+    localStorage.setItem("tidyflow_plan_folder", inputFolder);
+  };
+
+  const generationId = useRef(0);
+  const handleGeneratePlan = async (level: ComplexityLevel = complexityLevel) => {
+    if (!inputFolder) return;
+    const id = ++generationId.current;
+    setIsGenerating(true);
+    setPlanError(null);
+    setAssistantNote(null);
+    setPlanChat([]);
     try {
-      await fetch(`${API_BASE}/pipeline/cancel`, { method: "POST" });
-    } catch (e) {
-      console.warn("Pipeline cancel request failed:", e);
+      const res = await fetch(`${API_BASE}/ai/chat-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Analyze directory files and generate custom ${level} category taxonomy`,
+          history: [],
+          input_dir: inputFolder,
+          complexity_level: level,
+          auto_discover: true,
+        }),
+      });
+      if (!res.ok) throw new Error("We couldn't read that folder.");
+      const data = await res.json();
+      if (id !== generationId.current) return;
+      if (!data.categories || Object.keys(data.categories).length === 0) {
+        throw new Error("We couldn't come up with folders for this one.");
+      }
+      updateCategories(toCategoryItems(data.categories));
+      if (data.custom_instructions) setCustomInstructions(data.custom_instructions);
+      setAiError(data.ai_error || null);
+      setPlanIsBasic(!!data.ai_error || !hasLlmKey);
+    } catch (e: any) {
+      if (id === generationId.current) setPlanError(e?.message || "Something went wrong. Please try again.");
     } finally {
-      setTimeout(() => {
-        setIsRunning(false);
-        setIsCancelling(false);
-        setCurrentStage("Cancelled");
-        setProgressLogs((prev) => [...prev, "✓ Organization safely halted. No files were modified."]);
-      }, 500);
+      if (id === generationId.current) setIsGenerating(false);
     }
   };
 
-  // --- Category Actions ---
+  const handleRefinePlan = async (message: string) => {
+    const text = message.trim();
+    if (!text || !inputFolder) return;
+    setIsRefining(true);
+    setPlanError(null);
+    try {
+      const res = await fetch(`${API_BASE}/ai/chat-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: planChat,
+          input_dir: inputFolder,
+          current_categories: categories,
+          complexity_level: complexityLevel,
+          auto_discover: false,
+        }),
+      });
+      if (!res.ok) throw new Error("That change didn't work. Try saying it another way.");
+      const data = await res.json();
+      if (data.categories && Object.keys(data.categories).length > 0) {
+        updateCategories(toCategoryItems(data.categories));
+      }
+      if (data.custom_instructions) setCustomInstructions(data.custom_instructions);
+      setAiError(data.ai_error || null);
+      setAssistantNote(data.message || null);
+      setPlanChat((prev) => [
+        ...prev,
+        { role: "user", content: text },
+        { role: "assistant", content: data.message || "" },
+      ]);
+    } catch (e: any) {
+      setPlanError(e?.message || "Something went wrong. Please try again.");
+    } finally {
+      setIsRefining(false);
+    }
+  };
 
-  const handleToggleCategory = async (catName: string) => {
+  const handleChangeDetail = (level: ComplexityLevel) => {
+    if (level === complexityLevel) return;
+    setComplexityLevel(level);
+    handleGeneratePlan(level);
+  };
+
+  const handleRenameFolder = (oldName: string, newName: string) => {
+    if (!newName || newName === oldName || categories[newName]) return;
+    const next: Record<string, CategoryItem> = {};
+    Object.entries(categories).forEach(([k, v]) => {
+      if (k === oldName) next[newName] = { ...v, name: newName };
+      else next[k] = v;
+    });
+    updateCategories(next);
+  };
+
+  const handleRemoveFolder = (name: string) => {
+    const next = { ...categories };
+    delete next[name];
+    updateCategories(next);
+  };
+
+  const handleAddFolder = (name: string) => {
+    if (!name || Object.keys(categories).some((k) => k.toLowerCase() === name.toLowerCase())) return;
+    updateCategories({
+      ...categories,
+      [name]: { name, description: "", keywords: [], extensions: [], active: true },
+    });
+  };
+
+  // Suggest folders automatically the first time a folder reaches the plan step.
+  useEffect(() => {
+    if (
+      view === "flow" &&
+      step === "plan" &&
+      categoriesLoaded &&
+      activeFolderNames.length === 0 &&
+      !isGenerating &&
+      !planError
+    ) {
+      handleGeneratePlan();
+    }
+  }, [view, step, categoriesLoaded, activeFolderNames.length]);
+
+  // --- Category actions used by the advanced editors ---
+
+  const handleToggleCategory = (catName: string) => {
     const existing = categories[catName];
     if (!existing) return;
-
-    const updated = {
-      ...categories,
-      [catName]: { ...existing, active: !existing.active },
-    };
-    setCategories(updated);
-
-    try {
-      await fetch(`${API_BASE}/categories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: updated }),
-      });
-    } catch (e) {
-      console.error("Failed to update category state:", e);
-    }
+    updateCategories({ ...categories, [catName]: { ...existing, active: !existing.active } });
   };
 
-  const handleAddCategory = async (newCat: {
-    name: string;
-    description: string;
-    keywords: string[];
-    extensions: string[];
-  }) => {
-    const updated = {
-      ...categories,
-      [newCat.name]: {
-        name: newCat.name,
-        description: newCat.description,
-        keywords: newCat.keywords,
-        extensions: newCat.extensions,
-        active: true,
-      },
-    };
-
-    setCategories(updated);
-
-    try {
-      await fetch(`${API_BASE}/categories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: updated }),
-      });
-    } catch (e) {
-      console.error("Failed to save category:", e);
-    }
+  const handleAddCategory = (newCat: { name: string; description: string; keywords: string[]; extensions: string[] }) => {
+    updateCategories({ ...categories, [newCat.name]: { ...newCat, active: true } });
   };
 
-  const handleDeleteCategory = async (catName: string) => {
-    const updated = { ...categories };
-    delete updated[catName];
-    setCategories(updated);
+  const handleLoadPreset = (presetCats: Record<string, CategoryItem>) => updateCategories(presetCats);
 
-    try {
-      await fetch(`${API_BASE}/categories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: updated }),
-      });
-    } catch (e) {
-      console.error("Failed to delete category:", e);
-    }
+  // --- Sorting ---
+
+  const clearResults = () => {
+    setFiles([]);
+    setSummary(null);
+    setResultMeta(null);
+    setSelectedFileIds(new Set());
+    setCategoryOverrides({});
+    setFilenameOverrides({});
   };
-
-  const handleLoadPreset = async (presetCats: Record<string, CategoryItem>) => {
-    setCategories(presetCats);
-    try {
-      await fetch(`${API_BASE}/categories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: presetCats }),
-      });
-    } catch (e) {
-      console.error("Failed to save preset categories:", e);
-    }
-  };
-
-  // --- Pipeline Execution ---
 
   const handleStartPipeline = async (
     customCats?: Record<string, CategoryItem>,
     instructions?: string,
     complexity?: ComplexityLevel
   ) => {
-    if (!inputFolder.trim()) return;
+    if (!inputFolder.trim() || isRunning) return;
     setIsRunning(true);
+    setSortError(null);
     setCurrentStage("scan");
-    setProgressLogs([`> Initiating scan on ${inputFolder}`]);
+    setProgressLogs([`> Looking in ${inputFolder}`]);
+    setStep("sorting");
 
     const catsToUse = customCats || categories;
     const instructionsToUse = instructions !== undefined ? instructions : customInstructions;
@@ -488,11 +543,7 @@ export default function App() {
     const activeCats: Record<string, any> = {};
     Object.entries(catsToUse).forEach(([name, item]) => {
       if (item.active) {
-        activeCats[name] = {
-          description: item.description,
-          keywords: item.keywords,
-          extensions: item.extensions,
-        };
+        activeCats[name] = { description: item.description, keywords: item.keywords, extensions: item.extensions };
       }
     });
 
@@ -511,158 +562,152 @@ export default function App() {
           dry_run: true,
         }),
       });
-
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Pipeline run failed");
-      }
+      if (!res.ok) throw new Error(data.detail || data.error || "Sorting failed");
+      if (data.status === "cancelled") return;
 
-      setFiles(data.files || []);
+      const newFiles: ClassifiedFile[] = data.files || [];
+      setFiles(newFiles);
       setSummary(data.summary || null);
+      setResultMeta({ inputDir: data.input_dir || inputFolder.trim(), categories: data.categories || [] });
       setCategoryOverrides({});
+      setFilenameOverrides({});
       if (data.output_dir) setOutputFolder(data.output_dir);
-
-      // Auto-select high confidence files matching active categories
-      const preselected = new Set<string>();
-      (data.files || []).forEach((f: ClassifiedFile) => {
-        const isCustomMatch =
-          Object.keys(activeCats).length === 0 || activeCats[f.category] !== undefined;
-        if (
-          f.confidence >= autoThreshold &&
-          f.category !== "Unknown" &&
-          f.action === "copy_to_organized" &&
-          isCustomMatch
-        ) {
-          preselected.add(f.file_id);
-        }
-      });
-      setSelectedFileIds(preselected);
+      // Files the AI is sure about start included; the rest wait for the user.
+      setSelectedFileIds(new Set(newFiles.filter((f) => f.action === "copy_to_organized").map((f) => f.file_id)));
 
       setCurrentStage("finalize");
-      setProgressLogs((prev) => [
-        ...prev,
-        `✓ Prepared ${data.files?.length || 0} classified files!`,
-      ]);
-
-      // Automatically transition to the Review tab
       setTimeout(() => {
         setIsRunning(false);
-        setActiveTab("review");
-      }, 750);
+        setStep("preview");
+      }, 600);
     } catch (err: any) {
-      setProgressLogs((prev) => [...prev, `✗ Error: ${err.message}`]);
+      setSortError(err?.message || "Sorting failed");
       setCurrentStage("error");
-      setTimeout(() => setIsRunning(false), 2000);
+      setIsRunning(false);
+    }
+  };
+
+  const handleCancelPipeline = async () => {
+    setIsCancelling(true);
+    try {
+      await fetch(`${API_BASE}/pipeline/cancel`, { method: "POST" });
+    } catch (e) {
+      console.warn("Cancel request failed:", e);
+    } finally {
+      setTimeout(() => {
+        setIsRunning(false);
+        setIsCancelling(false);
+        setCurrentStage("Cancelled");
+      }, 500);
     }
   };
 
   const handleReclassifyWithTier = async (tier: ComplexityLevel) => {
     if (!inputFolder.trim() || isRunning) return;
     setComplexityLevel(tier);
-    setIsRunning(true);
-    setCurrentStage("scan");
-    setProgressLogs([`> Re-synthesizing taxonomy for ${tier.toUpperCase()} granularity...`]);
-
-    try {
-      // 1. Synthesize the new category structure for this tier using AI
-      const chatRes = await fetch(`${API_BASE}/ai/chat-structure`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: `Analyze directory files and generate custom ${tier} category taxonomy`,
-          history: [],
-          input_dir: inputFolder.trim(),
-          complexity_level: tier,
-          auto_discover: true,
-        }),
-      });
-
-      let nextCats = categories;
-      if (chatRes.ok) {
-        const chatData = await chatRes.json();
-        if (chatData.categories && Object.keys(chatData.categories).length > 0) {
-          const generated: Record<string, CategoryItem> = {};
-          Object.entries(chatData.categories).forEach(([name, c]: [string, any]) => {
-            generated[name] = {
-              name: c.name || name,
-              description: c.description || "",
-              keywords: c.keywords || [],
-              extensions: c.extensions || [],
-              active: c.active !== false,
-            };
-          });
-          nextCats = generated;
-          setCategories(generated);
-          // Persist to backend config
-          fetch(`${API_BASE}/categories`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ categories: generated }),
-          }).catch((e) => console.warn("Failed to persist reclassified categories:", e));
-        }
-      }
-
-      // 2. Re-run pipeline classification with the new tier's categories and threshold
-      await handleStartPipeline(nextCats, undefined, tier);
-    } catch (err: any) {
-      console.error("Reclassify failed:", err);
-      setIsRunning(false);
-    }
+    await handleGeneratePlan(tier);
+    setStep("plan");
   };
 
-  // --- Apply Decisions ---
+  // --- Organize (apply) ---
 
   const handleApplyDecisions = async () => {
-    if (selectedFileIds.size === 0) {
-      alert("Please select at least one file to organize.");
-      return;
-    }
-
+    if (selectedFileIds.size === 0) return;
     setIsApplying(true);
-    const decisionList: ApplyDecisionItem[] = [];
 
-    files.forEach((f) => {
-      const isApproved = selectedFileIds.has(f.file_id);
-      const overrideCat = categoryOverrides[f.file_id];
-      const targetName = filenameOverrides[f.file_id] || undefined;
-      decisionList.push({
-        file_id: f.file_id,
-        approved: isApproved,
-        override_category: overrideCat || undefined,
-        target_filename: targetName,
+    const decisionList: ApplyDecisionItem[] = files.map((f) => ({
+      file_id: f.file_id,
+      approved: selectedFileIds.has(f.file_id),
+      override_category: categoryOverrides[f.file_id] || undefined,
+      target_filename: filenameOverrides[f.file_id] || undefined,
+    }));
+    const perFolder = new Map<string, number>();
+    files
+      .filter((f) => selectedFileIds.has(f.file_id))
+      .forEach((f) => {
+        const folder = categoryOverrides[f.file_id] || f.category;
+        perFolder.set(folder, (perFolder.get(folder) || 0) + 1);
       });
-    });
+    const folders = [...perFolder.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    const folderCount = folders.length;
 
     try {
       const res = await fetch(`${API_BASE}/pipeline/apply-direct`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          output_dir: outputFolder,
-          decisions: decisionList,
-          dry_run: false,
-          move_mode: moveMode,
-        }),
+        body: JSON.stringify({ output_dir: outputFolder, decisions: decisionList, dry_run: false, move_mode: moveMode }),
       });
-
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Failed to apply decisions");
-      }
+      if (!res.ok) throw new Error(data.detail || data.error || "Failed to organize files");
 
-      setApplyResultModal({
-        count: data.applied_count,
-        action: data.action,
-        output_dir: data.output_dir,
-      });
+      setUndoState("idle");
+      setUndoMessage(null);
+      setDoneResult({ count: data.applied_count, action: data.action, outputDir: data.output_dir, folderCount, folders });
+      // These results have been used; Home shouldn't offer them again.
+      clearResults();
+      setStep("done");
     } catch (err: any) {
-      alert(`Failed to apply changes: ${err.message}`);
+      alert(`Couldn't organize the files: ${err.message}`);
     } finally {
       setIsApplying(false);
     }
   };
 
-  // --- Save Settings ---
+  const handleUndo = async () => {
+    setUndoState("working");
+    try {
+      const res = await fetch(`${API_BASE}/pipeline/undo-last`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Undo failed");
+      setUndoState("done");
+      setUndoMessage(
+        data.skipped > 0
+          ? `Undone. ${data.skipped} file${data.skipped === 1 ? " was" : "s were"} changed since, so we left ${data.skipped === 1 ? "it" : "them"}.`
+          : "Undone. Everything is back the way it was."
+      );
+    } catch (e: any) {
+      setUndoState("error");
+      setUndoMessage(e?.message || "Undo failed");
+    }
+  };
+
+  const handleTidyAnother = () => {
+    clearResults();
+    setDoneResult(null);
+    setUndoState("idle");
+    setUndoMessage(null);
+    setStep("home");
+  };
+
+  // --- Preview actions ---
+
+  const handleSetIncluded = (fileId: string, included: boolean) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (included) next.add(fileId);
+      else next.delete(fileId);
+      return next;
+    });
+  };
+
+  const handleMoveFile = (fileId: string, folder: string) => {
+    setCategoryOverrides((prev) => ({ ...prev, [fileId]: folder }));
+  };
+
+  const handleToggleRenames = (enabled: boolean) => {
+    if (!enabled) {
+      setFilenameOverrides({});
+      return;
+    }
+    const next: Record<string, string> = {};
+    renameSuggestions.forEach((f) => {
+      next[f.file_id] = f.suggested_filename as string;
+    });
+    setFilenameOverrides(next);
+  };
+
+  // --- Settings ---
 
   const handleSaveSettings = async () => {
     try {
@@ -677,6 +722,8 @@ export default function App() {
         }),
       });
       if (res.ok) {
+        const saved = await res.json().catch(() => ({}));
+        setAiError(saved.ai_error || null);
         setSaveSettingsSuccess(true);
         setApiKeyInput("");
         await fetchSettings();
@@ -687,19 +734,16 @@ export default function App() {
         alert(`Failed to save settings: ${data.detail || data.message || res.statusText}`);
       }
     } catch (e: any) {
-      console.error("Save settings error:", e);
       alert(`Failed to save settings: ${e.message || "Network error"}`);
     }
   };
 
-  // --- FTS Search ---
+  // --- Search ---
 
   const handleFtsSearch = async (queryOverride?: string) => {
     const q = (queryOverride !== undefined ? queryOverride : ftsQuery).trim();
     if (!q) return;
-    if (queryOverride !== undefined) {
-      setFtsQuery(queryOverride);
-    }
+    if (queryOverride !== undefined) setFtsQuery(queryOverride);
     setIsSearchingFts(true);
     setHasSearched(true);
     try {
@@ -709,7 +753,7 @@ export default function App() {
         setFtsResults(data.results || []);
       }
     } catch (e) {
-      console.error("FTS search error:", e);
+      console.error("Search error:", e);
     } finally {
       setIsSearchingFts(false);
     }
@@ -721,25 +765,50 @@ export default function App() {
     setHasSearched(false);
   };
 
+  // --- Folder picking ---
+
+  /** Switch the folder being organized; a different folder starts a fresh plan. */
   const handleSelectFolder = (path: string) => {
-    if (path !== inputFolder) {
-      setInputFolder(path);
-      setOutputFolder(`${path}/Organized_Output`);
-      setCategories({});
-      setCustomInstructions("");
-      setFiles([]);
-      setSummary(null);
-      setSelectedFileIds(new Set());
-      setCategoryOverrides({});
-      setFilenameOverrides({});
-      setProgressLogs([]);
-      setCurrentStage("");
-      localStorage.removeItem("tidyflow_cached_files");
-      localStorage.removeItem("tidyflow_cached_summary");
-      localStorage.removeItem("tidyflow_selected_files");
-      localStorage.removeItem("tidyflow_category_overrides");
-      localStorage.removeItem("tidyflow_filename_overrides");
-      localStorage.removeItem("tidyflow_custom_instructions");
+    if (path === inputFolder) return;
+    setInputFolder(path);
+    setOutputFolder(`${path}/Organized`);
+    setCategories({});
+    localStorage.removeItem("tidyflow_plan_folder");
+    setCustomInstructions("");
+    setPlanError(null);
+    setAssistantNote(null);
+    setPlanChat([]);
+    clearResults();
+    setProgressLogs([]);
+    setCurrentStage("");
+  };
+
+  const handlePickFolder = (path: string) => {
+    handleSelectFolder(path);
+    setStep("plan");
+  };
+
+  const handleBrowse = async (target: "source" | "destination") => {
+    try {
+      const res = await fetch(`${API_BASE}/fs/browse-native`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: target === "source" ? "Choose a folder to tidy" : "Choose where organized folders go",
+          initial_dir: target === "source" ? inputFolder : outputFolder,
+        }),
+      });
+      if (!res.ok) throw new Error("native picker unavailable");
+      const data = await res.json();
+      if (data.path && !data.cancelled) {
+        if (target === "source") handlePickFolder(data.path);
+        else setOutputFolder(data.path);
+      } else if (data.error) {
+        throw new Error(data.error);
+      }
+    } catch {
+      setFolderPickerTarget(target);
+      setFolderPickerOpen(true);
     }
   };
 
@@ -755,176 +824,119 @@ export default function App() {
     }
   };
 
-  const handleConfirmResetWorkspace = () => {
-    setInputFolderState("");
-    setOutputFolderState("");
-    localStorage.removeItem("tidyflow_input_folder");
-    localStorage.removeItem("tidyflow_output_folder");
-    localStorage.removeItem("tidyflow_cached_files");
-    localStorage.removeItem("tidyflow_cached_summary");
-    localStorage.removeItem("tidyflow_selected_files");
-    localStorage.removeItem("tidyflow_category_overrides");
-    localStorage.removeItem("tidyflow_filename_overrides");
-    localStorage.removeItem("tidyflow_custom_instructions");
-    localStorage.removeItem("tidyflow_complexity_level");
-    setCategories({});
-    setCustomInstructions("");
-    setFiles([]);
-    setSummary(null);
-    setSelectedFileIds(new Set());
-    setCategoryOverrides({});
-    setFilenameOverrides({});
-    setProgressLogs([]);
-    setCurrentStage("");
-    setComplexityLevel("medium");
-    setActiveTab("select_folder");
+  const goToStep = (s: FlowStep) => {
+    if (reachableSteps.includes(s)) setStep(s);
   };
 
-  return (
-    <div className="min-h-screen bg-[#f6f5f4] dark:bg-[#191919] text-[#000000] dark:text-[#ededed] flex flex-col font-sans selection:bg-[#0075de]/20 selection:text-[#005bab] transition-colors duration-200">
-      {/* Top Navigation Bar with Dark Mode Switch & Reset Workspace */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        backendStatus={backendStatus}
-        hasLlmKey={hasLlmKey}
-        fileCount={files.length}
-        darkMode={darkMode}
-        toggleDarkMode={toggleDarkMode}
-        onResetWorkspace={() => setIsResetModalOpen(true)}
-      />
+  // --- Render ---
 
-      {/* Reset Workspace Confirmation Modal */}
-      <ResetWorkspaceModal
-        isOpen={isResetModalOpen}
-        onClose={() => setIsResetModalOpen(false)}
-        onConfirm={handleConfirmResetWorkspace}
-        inputFolder={inputFolder}
-        categoryCount={Object.keys(categories).length}
-        fileCount={files.length}
-      />
+  const screenKey = view === "flow" ? `flow-${step}` : view;
 
-      {/* Directory Picker Modal for In-App Folder Browsing */}
-      <DirectoryPickerModal
-        isOpen={folderPickerOpen}
-        onClose={() => setFolderPickerOpen(false)}
-        onSelect={(path) => {
-          setFolderPickerOpen(false);
-          if (folderPickerTarget === "source") {
-            handleSelectFolder(path);
-          } else {
-            setOutputFolder(path);
-          }
-        }}
-        initialPath={folderPickerTarget === "source" ? inputFolder : outputFolder}
-        title={folderPickerTarget === "source" ? "Select Folder to Organize" : "Select Destination Folder"}
-        description={
-          folderPickerTarget === "source"
-            ? "Choose the cluttered folder you want TidyFlow to scan and file."
-            : "Choose where organized category folders should be created."
-        }
-      />
-
-      {/* Main Workspace Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8">
-        {activeTab === "welcome" && (
-          <GetStartedView
-            onGetStarted={() => {
-              localStorage.setItem("tidyflow_has_onboarded", "true");
-              setActiveTab("select_folder");
-            }}
-            recentFolder={inputFolder}
-            recentSummary={summary}
-            outputFolder={outputFolder}
-            onResumeRecent={() => {
-              localStorage.setItem("tidyflow_has_onboarded", "true");
-              setActiveTab("organize");
-            }}
-            onOpenOutputFolder={handleOpenPath}
-          />
-        )}
-
-        {activeTab === "select_folder" && (
-          <FolderSelectView
+  const renderFlowStep = () => {
+    switch (step) {
+      case "plan":
+        return (
+          <PlanScreen
             inputFolder={inputFolder}
-            setInputFolder={handleSelectFolder}
-            outputFolder={outputFolder}
-            setOutputFolder={setOutputFolder}
-            onContinue={() => setActiveTab("organize")}
-            onBack={() => setActiveTab("welcome")}
-            onOpenDirectoryPicker={(target) => {
-              setFolderPickerTarget(target);
-              setFolderPickerOpen(true);
-            }}
-            fileCount={files.length}
-            onNavigateToReview={() => setActiveTab("review")}
-          />
-        )}
-
-        {activeTab === "organize" && (
-          <OrganizeView
-            inputFolder={inputFolder}
-            setInputFolder={handleSelectFolder}
-            outputFolder={outputFolder}
-            setOutputFolder={setOutputFolder}
-            useLlm={useLlm}
-            setUseLlm={setUseLlm}
-            isRunning={isRunning}
-            currentStage={currentStage}
-            progressLogs={progressLogs}
             categories={categories}
-            setCategories={setCategories}
-            customInstructions={customInstructions}
-            setCustomInstructions={setCustomInstructions}
-            summary={summary}
-            backendStatus={backendStatus}
-            onStartPipeline={handleStartPipeline}
-            onNavigateToReview={() => setActiveTab("review")}
-            onNavigateToCategories={() => {
-              setSettingsSubTab("categories");
-              setActiveTab("settings");
-            }}
-            onChangeFolder={() => setActiveTab("select_folder")}
-            fileCount={files.length}
             complexityLevel={complexityLevel}
-            setComplexityLevel={setComplexityLevel}
-            onCancelPipeline={handleCancelPipeline}
-            isCancelling={isCancelling}
+            isGenerating={isGenerating}
+            isRefining={isRefining}
+            planError={planError}
+            assistantNote={assistantNote}
+            hasLlmKey={hasLlmKey}
+            aiError={aiError}
+            planIsBasic={planIsBasic}
+            onOpenSettings={() => setView("settings")}
+            onChangeDetail={handleChangeDetail}
+            onRegenerate={() => handleGeneratePlan()}
+            onRefine={handleRefinePlan}
+            onRename={handleRenameFolder}
+            onRemove={handleRemoveFolder}
+            onAdd={handleAddFolder}
+            onStart={() => handleStartPipeline()}
+            onBack={() => setStep("home")}
+            advancedMode={advancedMode}
+            onOpenAdvancedEditor={() => setView("advanced_plan")}
           />
-        )}
-
-        {activeTab === "review" && (
-          <ReviewView
+        );
+      case "sorting":
+        return (
+          <SortingScreen
+            inputFolder={inputFolder}
+            stage={currentStage}
+            logs={progressLogs}
+            isCancelling={isCancelling}
+            onCancel={handleCancelPipeline}
+            error={sortError}
+            onRetry={() => handleStartPipeline()}
+            onBack={() => setStep("plan")}
+          />
+        );
+      case "preview":
+        return (
+          <PreviewScreen
             files={files}
-            categories={categories}
-            setCategories={setCategories}
-            summary={summary}
+            folders={activeFolderNames}
             selectedFileIds={selectedFileIds}
-            setSelectedFileIds={setSelectedFileIds}
+            onSetIncluded={handleSetIncluded}
             categoryOverrides={categoryOverrides}
-            setCategoryOverrides={setCategoryOverrides}
-            filenameOverrides={filenameOverrides}
-            setFilenameOverrides={setFilenameOverrides}
+            onMoveFile={handleMoveFile}
             autoThreshold={autoThreshold}
-            outputFolder={outputFolder}
+            renameSuggestionCount={renameSuggestions.length}
+            renamesEnabled={Object.keys(filenameOverrides).length > 0}
+            onToggleRenames={handleToggleRenames}
             moveMode={moveMode}
             setMoveMode={setMoveMode}
+            outputFolder={outputFolder}
+            isStale={isStale}
+            onResort={() => handleStartPipeline()}
+            aiError={aiError}
+            onOpenSettings={() => setView("settings")}
             isApplying={isApplying}
-            applyResultModal={applyResultModal}
-            setApplyResultModal={setApplyResultModal}
-            onApplyDecisions={handleApplyDecisions}
-            onNavigateToOrganize={() => setActiveTab("organize")}
-            inputFolder={inputFolder}
-            onNavigateToSelectFolder={() => setActiveTab("select_folder")}
-            onNavigateToSearch={() => setActiveTab("search")}
-            complexityLevel={complexityLevel}
-            setComplexityLevel={setComplexityLevel}
-            onReclassifyWithTier={handleReclassifyWithTier}
-            isReclassifying={isRunning}
+            onApply={handleApplyDecisions}
+            onBack={() => setStep("plan")}
+            onOpenFile={handleOpenPath}
+            advancedMode={advancedMode}
+            onOpenAdvancedReview={() => setView("advanced_review")}
           />
-        )}
+        );
+      case "done":
+        return doneResult ? (
+          <DoneScreen
+            result={doneResult}
+            onOpenFolder={() => handleOpenPath(doneResult.outputDir)}
+            onUndo={handleUndo}
+            undoState={undoState}
+            undoMessage={undoMessage}
+            onTidyAnother={handleTidyAnother}
+          />
+        ) : null;
+      default:
+        return (
+          <HomeScreen
+            inputFolder={inputFolder}
+            outputFolder={outputFolder}
+            quickLocations={quickLocations}
+            onPickFolder={handlePickFolder}
+            onBrowse={() => handleBrowse("source")}
+            onChangeOutput={() => handleBrowse("destination")}
+            canResume={!!resultsAreForThisFolder && !isStale}
+            resumeFileCount={files.length}
+            onResume={() => setStep("preview")}
+            hasLlmKey={hasLlmKey}
+            aiError={aiError}
+            onOpenSettings={() => setView("settings")}
+            backendOnline={backendStatus !== "offline"}
+          />
+        );
+    }
+  };
 
-        {activeTab === "search" && (
+  const renderView = () => {
+    switch (view) {
+      case "search":
+        return (
           <SearchView
             ftsQuery={ftsQuery}
             setFtsQuery={setFtsQuery}
@@ -934,9 +946,9 @@ export default function App() {
             onSearch={handleFtsSearch}
             onClear={handleClearFts}
           />
-        )}
-
-        {(activeTab === "settings" || activeTab === "categories") && (
+        );
+      case "settings":
+        return (
           <SettingsView
             llmProvider={llmProvider}
             setLlmProvider={setLlmProvider}
@@ -953,12 +965,122 @@ export default function App() {
             setSubTab={setSettingsSubTab}
             categories={categories}
             onToggleCategory={handleToggleCategory}
-            onAddCategory={handleAddCategory}
-            onDeleteCategory={handleDeleteCategory}
-            onLoadPreset={handleLoadPreset}
+            onAddCategory={async (c) => handleAddCategory(c)}
+            onDeleteCategory={async (n) => handleRemoveFolder(n)}
+            onLoadPreset={async (c) => handleLoadPreset(c)}
+            advancedMode={advancedMode}
+            setAdvancedMode={setAdvancedMode}
+            hasLlmKey={hasLlmKey}
+            aiError={aiError}
+            darkMode={darkMode}
+            toggleDarkMode={toggleDarkMode}
           />
-        )}
+        );
+      case "advanced_plan":
+        return (
+          <Screen>
+            <OrganizeView
+              inputFolder={inputFolder}
+              setInputFolder={handlePickFolder}
+              outputFolder={outputFolder}
+              setOutputFolder={setOutputFolder}
+              useLlm={useLlm}
+              setUseLlm={setUseLlm}
+              isRunning={isRunning}
+              currentStage={currentStage}
+              progressLogs={progressLogs}
+              categories={categories}
+              setCategories={setCategoriesFromEditor}
+              customInstructions={customInstructions}
+              setCustomInstructions={setCustomInstructions}
+              summary={summary}
+              backendStatus={backendStatus}
+              onStartPipeline={handleStartPipeline}
+              onNavigateToReview={() => setStep("preview")}
+              onNavigateToCategories={() => setView("settings")}
+              onChangeFolder={() => setStep("home")}
+              fileCount={files.length}
+              complexityLevel={complexityLevel}
+              setComplexityLevel={setComplexityLevel}
+              onCancelPipeline={handleCancelPipeline}
+              isCancelling={isCancelling}
+            />
+          </Screen>
+        );
+      case "advanced_review":
+        return (
+          <Screen>
+            <ReviewView
+              files={files}
+              categories={categories}
+              setCategories={setCategoriesFromEditor}
+              summary={summary}
+              selectedFileIds={selectedFileIds}
+              setSelectedFileIds={setSelectedFileIds}
+              categoryOverrides={categoryOverrides}
+              setCategoryOverrides={setCategoryOverrides}
+              filenameOverrides={filenameOverrides}
+              setFilenameOverrides={setFilenameOverrides}
+              autoThreshold={autoThreshold}
+              outputFolder={outputFolder}
+              moveMode={moveMode}
+              setMoveMode={setMoveMode}
+              isApplying={isApplying}
+              applyResultModal={null}
+              setApplyResultModal={() => {}}
+              onApplyDecisions={handleApplyDecisions}
+              onNavigateToOrganize={() => setStep("plan")}
+              inputFolder={inputFolder}
+              onNavigateToSelectFolder={() => setStep("home")}
+              onNavigateToSearch={() => setView("search")}
+              complexityLevel={complexityLevel}
+              setComplexityLevel={setComplexityLevel}
+              onReclassifyWithTier={handleReclassifyWithTier}
+              isReclassifying={isRunning}
+            />
+          </Screen>
+        );
+      default:
+        return renderFlowStep();
+    }
+  };
+
+  return (
+    <div className="tf-ambient min-h-screen text-tf-ink flex flex-col font-sans selection:bg-tf-brand/20 transition-colors duration-300">
+      <TopBar
+        view={view}
+        step={step}
+        reachableSteps={reachableSteps}
+        onGoToStep={goToStep}
+        onOpenView={(v) => setView(v)}
+        darkMode={darkMode}
+        toggleDarkMode={toggleDarkMode}
+        backendStatus={backendStatus}
+      />
+
+      <DirectoryPickerModal
+        isOpen={folderPickerOpen}
+        onClose={() => setFolderPickerOpen(false)}
+        onSelect={(path) => {
+          setFolderPickerOpen(false);
+          if (folderPickerTarget === "source") handlePickFolder(path);
+          else setOutputFolder(path);
+        }}
+        initialPath={folderPickerTarget === "source" ? inputFolder : outputFolder}
+        title={folderPickerTarget === "source" ? "Choose a folder to tidy" : "Choose where organized folders go"}
+        description={
+          folderPickerTarget === "source"
+            ? "Pick the messy folder you'd like TidyFlow to sort."
+            : "TidyFlow will create the new folders here."
+        }
+      />
+
+      <main className="flex-1 w-full max-w-6xl mx-auto px-6 pt-8 pb-16">
+        <AnimatePresence mode="wait">
+          <div key={screenKey}>{renderView()}</div>
+        </AnimatePresence>
       </main>
     </div>
   );
 }
+

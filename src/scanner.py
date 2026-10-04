@@ -31,6 +31,20 @@ DEFAULT_IGNORED_NAMES: set[str] = {
 }
 
 
+# Directories that are really single documents/apps (macOS bundles and similar packages).
+# Their contents are internal files that must never be sorted individually.
+BUNDLE_DIR_SUFFIXES: tuple[str, ...] = (
+    ".app", ".framework", ".bundle", ".plugin", ".kext", ".appex", ".xpc", ".prefpane",
+    ".pkg", ".mpkg", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".imovielibrary",
+    ".fcpbundle", ".logicx", ".band", ".xcodeproj", ".xcworkspace", ".xcassets",
+    ".lproj", ".rtfd", ".pages", ".numbers", ".key", ".sketch", ".playground",
+)
+
+
+def is_bundle_dir(name: str) -> bool:
+    return name.lower().endswith(BUNDLE_DIR_SUFFIXES)
+
+
 def determine_file_category(ext: str) -> str:
     """Classify file extension into a general file category."""
     ext_lower = ext.lower()
@@ -81,6 +95,28 @@ def _matches_ignore(name: str, rel_path: Path, patterns: set[str]) -> bool:
     return False
 
 
+def iter_candidate_files(input_dir: Path, ignore_patterns: set[str] | None = None) -> Generator[Path, None, None]:
+    """Yield every file under input_dir that TidyFlow would consider organizing.
+
+    Single source of truth for what gets skipped: ignored names, hidden/system files,
+    and the insides of app/package bundles. Used by scanning and by folder suggestions.
+    """
+    patterns = ignore_patterns if ignore_patterns is not None else load_ignore_patterns(input_dir)
+    for root, dirs, files in os.walk(input_dir):
+        dirs[:] = sorted(
+            d for d in dirs
+            if not _matches_ignore(d, Path(root, d).relative_to(input_dir), patterns)
+            and not d.startswith(".")
+            and not is_bundle_dir(d)
+        )
+        for fname in sorted(files):
+            rel_p = Path(root, fname).relative_to(input_dir)
+            # Hidden/system files (".localized", "._foo", ".DS_Store") are never user documents.
+            if _matches_ignore(fname, rel_p, patterns) or fname.startswith((".", "~$")):
+                continue
+            yield Path(root) / fname
+
+
 def scan_directory(config: TidyConfig) -> list[FileRecord]:
     """
     Recursively walk config.input_dir and generate validated FileRecords.
@@ -96,21 +132,7 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
     if hasattr(config, "staging_dir") and config.staging_dir:
         ignore_patterns.add(config.staging_dir.name)
 
-    all_candidate_paths: list[Path] = []
-    for root, dirs, files in os.walk(input_dir):
-        # Filter out ignored directories in-place
-        dirs[:] = [
-            d for d in dirs
-            if not _matches_ignore(d, Path(root, d).relative_to(input_dir), ignore_patterns)
-            and not d.startswith(".")
-        ]
-
-        for fname in files:
-            rel_p = Path(root, fname).relative_to(input_dir)
-            if _matches_ignore(fname, rel_p, ignore_patterns) or fname.startswith("~$") or fname == ".tidyignore":
-                continue
-            all_candidate_paths.append(Path(root) / fname)
-
+    all_candidate_paths = list(iter_candidate_files(input_dir, ignore_patterns))
     all_candidate_paths.sort()
     logger.info("Found %d candidate files in %s", len(all_candidate_paths), input_dir)
 

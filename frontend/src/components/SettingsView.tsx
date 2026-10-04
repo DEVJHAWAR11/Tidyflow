@@ -1,6 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { Key, Cpu, Check, Sliders, Sparkles, Tags } from "lucide-react";
-import { CategoryItem } from "../types";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  KeyRound,
+  ChevronRight,
+  Sun,
+  Moon,
+  Check,
+} from "lucide-react";
+import type { CategoryItem } from "../types";
+import { Screen, Card, Button, Pill, Dot, StepHeader, SectionTitle, ease } from "../flow/ui";
 import { CategoriesView } from "./CategoriesView";
 
 export interface ModelOption {
@@ -191,7 +199,15 @@ export const PROVIDER_MODELS: Record<string, ModelOption[]> = {
   ],
 };
 
-interface SettingsViewProps {
+const PROVIDERS = [
+  { id: "deepseek", name: "DeepSeek", description: "Great value, very capable" },
+  { id: "groq", name: "Groq", description: "Very fast" },
+  { id: "gemini", name: "Google Gemini", description: "Google's AI" },
+  { id: "openai", name: "OpenAI", description: "ChatGPT's maker" },
+  { id: "openrouter", name: "OpenRouter", description: "Many models, one key" },
+];
+
+export interface SettingsViewProps {
   llmProvider: string;
   setLlmProvider: (val: string) => void;
   selectedModel: string;
@@ -215,9 +231,15 @@ interface SettingsViewProps {
   }) => Promise<void>;
   onDeleteCategory?: (catName: string) => Promise<void>;
   onLoadPreset?: (cats: Record<string, CategoryItem>) => Promise<void>;
+  advancedMode?: boolean;
+  setAdvancedMode?: (v: boolean) => void;
+  hasLlmKey?: boolean;
+  aiError?: string | null;
+  darkMode?: boolean;
+  toggleDarkMode?: () => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({
+export function SettingsView({
   llmProvider,
   setLlmProvider,
   selectedModel,
@@ -229,21 +251,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   setAutoThreshold,
   saveSuccess,
   onSaveSettings,
-  subTab: controlledSubTab,
-  setSubTab: controlledSetSubTab,
   categories = {},
   onToggleCategory,
   onAddCategory,
   onDeleteCategory,
   onLoadPreset,
-}) => {
-  const [internalSubTab, setInternalSubTab] = useState<"general" | "categories">("general");
-  const activeSubTab = controlledSubTab !== undefined ? controlledSubTab : internalSubTab;
-  const setActiveSubTab = controlledSetSubTab || setInternalSubTab;
+  advancedMode,
+  setAdvancedMode,
+  hasLlmKey,
+  aiError,
+  darkMode,
+  toggleDarkMode,
+}: SettingsViewProps) {
+  const [internalAdvancedMode, setInternalAdvancedMode] = useState(false);
+  const isAdvanced = advancedMode !== undefined ? advancedMode : internalAdvancedMode;
+
+  const [internalDarkMode, setInternalDarkMode] = useState(() => {
+    if (typeof document !== "undefined") {
+      return document.documentElement.classList.contains("dark");
+    }
+    return false;
+  });
+  const isDark = darkMode !== undefined ? darkMode : internalDarkMode;
+
+  const [showKeyHelp, setShowKeyHelp] = useState(false);
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+
+  const isLlmActive = hasLlmKey !== undefined ? hasLlmKey : Boolean(maskedKey || apiKeyInput.trim());
 
   const currentModelList = PROVIDER_MODELS[llmProvider] || PROVIDER_MODELS.deepseek;
 
-  // Auto-sync model if selected model is not valid for the active provider
   useEffect(() => {
     const isValid = currentModelList.some((m) => m.id === selectedModel);
     if (!isValid && currentModelList.length > 0) {
@@ -259,216 +296,341 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleToggleAdvanced = () => {
+    if (setAdvancedMode) {
+      setAdvancedMode(!isAdvanced);
+    } else {
+      setInternalAdvancedMode(!isAdvanced);
+    }
+  };
+
+  const handleToggleDarkMode = () => {
+    if (toggleDarkMode) {
+      toggleDarkMode();
+    } else {
+      if (typeof document !== "undefined") {
+        document.documentElement.classList.toggle("dark");
+      }
+      setInternalDarkMode(!isDark);
+    }
+  };
+
   const selectedModelObj = currentModelList.find((m) => m.id === selectedModel);
-  const activeCategoryCount = Object.values(categories).filter((c) => c.active).length;
-  const totalCategoryCount = Object.keys(categories).length;
+  const currentProvider = PROVIDERS.find((p) => p.id === llmProvider);
+  const providerLabel = currentProvider ? currentProvider.name : llmProvider;
 
   return (
-    <div className={`space-y-6 animate-fade-in mx-auto transition-all ${activeSubTab === "categories" ? "max-w-6xl" : "max-w-2xl"}`}>
-      {/* Settings Navigation Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e6e6e6] dark:border-[#2e2e2e] pb-4">
+    <Screen className="max-w-[720px] mx-auto pt-8 px-4 pb-16">
+      <StepHeader
+        title="Settings"
+        subtitle="Preferences for sorting and appearance."
+      />
+
+      <div className="mt-8 flex flex-col gap-8">
+        {/* Section 1: Smart sorting */}
         <div>
-          <div className="flex items-center gap-2 text-[13px] text-[#615d59] dark:text-[#9b9a97] mb-1 font-medium">
-            <span>Workspace</span>
-            <span>/</span>
-            <span className="text-[#000000] dark:text-[#ffffff]">Settings</span>
-            <span>/</span>
-            <span className="text-[#0075de] dark:text-[#38bdf8] font-semibold">
-              {activeSubTab === "general" ? "AI & Models" : "Categories & Rules"}
-            </span>
-          </div>
-          <h2 className="text-3xl font-bold text-[#000000] dark:text-[#ffffff] tracking-heading-1">
-            Settings
-          </h2>
-          <p className="text-[15px] text-[#615d59] dark:text-[#9b9a97] mt-1">
-            {activeSubTab === "general"
-              ? "Configure language model providers, API credentials, and sorting parameters."
-              : "Manage folder taxonomy, preset packs, keyword match rules, and file criteria."}
-          </p>
+          <SectionTitle>Smart sorting</SectionTitle>
+          <Card className="divide-y divide-tf-border overflow-hidden">
+            {/* Status row */}
+            <div className="px-4 py-3.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[13.5px] font-medium text-tf-ink">Status</span>
+                {aiError ? (
+                  <Pill tone="danger">
+                    <Dot />
+                    <span>Not working</span>
+                  </Pill>
+                ) : isLlmActive ? (
+                  <Pill tone="success">
+                    <Dot />
+                    <span>Connected · {providerLabel}</span>
+                  </Pill>
+                ) : (
+                  <Pill tone="neutral">
+                    <Dot />
+                    <span>Off</span>
+                  </Pill>
+                )}
+              </div>
+              {aiError && (
+                <div className="text-[12.5px] text-tf-danger">
+                  {aiError.replace(/\s+in Settings\.?$/i, ".")}
+                </div>
+              )}
+            </div>
+
+            {/* Provider row */}
+            <div className="p-4 space-y-2">
+              <div>
+                <div className="text-[13px] font-medium text-tf-ink">Provider</div>
+                <div className="text-[12.5px] text-tf-muted">
+                  TidyFlow sends file names and short text excerpts to this service.
+                </div>
+              </div>
+
+              <div className="rounded-[10px] border border-tf-border divide-y divide-tf-border overflow-hidden">
+                {PROVIDERS.map((p) => {
+                  const isSelected = llmProvider === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleProviderChange(p.id)}
+                      className={`w-full h-12 px-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer hover:bg-tf-surface-2 ${
+                        isSelected ? "bg-tf-surface-2/60" : "bg-tf-surface"
+                      }`}
+                    >
+                      <span
+                        className={`w-4 h-4 rounded-full shrink-0 transition-all ${
+                          isSelected
+                            ? "border-[5px] border-tf-primary bg-tf-surface"
+                            : "border border-tf-border-strong bg-tf-surface"
+                        }`}
+                      />
+                      <span className="text-[13.5px] font-medium text-tf-ink">{p.name}</span>
+                      <span className="text-[12.5px] text-tf-muted ml-auto truncate hidden sm:inline">
+                        {p.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* API key row */}
+            <div className="p-4 space-y-2">
+              <label className="block text-[13px] font-medium text-tf-ink">API key</label>
+              <div className="relative">
+                <KeyRound
+                  size={15}
+                  strokeWidth={1.75}
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-tf-faint pointer-events-none"
+                />
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="Paste a new key"
+                  className="w-full h-10 rounded-[8px] pl-9 pr-3 text-[13.5px] bg-tf-surface border border-tf-border-strong text-tf-ink placeholder:text-tf-faint focus:outline-none focus:border-tf-ink focus:ring-1 focus:ring-tf-ink transition-colors font-mono"
+                />
+              </div>
+
+              {maskedKey && (
+                <div className="text-[12.5px] text-tf-muted">
+                  Saved key <span className="font-mono text-tf-ink-2">{maskedKey}</span> · saved only on this computer
+                </div>
+              )}
+
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyHelp(!showKeyHelp)}
+                  className="text-[12.5px] text-tf-link hover:underline cursor-pointer"
+                >
+                  How do I get a key?
+                </button>
+                <AnimatePresence>
+                  {showKeyHelp && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.18, ease }}
+                      className="overflow-hidden mt-1.5"
+                    >
+                      <div className="text-[12.5px] text-tf-muted bg-tf-surface-2 p-3 rounded-[8px] border border-tf-border">
+                        Create an account on {providerLabel}'s website, open its API keys page, generate a key and paste it here.
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {/* Advanced options disclosure row */}
+            <div className="divide-y divide-tf-border">
+              <button
+                type="button"
+                onClick={() => setAdvancedOptionsOpen(!advancedOptionsOpen)}
+                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-tf-surface-2/50 transition-colors cursor-pointer"
+              >
+                <span className="text-[13.5px] font-medium text-tf-ink">Advanced options</span>
+                <ChevronRight
+                  size={15}
+                  strokeWidth={1.75}
+                  className={`text-tf-muted transition-transform duration-150 ${
+                    advancedOptionsOpen ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+
+              <AnimatePresence>
+                {advancedOptionsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.18, ease }}
+                    className="overflow-hidden"
+                  >
+                    <div className="p-4 space-y-4 bg-tf-surface-2/20">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[13px] font-medium text-tf-ink">Model</label>
+                          {selectedModelObj?.badge && (
+                            <Pill tone="brand">{selectedModelObj.badge}</Pill>
+                          )}
+                        </div>
+                        <select
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          className="w-full h-9 rounded-[9px] border border-tf-border-strong bg-tf-surface px-3 text-[13.5px] text-tf-ink focus:outline-none focus:border-tf-ink focus:ring-1 focus:ring-tf-ink transition-colors cursor-pointer"
+                        >
+                          {currentModelList.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name} {m.badge ? `(${m.badge})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedModelObj?.description && (
+                          <p className="text-[12px] text-tf-muted leading-snug">
+                            {selectedModelObj.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[13px]">
+                          <span className="font-medium text-tf-ink">Confidence threshold</span>
+                          <span className="font-medium text-tf-ink tf-num">
+                            {Math.round(autoThreshold * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="1.0"
+                          step="0.05"
+                          value={autoThreshold}
+                          onChange={(e) => setAutoThreshold(parseFloat(e.target.value))}
+                          className="w-full accent-[var(--color-tf-brand)] cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[12px] text-tf-muted">
+                          <span>Sort more on its own</span>
+                          <span>Ask me more often</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Footer row */}
+            <div className="px-4 py-3 flex justify-end gap-3 items-center bg-tf-surface-2/40">
+              {saveSuccess && (
+                <span className="inline-flex items-center gap-1.5 text-[12.5px] text-tf-success">
+                  <Check size={14} strokeWidth={2} />
+                  <span>Saved</span>
+                </span>
+              )}
+              <Button
+                variant="primary"
+                size="md"
+                onClick={onSaveSettings}
+              >
+                Save
+              </Button>
+            </div>
+          </Card>
         </div>
 
-        {/* Sub-Tab Switcher Pill */}
-        <div className="flex items-center p-1 bg-[#f6f5f4] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] shadow-2xs">
-          <button
-            onClick={() => setActiveSubTab("general")}
-            className={`px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center gap-2 transition cursor-pointer ${
-              activeSubTab === "general"
-                ? "bg-[#ffffff] dark:bg-[#2c2c2c] text-[#000000] dark:text-[#ffffff] shadow-[0_1px_2px_rgba(0,0,0,0.06)] border border-[#e6e6e6]/80 dark:border-[#383838]"
-                : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
-            }`}
-          >
-            <Cpu className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
-            <span>AI & Models</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab("categories")}
-            className={`px-4 py-2 rounded-lg text-[13px] font-semibold flex items-center gap-2 transition cursor-pointer ${
-              activeSubTab === "categories"
-                ? "bg-[#ffffff] dark:bg-[#2c2c2c] text-[#000000] dark:text-[#ffffff] shadow-[0_1px_2px_rgba(0,0,0,0.06)] border border-[#e6e6e6]/80 dark:border-[#383838]"
-                : "text-[#615d59] dark:text-[#9b9a97] hover:text-[#000000] dark:hover:text-[#ffffff]"
-            }`}
-          >
-            <Tags className="w-4 h-4 text-[#10b981] dark:text-[#34d399]" />
-            <span>Categories & Rules</span>
-            {totalCategoryCount > 0 && (
-              <span
-                className={`text-[11px] font-mono px-2 py-0.2 rounded-full font-semibold ${
-                  activeSubTab === "categories"
-                    ? "bg-[#0075de]/10 text-[#0075de] dark:bg-[#2383e2]/20 dark:text-[#38bdf8]"
-                    : "bg-[#e6e6e6] dark:bg-[#333333] text-[#615d59] dark:text-[#9b9a97]"
+        {/* Section 2: Appearance */}
+        <div>
+          <SectionTitle>Appearance</SectionTitle>
+          <Card className="p-4">
+            <div className="inline-flex bg-tf-surface-2 p-0.5 rounded-[9px] border border-tf-border">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isDark) handleToggleDarkMode();
+                }}
+                className={`inline-flex items-center gap-1.5 h-7 px-3 text-[13px] font-medium rounded-[7px] transition-all cursor-pointer ${
+                  !isDark
+                    ? "bg-tf-surface text-tf-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                    : "text-tf-muted hover:text-tf-ink"
                 }`}
               >
-                {activeCategoryCount}
-              </span>
+                <Sun size={14} strokeWidth={1.75} />
+                <span>Light</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isDark) handleToggleDarkMode();
+                }}
+                className={`inline-flex items-center gap-1.5 h-7 px-3 text-[13px] font-medium rounded-[7px] transition-all cursor-pointer ${
+                  isDark
+                    ? "bg-tf-surface text-tf-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                    : "text-tf-muted hover:text-tf-ink"
+                }`}
+              >
+                <Moon size={14} strokeWidth={1.75} />
+                <span>Dark</span>
+              </button>
+            </div>
+          </Card>
+        </div>
+
+        {/* Section 3: Advanced */}
+        <div>
+          <SectionTitle>Advanced</SectionTitle>
+          <Card className="divide-y divide-tf-border overflow-hidden">
+            <div className="px-4 py-3.5 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-medium text-tf-ink">
+                  Show advanced tools
+                </div>
+                <div className="text-[12.5px] text-tf-muted mt-0.5">
+                  Adds the detailed review table, rule editing and power-user controls.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isAdvanced}
+                onClick={handleToggleAdvanced}
+                className={`relative inline-flex items-center w-8 h-[18px] rounded-full transition-colors duration-150 cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-ink ${
+                  isAdvanced ? "bg-tf-primary" : "bg-tf-surface-3"
+                }`}
+              >
+                <motion.span
+                  layout
+                  transition={{ duration: 0.15, ease }}
+                  className={`block w-3.5 h-3.5 rounded-full ${
+                    isDark && isAdvanced ? "bg-tf-on-primary" : "bg-white"
+                  } shadow-sm ml-0.5 ${
+                    isAdvanced ? "translate-x-3.5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {isAdvanced && onToggleCategory && onAddCategory && onDeleteCategory && (
+              <div className="p-4">
+                <CategoriesView
+                  categories={categories}
+                  onToggleCategory={onToggleCategory}
+                  onAddCategory={onAddCategory}
+                  onDeleteCategory={onDeleteCategory}
+                  onLoadPreset={onLoadPreset}
+                  hideBreadcrumb
+                />
+              </div>
             )}
-          </button>
+          </Card>
         </div>
       </div>
-
-      {/* Sub-Tab 1: AI & Models */}
-      {activeSubTab === "general" && (
-        <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] space-y-6">
-          {/* 1. Language Model Provider Select */}
-          <div>
-            <label className="block text-[13px] font-semibold text-[#000000] dark:text-[#ffffff] mb-1 flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
-              <span>Language Model Provider</span>
-            </label>
-            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mb-2">
-              Select the model provider platform used for reading and classifying file contents.
-            </p>
-            <select
-              value={llmProvider}
-              onChange={(e) => handleProviderChange(e.target.value)}
-              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3.5 py-2.5 text-[13px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919] cursor-pointer font-medium"
-            >
-              <option value="deepseek">DeepSeek</option>
-              <option value="groq">Groq</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI</option>
-              <option value="openrouter">OpenRouter</option>
-            </select>
-          </div>
-
-          {/* 2. Dynamic Model Selection Dropdown */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-[13px] font-semibold text-[#000000] dark:text-[#ffffff] flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#f59e0b] dark:text-[#fbbf24]" />
-                <span>Model Selection</span>
-              </label>
-              {selectedModelObj?.badge && (
-                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#eff6ff] dark:bg-[#1e3a8a]/40 text-[#1d4ed8] dark:text-[#93c5fd] border border-[#bfdbfe] dark:border-[#1e40af]">
-                  {selectedModelObj.badge}
-                </span>
-              )}
-            </div>
-            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mb-2">
-              Choose from the latest active, in-service models for {llmProvider.toUpperCase()}.
-            </p>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3.5 py-2.5 text-[13px] text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919] cursor-pointer font-medium"
-            >
-              {currentModelList.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} {m.badge ? `— [${m.badge}]` : ""}
-                </option>
-              ))}
-            </select>
-            {selectedModelObj?.description && (
-              <p className="text-[11px] text-[#86837e] dark:text-[#a1a1aa] mt-1.5 font-sans">
-                ℹ️ {selectedModelObj.description}
-              </p>
-            )}
-          </div>
-
-          <div className="border-t border-[#e6e6e6] dark:border-[#2e2e2e]" />
-
-          {/* 3. API Key Input */}
-          <div>
-            <label className="block text-[13px] font-semibold text-[#000000] dark:text-[#ffffff] mb-1 flex items-center gap-2">
-              <Key className="w-4 h-4 text-[#9b51e0] dark:text-[#d8b4fe]" />
-              <span>Provider API Key</span>
-              {maskedKey && (
-                <span className="text-[11px] text-[#166534] dark:text-[#4ade80] bg-[#ecf7ed] dark:bg-[#0c3917]/40 border border-[#1aae39]/30 px-2 py-0.2 rounded-full font-mono">
-                  Active: {maskedKey}
-                </span>
-              )}
-            </label>
-            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mb-2">
-              Your key is encrypted locally and stored in your operating system's secure keyring.
-            </p>
-            <input
-              type="password"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder={maskedKey ? "Enter new key to update..." : "sk-..."}
-              className="w-full bg-[#f6f5f4] dark:bg-[#191919] border border-[#e6e6e6] dark:border-[#333333] rounded-md px-3.5 py-2.5 text-[13px] font-mono text-[#000000] dark:text-[#ffffff] focus:outline-none focus:border-[#0075de] dark:focus:border-[#2383e2] focus:bg-[#ffffff] dark:focus:bg-[#191919]"
-            />
-          </div>
-
-          <div className="border-t border-[#e6e6e6] dark:border-[#2e2e2e]" />
-
-          {/* 4. Auto Threshold Slider */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-[13px] font-semibold text-[#000000] dark:text-[#ffffff] flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-[#dd5b00] dark:text-[#fb923c]" />
-                <span>Auto-Approval Confidence Threshold</span>
-              </label>
-              <span className="text-[13px] font-mono font-bold text-[#0075de] dark:text-[#2383e2]">
-                {Math.round(autoThreshold * 100)}%
-              </span>
-            </div>
-            <p className="text-[12px] text-[#615d59] dark:text-[#9b9a97] mb-3">
-              Files with classification confidence at or above this score are automatically selected for organization.
-            </p>
-            <input
-              type="range"
-              min="0.5"
-              max="1.0"
-              step="0.05"
-              value={autoThreshold}
-              onChange={(e) => setAutoThreshold(parseFloat(e.target.value))}
-              className="w-full accent-[#0075de] dark:accent-[#2383e2] cursor-pointer"
-            />
-            <div className="flex justify-between text-[11px] text-[#a39e98] font-mono mt-1">
-              <span>50% (Permissive)</span>
-              <span>85% (Standard)</span>
-              <span>100% (Strict)</span>
-            </div>
-          </div>
-
-          {saveSuccess && (
-            <div className="bg-[#ecf7ed] dark:bg-[#0c3917]/40 border border-[#1aae39]/30 text-[#166534] dark:text-[#4ade80] text-[13px] p-3 rounded-lg flex items-center gap-2 font-medium">
-              <Check className="w-4 h-4" />
-              <span>Settings saved successfully!</span>
-            </div>
-          )}
-
-          <button
-            onClick={onSaveSettings}
-            className="w-full py-2.5 bg-[#0075de] dark:bg-[#2383e2] hover:bg-[#005bab] dark:hover:bg-[#1d70c2] text-white font-semibold text-[14px] rounded-full shadow-xs transition active:scale-97 cursor-pointer"
-          >
-            Save Configuration
-          </button>
-        </div>
-      )}
-
-      {/* Sub-Tab 2: Categories & Rules */}
-      {activeSubTab === "categories" && onToggleCategory && onAddCategory && onDeleteCategory && (
-        <CategoriesView
-          categories={categories}
-          onToggleCategory={onToggleCategory}
-          onAddCategory={onAddCategory}
-          onDeleteCategory={onDeleteCategory}
-          onLoadPreset={onLoadPreset}
-          hideBreadcrumb={true}
-        />
-      )}
-    </div>
+    </Screen>
   );
-};
+}

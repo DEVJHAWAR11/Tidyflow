@@ -10,7 +10,6 @@ import {
   clearCategoryHistory,
 } from "../utils/categoryHistory";
 import { QuickTriageModal } from "./QuickTriageModal";
-import { WorkflowStepper } from "./WorkflowStepper";
 import { ApplySuccessModal } from "./ApplySuccessModal";
 import { TierChangeConfirmModal } from "./TierChangeConfirmModal";
 import { CategoryHistoryModal } from "./CategoryHistoryModal";
@@ -20,7 +19,7 @@ import {
   FileText,
   Eye,
   X,
-  Sparkles,
+  SlidersHorizontal,
   Send,
   Loader2,
   FolderCheck,
@@ -389,7 +388,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     });
 
     setAiFeedback(
-      `✓ Applied ${Object.keys(clusters).length} cluster categories to ${
+      `Applied ${Object.keys(clusters).length} cluster categories to ${
         Object.keys(overrides).length
       } files!`
     );
@@ -610,15 +609,6 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-16">
       {/* Interactive Workflow Stepper */}
-      <WorkflowStepper
-        currentStep="review"
-        inputFolder={inputFolder}
-        fileCount={files.length}
-        onNavigate={(step) => {
-          if (step === "select_folder" && onNavigateToSelectFolder) onNavigateToSelectFolder();
-          else if (step === "blueprint" && onNavigateToOrganize) onNavigateToOrganize();
-        }}
-      />
 
       {/* Header with Title, Breadcrumb, and Minimal Granularity Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -710,7 +700,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         <div className="bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] shadow-[0_1px_3px_rgba(0,0,0,0.02)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.3)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
           <div className="flex items-center gap-3.5">
             <div className="p-2.5 rounded-xl bg-[#fff7ed] dark:bg-[#451a03]/40 text-[#c2410c] dark:text-[#fb923c] border border-[#ffedd5] dark:border-[#9a3412]/30 shrink-0">
-              <Sparkles className="w-5 h-5" />
+              <SlidersHorizontal className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -740,7 +730,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-3.5 h-3.5" />
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
                   <span>Auto-Cluster with AI</span>
                 </>
               )}
@@ -759,7 +749,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       {/* AI Quick Edit Command Bar */}
       <div className="bg-[#ffffff] dark:bg-[#202020] p-4 rounded-xl border border-[#0075de]/30 dark:border-[#2383e2]/40 shadow-[0_2px_8px_rgba(0,117,222,0.06)] space-y-3">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
+          <SlidersHorizontal className="w-4 h-4 text-[#0075de] dark:text-[#2383e2]" />
           <span className="text-[13px] font-bold text-[#000000] dark:text-[#ffffff]">
             AI Edit Assistant
           </span>
@@ -804,9 +794,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             <span>{aiFeedback}</span>
             <button
               onClick={() => setAiFeedback(null)}
-              className="text-xs hover:underline cursor-pointer"
+              className="text-xs hover:underline cursor-pointer p-0.5"
             >
-              ✕
+              <X className="w-3 h-3" />
             </button>
           </div>
         )}
@@ -828,9 +818,9 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-2 text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] text-xs cursor-pointer"
+                className="absolute right-2.5 top-2 text-[#a39e98] hover:text-[#000000] dark:hover:text-[#ffffff] text-xs cursor-pointer p-0.5"
               >
-                ✕
+                <X className="w-3 h-3" />
               </button>
             )}
           </div>
@@ -871,7 +861,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               title="Apply all AI suggested file renames"
               className="px-3 py-1 text-[12px] font-medium bg-[#0075de]/10 dark:bg-[#0075de]/20 hover:bg-[#0075de]/20 dark:hover:bg-[#0075de]/30 text-[#0075de] dark:text-[#38bdf8] rounded-md border border-[#0075de]/30 transition cursor-pointer flex items-center gap-1.5 active:scale-97"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
               <span>Accept All AI Renames ({renameableFilesCount})</span>
             </button>
           )}
@@ -983,7 +973,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 onClick={() => { setIsAddingCategory(false); setNewCatName(""); }}
                 className="text-[#86868b] hover:text-[#000000] dark:hover:text-[#ffffff] text-xs px-1 cursor-pointer"
               >
-                ✕
+                <X className="w-3 h-3" />
               </button>
             </form>
           ) : (
@@ -1002,8 +992,8 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       {/* Files Table */}
       {filteredFiles.length === 0 ? (
         <div className="bg-[#ffffff] dark:bg-[#202020] rounded-xl border border-[#e6e6e6] dark:border-[#2e2e2e] p-12 text-center space-y-3 shadow-xs">
-          <div className="w-12 h-12 rounded-full bg-[#f6f5f4] dark:bg-[#282828] text-[#615d59] dark:text-[#9b9a97] mx-auto flex items-center justify-center text-xl">
-            📂
+          <div className="w-12 h-12 rounded-full bg-[#f6f5f4] dark:bg-[#282828] text-[#615d59] dark:text-[#9b9a97] mx-auto flex items-center justify-center">
+            <FolderOpen className="w-6 h-6" />
           </div>
           <h3 className="text-base font-bold text-[#000000] dark:text-[#ffffff]">No files match your query</h3>
           <p className="text-[13px] text-[#615d59] dark:text-[#9b9a97] max-w-md mx-auto">
@@ -1166,7 +1156,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                                 <Check className="w-3 h-3 group-hover/chip:hidden text-[#0075de] dark:text-[#38bdf8]" />
                                 <X className="w-3 h-3 hidden group-hover/chip:inline text-[#ff3b30]" />
                                 <span>Rename active</span>
-                                <span className="text-[10px] text-[#86868b] group-hover/chip:text-[#ff3b30]">(click to deselect ✕)</span>
+                                <span className="text-[10px] text-[#86868b] group-hover/chip:text-[#ff3b30]">(click to deselect)</span>
                               </button>
                             ) : file.suggested_filename && file.suggested_filename !== file.filename ? (
                               <button
@@ -1176,7 +1166,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                                 title="Click to select AI suggested rename"
                                 className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-md text-[11px] font-mono bg-[#f2f2f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#a1a1a6] hover:bg-[#0075de]/10 hover:text-[#0075de] dark:hover:text-[#38bdf8] hover:border-[#0075de]/30 border border-transparent transition cursor-pointer"
                               >
-                                <Sparkles className="w-3 h-3 text-[#0075de] dark:text-[#38bdf8]" />
+                                <SlidersHorizontal className="w-3.5 h-3.5 text-[#0075de] dark:text-[#38bdf8]" />
                                 <span>AI Suggests:</span>
                                 <span className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{file.suggested_filename}</span>
                               </button>
@@ -1237,7 +1227,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                         {isOverridden ? (
                           <div className="flex items-center gap-1.5">
                             <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold font-mono bg-[#0075de]/10 dark:bg-[#0075de]/20 text-[#0075de] dark:text-[#38bdf8] border border-[#0075de]/30 flex items-center gap-1">
-                              <Sparkles className="w-2.5 h-2.5" />
+                              <SlidersHorizontal className="w-2.5 h-2.5" />
                               <span>Assigned</span>
                             </span>
                             <span
@@ -1277,7 +1267,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                         </p>
                         {file.near_duplicate_group_id && (
                           <span className="inline-block mt-0.5 text-[10px] text-[#9a3412] dark:text-[#fb923c] bg-[#fef3eb] dark:bg-[#4a1c07]/40 border border-[#dd5b00]/30 px-1.5 py-0.2 rounded font-mono">
-                            ⚠️ Near-duplicate
+                            Near-duplicate
                           </span>
                         )}
                       </td>
@@ -1444,7 +1434,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="w-14 h-14 rounded-full bg-[#ecf7ed] dark:bg-[#0c3917]/40 text-[#166534] dark:text-[#4ade80] mx-auto flex items-center justify-center text-2xl">
-                ✓
+                <Check className="w-8 h-8" />
               </div>
               <h3 className="text-xl font-bold text-[#000000] dark:text-[#ffffff]">
                 Files Successfully Organized!
@@ -1500,7 +1490,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <div className="flex items-center justify-between border-b border-[#e6e6e6] dark:border-[#303030] pb-3">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 rounded-lg bg-[#f59e0b]/10 text-[#f59e0b]">
-                    <Sparkles className="w-5 h-5" />
+                    <SlidersHorizontal className="w-5 h-5" />
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-[#000000] dark:text-[#ffffff]">

@@ -20,7 +20,7 @@ import {
   Check,
   ArrowRight,
   Loader2,
-  Sparkles,
+  SlidersHorizontal,
   Grid2X2,
   LayoutGrid,
   Layers,
@@ -426,7 +426,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
       <div className="bg-[#ffffff] dark:bg-[#1c1c1e] rounded-2xl border border-[#e5e5e7] dark:border-[#2c2c2e] shadow-sm p-8 max-w-4xl mx-auto space-y-8 animate-fade-in">
         <div className="text-center space-y-3">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-[#0075de]/10 dark:bg-[#0075de]/20 text-[#0075de] dark:text-[#38bdf8] flex items-center justify-center">
-            <Sparkles className="w-7 h-7" />
+            <SlidersHorizontal className="w-7 h-7" />
           </div>
           <div>
             <h3 className="text-xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] tracking-tight">
@@ -504,7 +504,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
               </>
             ) : (
               <>
-                <Sparkles className="w-4 h-4" />
+                <SlidersHorizontal className="w-4 h-4" />
                 <span>Scan & Auto-Generate Categories for "{folderName}"</span>
                 <ArrowRight className="w-4 h-4" />
               </>

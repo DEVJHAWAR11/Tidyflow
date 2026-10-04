@@ -142,7 +142,7 @@ export const PRESET_PACKS: PresetPack[] = [
   {
     id: "standard",
     name: "Full Standard Taxonomy",
-    emoji: "🌟",
+    emoji: "",
     description: "Complete 18-category all-purpose organization across Finance, Legal, Work, Personal, Media & Dev.",
     prompt: "Use the complete standard organization structure covering Finance (Invoices, Receipts, Tax, Statements), Legal (Contracts, IDs), Work (Docs, Resumes, Spreadsheets, Presentations), Personal (Photos, Notes), Development (Code, Data), Media (Audio, Video), and Archives.",
     categories: DEFAULT_STANDARD_CATEGORIES,
@@ -150,7 +150,7 @@ export const PRESET_PACKS: PresetPack[] = [
   {
     id: "developer",
     name: "Developer Workspace",
-    emoji: "💻",
+    emoji: "",
     description: "Source code, JSON/YAML/SQL configs & datasets, technical docs, and archives.",
     prompt: "Group my programming files: code and scripts into Development/Source_Code, JSON/YAML/SQL datasets into Development/Data, technical documentation into Development/Docs, and zip archives into Cold_Storage/Archives.",
     categories: {
@@ -187,7 +187,7 @@ export const PRESET_PACKS: PresetPack[] = [
   {
     id: "media",
     name: "Creative Media & Photos",
-    emoji: "🎨",
+    emoji: "",
     description: "Photography, design vectors/SVGs, screen recordings, and audio tracks.",
     prompt: "Organize media files: photos and RAW images into Media/Photos, graphic design assets and SVGs into Media/Design_Assets, screen recordings into Media/Recordings, and audio files into Media/Audio.",
     categories: {
@@ -224,7 +224,7 @@ export const PRESET_PACKS: PresetPack[] = [
   {
     id: "downloads",
     name: "Declutter Downloads",
-    emoji: "🧹",
+    emoji: "",
     description: "Fast sorting for screenshots, PDFs, software installers (.dmg, .pkg), and archives.",
     prompt: "Clean up my Downloads folder: route screenshots to Temp/Screenshots, PDF documents to Documents/PDFs, software installers (.dmg, .pkg, .zip) to Installers, and keep everything else in Misc.",
     categories: {

@@ -115,6 +115,12 @@ def apply_decisions(
 
         dest_dir = output_dir / category
         dest_path = resolve_filename_collision(dest_dir, filename, rec.sha256)
+        if dest_path.exists():
+            # Same name and same content hash already there: this file was organized before.
+            # Skipping keeps undo safe, since every manifest entry is then a file we created.
+            logger.info("Already organized, skipping %s", rec.filename)
+            skipped_count += 1
+            continue
 
         if dry_run:
             logger.info("[DRY RUN] %s → %s", rec.abs_path, dest_path)
