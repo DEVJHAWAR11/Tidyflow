@@ -9,14 +9,18 @@ import { FolderIcon } from "../flow/icons";
 const cancelAll = (list: Cancelable[]) => list.forEach((a) => a.cancel());
 
 /* ------------------------------------------------------------------ */
-/* Sorting: hovers and flicks files from the wand into folders.        */
+/* Sorting: hovers quietly, and flicks a file into a folder only when   */
+/* sorting actually moves forward, so it never feels like a loop.      */
 /* ------------------------------------------------------------------ */
 
-export function SortingWizard() {
+const SORT_STAGES = ["scan", "extract", "classify", "finalize"];
+
+export function SortingWizard({ stage: progress }: { stage: string }) {
   const reduced = useReducedMotion();
   const stage = useRef<HTMLDivElement>(null);
   const wiz = useRef<WizardHandle>(null);
   const plates = useRef<(HTMLDivElement | null)[]>([]);
+  const throwRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const w = wiz.current;
@@ -26,7 +30,11 @@ export function SortingWizard() {
     const timers: number[] = [];
     let n = 0;
 
+    let lastCast = -Infinity;
     const throwFile = () => {
+      // Quick stages can arrive back to back; keep casts at least 1.5s apart.
+      if (performance.now() - lastCast < 1500) return;
+      lastCast = performance.now();
       const { anims, release } = cast(w);
       running.push(...anims);
       timers.push(
@@ -67,15 +75,33 @@ export function SortingWizard() {
       );
     };
 
-    throwFile();
-    const loop = window.setInterval(throwFile, 1300);
+    throwRef.current = throwFile;
     return () => {
-      window.clearInterval(loop);
+      throwRef.current = null;
       timers.forEach(clearTimeout);
       cancelAll(running);
       s.querySelectorAll(".tf-flying-file").forEach((f) => f.remove());
     };
   }, [reduced]);
+
+  // One cast each time sorting reaches a new stage.
+  useEffect(() => {
+    if (SORT_STAGES.includes(progress)) throwRef.current?.();
+  }, [progress]);
+
+  // Choosing folders is the long AI stage: an occasional cast so it never looks frozen.
+  useEffect(() => {
+    if (progress !== "classify") return;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        throwRef.current?.();
+        schedule();
+      }, 6000 + Math.random() * 4000);
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [progress]);
 
   return (
     <div ref={stage} className="relative h-[150px] w-full select-none text-tf-ink">
