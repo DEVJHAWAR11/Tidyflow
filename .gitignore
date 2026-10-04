@@ -35,3 +35,5 @@ Organized_Output/
 d o c s /  
  i n t e r v i e w - p r e p /  
  t i d y f l o w - m a s t e r - p r o m p t . m d
+# Local Claude Code config
+.claude/
