@@ -131,9 +131,18 @@ CATEGORY DEFINITIONS & CONTEXT:
 
 {custom_instructions}
 
+CONFIDENCE CALIBRATION (be honest, do not default to 1.0):
+- 0.95-1.0: filename AND content both clearly point to this category.
+- 0.75-0.94: a solid match, but based mostly on the filename, extension or partial content.
+- 0.40-0.74: a plausible guess; a human should double-check it.
+- below 0.40: weak evidence; prefer "Unknown".
+
 CRITICAL RULES:
 1. Classify each file into the BEST matching category based on its content, filename, extension, and context.
-2. Use "Unknown" only when no category is a reasonable fit.
+2. ALWAYS PICK THE CLOSEST CATEGORY. If the fit is only partial (e.g. a certificate when there is a study or
+   documents category, a registration form when there is a documents category), still choose that category and
+   lower the confidence (0.4-0.75) so a person can confirm it. Use "Unknown" only when the file is unreadable AND
+   its name gives no hint at all.
 3. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
 4. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
 5. Keep reason concise (under 12 words).
@@ -167,9 +176,15 @@ CATEGORY DEFINITIONS & CONTEXT:
 
 {custom_instructions}
 
+CONFIDENCE CALIBRATION (be honest, do not default to 1.0):
+- 0.95-1.0: filename AND content both clearly point to this category.
+- 0.75-0.94: a solid match, but based mostly on the filename, extension or partial content.
+- 0.40-0.74: a plausible guess; a human should double-check it.
+- below 0.40: weak evidence; prefer "Unknown".
+
 CRITICAL RULES:
 1. STRICT RELEVANCE: Only classify a file into a category if its extracted text, filename, or context specifically, clearly, and directly matches that category's purpose.
-2. UNRELATED FILES MUST BE "Unknown": If a file does NOT clearly fit the specific categories above (for example: an unrelated online course certificate, general screenshots, generic downloads, or miscellaneous files), you MUST classify it as "Unknown" (confidence: 0.0 to 0.2, action: "manual_review").
+2. UNRELATED FILES MUST BE "Unknown": If a file does NOT clearly fit the specific categories above, you MUST classify it as "Unknown" (confidence: 0.0 to 0.2, action: "manual_review").
 3. DO NOT FORCE CATEGORIZE: Never force an unrelated file into a category just because it is in the list. When in doubt, always choose "Unknown".
 4. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
 5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
@@ -301,6 +316,8 @@ def classify_files_batched(
             batch_idx=batch_idx,
         )
 
+        record_llm_result(error_msg or None)
+
         id_map = {r.file_id: r for r in batch}
         for item in response_items:
             rec = id_map.get(item.file_id)
@@ -308,19 +325,29 @@ def classify_files_batched(
                 continue
 
             matched_category = _resolve_category(item.category, categories)
+            # Models sometimes answer on a 0-100 scale; normalise to 0-1.
+            confidence = item.confidence / 100.0 if item.confidence > 1.0 else item.confidence
+            confidence = max(0.0, min(1.0, confidence))
+            # Decide the action ourselves so it always agrees with the user's threshold
+            # and with the resolved category, whatever the model claimed.
+            action = (
+                "copy_to_organized"
+                if matched_category != "Unknown" and confidence >= classification_config.auto_copy_threshold
+                else "manual_review"
+            )
             rec.classification = ClassificationResult(
                 category=matched_category,
-                confidence=item.confidence,
+                confidence=confidence,
                 file_type=item.file_type,
                 suggested_filename=item.suggested_filename or rec.filename,
                 reason=item.reason,
-                action=item.action,
+                action=action,
                 source="llm",
             )
             classified_count += 1
 
         # Mark unmatched records as Unknown
-        fallback_reason = error_msg if error_msg else "LLM response did not include a valid result"
+        fallback_reason = friendly_llm_error(error_msg) if error_msg else "The AI skipped this file"
         for rec in batch:
             if rec.classification is None:
                 rec.classification = ClassificationResult(
@@ -384,6 +411,59 @@ def _resolve_provider_model(provider: str, configured_model: Optional[str] = Non
             return default_models.get(prov, "deepseek-chat")
         return configured_model
     return default_models.get(prov, "deepseek-chat")
+
+
+# ---------------------------------------------------------------------------
+# AI health: remembers the last failure so the UI can tell the user plainly
+# ---------------------------------------------------------------------------
+
+_llm_health: dict[str, Optional[str]] = {"error": None}
+
+
+def friendly_llm_error(raw: str) -> str:
+    """Turn a provider/HTTP error into one sentence a non-technical user understands."""
+    text = raw.lower()
+    if "401" in text or "unauthorized" in text or "invalid api key" in text:
+        return "Your AI key was rejected. Check it or paste a new one."
+    if "402" in text or "insufficient" in text or "balance" in text:
+        return "Your AI account is out of credit. Top it up or switch provider."
+    if "429" in text or "rate limit" in text:
+        return "The AI service is busy right now. Try again in a minute."
+    if "dns" in text or "connect" in text or "getaddrinfo" in text or "nodename" in text or "timed out" in text:
+        return "Couldn't reach the AI service. Check your internet connection."
+    return "The AI service didn't respond properly. Try again in a moment."
+
+
+def record_llm_result(error: Optional[str]) -> None:
+    """Call with None after a successful AI call, or the raw error after a failure."""
+    _llm_health["error"] = friendly_llm_error(error) if error else None
+
+
+def get_llm_error() -> Optional[str]:
+    return _llm_health["error"]
+
+
+def verify_llm_key(timeout: float = 10.0) -> Optional[str]:
+    """Check the saved key with a cheap authenticated request.
+
+    Returns None when the key works, otherwise a friendly error. Also updates the health state.
+    """
+    provider, api_key, custom_url = load_settings()
+    if not api_key:
+        record_llm_result(None)
+        return None
+    base_url = (custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")).rstrip("/")
+    # OpenRouter's model list is public, so check the key endpoint there instead.
+    url = f"{base_url}/key" if provider.lower() == "openrouter" else f"{base_url}/models"
+    try:
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+        if resp.status_code >= 400:
+            record_llm_result(f"HTTP {resp.status_code} {resp.reason_phrase}")
+        else:
+            record_llm_result(None)
+    except Exception as exc:
+        record_llm_result(f"connect error: {exc}")
+    return get_llm_error()
 
 
 def _resolve_category(cat_candidate: str, categories: dict[str, CategoryConfig]) -> str:

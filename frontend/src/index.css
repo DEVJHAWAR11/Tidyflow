@@ -3,8 +3,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* Core Brand Colors */
   --color-primary: #0075de;
@@ -58,6 +58,74 @@
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.02), 0 3px 8px rgba(0, 0, 0, 0.02);
   --shadow-float: 0 4px 14px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
   --shadow-modal: 0 20px 45px -10px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.05);
+
+  /* ---- TidyFlow design tokens — follow DESIGN.md (Expo-inspired) ----
+     Pure white canvas, near-black ink, black is the only action colour,
+     blue only for inline links. Use as bg-tf-*, text-tf-*, border-tf-*. */
+  --color-tf-bg: #ffffff;            /* canvas */
+  --color-tf-surface: #ffffff;       /* surface-card */
+  --color-tf-surface-2: #fafafa;     /* canvas-soft */
+  --color-tf-surface-3: #f0f0f3;     /* surface-strong */
+  --color-tf-border: #f0f0f3;        /* hairline */
+  --color-tf-border-strong: #dcdee0; /* hairline-strong (card outlines) */
+  --color-tf-ink: #171717;           /* ink */
+  --color-tf-ink-2: #3d3f44;
+  --color-tf-muted: #60646c;         /* body */
+  --color-tf-faint: #999999;         /* muted */
+  --color-tf-primary: #000000;       /* primary CTA */
+  --color-tf-primary-hover: #1a1a1a; /* primary-active */
+  --color-tf-on-primary: #ffffff;
+  /* Selection / progress / focus are ink, never a saturated colour. */
+  --color-tf-brand: #171717;
+  --color-tf-brand-hover: #000000;
+  --color-tf-brand-soft: #f0f0f3;
+  --color-tf-brand-ink: #171717;
+  --color-tf-link: #0d74ce;          /* text-link: inline links only */
+  --color-tf-success: #16a34a;
+  --color-tf-success-soft: #ecf7ef;
+  --color-tf-warn: #ab6400;
+  --color-tf-warn-soft: #fbf3e6;
+  --color-tf-danger: #c93c3f;
+  --color-tf-danger-soft: #fdf0f0;
+
+  --radius-tf-card: 12px;            /* rounded.lg */
+  --radius-tf-btn: 8px;              /* rounded.md */
+
+  --shadow-tf-card: none;
+  --shadow-tf-lift: 0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-tf-float: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-tf-brand: none;
+}
+
+html.dark {
+  --color-tf-bg: #0f0f0f;
+  --color-tf-surface: #171717;       /* surface-dark */
+  --color-tf-surface-2: #1a1a1a;     /* surface-dark-elevated */
+  --color-tf-surface-3: #232323;
+  --color-tf-border: #232323;
+  --color-tf-border-strong: #2e2e2e;
+  --color-tf-ink: #ffffff;           /* on-dark */
+  --color-tf-ink-2: #d8dadd;
+  --color-tf-muted: #b0b4ba;         /* on-dark-soft */
+  --color-tf-faint: #7d8189;
+  --color-tf-primary: #ffffff;
+  --color-tf-primary-hover: #e8e8e8;
+  --color-tf-on-primary: #000000;
+  --color-tf-brand: #ffffff;
+  --color-tf-brand-hover: #e8e8e8;
+  --color-tf-brand-soft: #232323;
+  --color-tf-brand-ink: #ffffff;
+  --color-tf-link: #47c2ff;          /* accent-link-bright */
+  --color-tf-success: #4ade80;
+  --color-tf-success-soft: rgba(74, 222, 128, 0.1);
+  --color-tf-warn: #f0a640;
+  --color-tf-warn-soft: rgba(240, 166, 64, 0.1);
+  --color-tf-danger: #eb8e90;        /* semantic-error */
+  --color-tf-danger-soft: rgba(235, 142, 144, 0.1);
+  --shadow-tf-card: none;
+  --shadow-tf-lift: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-tf-float: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-tf-brand: none;
 }
 
 /* Typography Letter-Spacing Utilities */
@@ -86,15 +154,44 @@
 /* Base Body Styles */
 body {
   font-family: var(--font-sans);
-  background-color: #f6f5f4;
-  color: #111111;
+  background-color: var(--color-tf-bg);
+  color: var(--color-tf-ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 html.dark body {
-  background-color: #191919;
-  color: #ededed;
+  background-color: var(--color-tf-bg);
+  color: var(--color-tf-ink);
+}
+
+/* App canvas */
+.tf-ambient {
+  background: var(--color-tf-bg);
+}
+
+/* Typography defaults for the new UI */
+body {
+  font-feature-settings: "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+/* Sky-blue atmospheric wash: hero (Home header) only, per DESIGN.md */
+.tf-sky {
+  background: radial-gradient(60% 100% at 50% 0%, #cfe7ff 0%, rgba(168, 200, 232, 0.35) 45%, rgba(255, 255, 255, 0) 100%);
+}
+html.dark .tf-sky {
+  background: radial-gradient(60% 100% at 50% 0%, rgba(71, 194, 255, 0.10) 0%, rgba(15, 15, 15, 0) 100%);
+}
+.tf-num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Smooth Transitions */
@@ -113,7 +210,7 @@ button, a, input, select, textarea {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d4d2ce;
+  background: var(--color-tf-border-strong);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {

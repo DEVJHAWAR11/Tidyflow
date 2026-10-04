@@ -155,3 +155,65 @@ def test_complexity_tiers_three_levels():
     high_guide = _get_complexity_guidelines("high")
     assert "DETAILED" in high_guide
 
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("add separate folders for travel and for resumes", ["Travel", "Resumes"]),
+        ("create a folder called Tax Returns", ["Tax_Returns"]),
+        ("add Receipts, Warranties and Manuals", ["Receipts", "Warranties", "Manuals"]),
+        ("make a new folder for my photos", ["Photos"]),
+        ("remove the archives folder", []),
+    ],
+)
+def test_parse_add_targets(message, expected):
+    from src.ai_assistant import _parse_add_targets
+
+    assert _parse_add_targets(message) == expected
+
+
+def test_friendly_llm_errors():
+    from src.llm_provider import friendly_llm_error
+
+    assert "rejected" in friendly_llm_error("Client error '401 Unauthorized'")
+    assert "credit" in friendly_llm_error("HTTP 402 Payment Required")
+    assert "internet" in friendly_llm_error("connect error: nodename nor servname provided")
+
+
+def test_inspect_directory_skips_bundles_and_hidden_files(tmp_path):
+    from src.ai_assistant import inspect_directory
+
+    (tmp_path / "report.txt").write_text("quarterly report")
+    (tmp_path / ".localized").write_text("")
+    bundle = tmp_path / "Tool.app" / "Contents"
+    bundle.mkdir(parents=True)
+    (bundle / "CodeResources").write_text("x")
+
+    sample, summary = inspect_directory(str(tmp_path))
+
+    assert len(sample) == 1 and sample[0].startswith("report.txt")
+    assert summary.startswith("1 files in total.")
+
+
+def test_inspect_directory_sample_covers_rare_types_and_subfolders(tmp_path):
+    from src.ai_assistant import inspect_directory
+
+    # 200 screenshots sort first alphabetically; the rare files come last.
+    for i in range(200):
+        (tmp_path / f"a_shot_{i:03}.png").write_bytes(b"png")
+    (tmp_path / "z_contract.docx").write_bytes(b"doc")
+    (tmp_path / "z_budget.xlsx").write_bytes(b"xls")
+    (tmp_path / "Work").mkdir()
+    (tmp_path / "Work" / "notes.md").write_text("meeting notes")
+
+    sample, summary = inspect_directory(str(tmp_path), sample_size=20)
+
+    assert len(sample) == 20
+    joined = "\n".join(sample)
+    assert "z_contract.docx" in joined
+    assert "z_budget.xlsx" in joined
+    assert "Work/notes.md" in joined
+    assert "203 files in total." in summary
+    assert ".png x200" in summary
+    assert "Work/ (1)" in summary

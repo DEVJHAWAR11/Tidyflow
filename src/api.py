@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,13 +20,15 @@ from .ai_assistant import (
     apply_review_command,
     chat_generate_structure,
     cluster_unrecognized_files,
-    inspect_directory_files,
+    inspect_directory,
 )
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
 from .llm_provider import (
     _resolve_provider_model,
+    get_llm_error,
+    verify_llm_key,
     get_stored_api_key,
     load_settings,
     save_settings,
@@ -49,7 +52,75 @@ latest_pipeline_data: dict[str, Any] = {
     "summary": None,
     "input_dir": "",
     "output_dir": "",
+    "categories": [],
 }
+
+
+def _latest_run_dir() -> Path:
+    return get_app_data_dir() / "latest_run"
+
+
+def _save_latest_run() -> None:
+    """Persist the most recent run so a restart shows the same results, not stale ones."""
+    from .main_loop import _save_records_jsonl
+
+    run_dir = _latest_run_dir()
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _save_records_jsonl(latest_pipeline_data["records"], run_dir / "records.jsonl")
+        summary = latest_pipeline_data.get("summary")
+        meta = {
+            "input_dir": latest_pipeline_data.get("input_dir", ""),
+            "output_dir": latest_pipeline_data.get("output_dir", ""),
+            "categories": latest_pipeline_data.get("categories", []),
+            "summary": summary.model_dump(mode="json") if summary else None,
+        }
+        (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to persist latest run: %s", e)
+
+
+def _load_latest_run() -> None:
+    """Restore the most recent run saved by _save_latest_run, if any."""
+    from .models import RunSummary
+
+    run_dir = _latest_run_dir()
+    meta_file = run_dir / "meta.json"
+    if not meta_file.exists():
+        return
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        latest_pipeline_data["records"] = load_records_jsonl(run_dir / "records.jsonl")
+        latest_pipeline_data["summary"] = RunSummary.model_validate(meta["summary"]) if meta.get("summary") else None
+        latest_pipeline_data["input_dir"] = meta.get("input_dir", "")
+        latest_pipeline_data["output_dir"] = meta.get("output_dir", "")
+        latest_pipeline_data["categories"] = meta.get("categories", [])
+    except Exception as e:
+        logger.warning("Failed to restore latest run: %s", e)
+
+
+def _serialize_record(r: FileRecord) -> dict[str, Any]:
+    text_snip = r.extracted_text_normalized or r.extracted_text_raw or ""
+    return {
+        "file_id": r.file_id,
+        "filename": r.filename,
+        "abs_path": str(r.abs_path),
+        "rel_path": str(r.rel_path),
+        "extension": r.extension,
+        "file_size_bytes": r.file_size_bytes,
+        "file_category": r.file_category,
+        "category": r.classification.category if r.classification else "Unknown",
+        "confidence": r.classification.confidence if r.classification else 0.0,
+        "suggested_filename": r.classification.suggested_filename if r.classification else "",
+        "reason": r.classification.reason if r.classification else "",
+        "action": r.classification.action if r.classification else "manual_review",
+        "source": r.classification.source if r.classification else "unknown",
+        "thumbnail_b64": r.thumbnail_b64,
+        "extracted_text": text_snip[:400] if text_snip else "",
+        "duplicate_group_id": r.duplicate_group_id,
+        "near_duplicate_group_id": r.near_duplicate_group_id,
+        "keyword_scores": r.keyword_scores,
+    }
 
 
 async def broadcast_event(event_type: str, data: Any):
@@ -69,27 +140,8 @@ async def lifespan(app: FastAPI):
     await db.start()
     await processor.start()
 
-    # Seed / index existing records from disk if database has 0 files
-    try:
-        count_res = await db.execute_read("SELECT count(*) as count FROM files")
-        current_count = count_res[0]["count"] if count_res else 0
-        if current_count == 0:
-            candidate_paths = [
-                Path("/Users/arpan/test files/Organized_Output"),
-                Path("./Organized_Output"),
-                Path.home() / "Desktop" / "Organized_Output",
-                Path.home() / "Downloads" / "Organized_Output",
-            ]
-            for cand in candidate_paths:
-                rec_file = cand / "file_records.jsonl"
-                if rec_file.exists():
-                    loaded = load_records_jsonl(rec_file)
-                    if loaded:
-                        indexed_count = await db.index_records(loaded)
-                        logger.info("Auto-indexed %d records into database from %s", indexed_count, rec_file)
-                        break
-    except Exception as e:
-        logger.warning("Error auto-indexing records on startup: %s", e)
+    _load_latest_run()
+    asyncio.get_running_loop().run_in_executor(None, verify_llm_key)
 
     yield
     await processor.stop()
@@ -170,6 +222,9 @@ class PipelineRunRequest(BaseModel):
     complexity_level: Optional[str] = "medium"
     auto_apply: bool = False
     dry_run: bool = True
+    # Strict = only file things that clearly match (for narrow, hand-picked folder sets).
+    # The guided flow sends a plan meant to cover the whole folder, so it wants best-fit instead.
+    strict: bool = False
 
 
 class AiStructureChatRequest(BaseModel):
@@ -239,6 +294,7 @@ async def get_status():
         "status": "running",
         "version": "2.0.0",
         "has_llm_key": has_key,
+        "llm_error": get_llm_error() if has_key else None,
         "provider": provider,
         "active_clients": len(clients),
     }
@@ -320,20 +376,6 @@ async def update_settings(payload: SettingsPayload):
             # Set in current runtime environment immediately
             os.environ[f"{payload.provider.upper()}_API_KEY"] = clean_key
             os.environ["TIDYFLOW_API_KEY"] = clean_key
-            # Also try to update local .env if writable
-            try:
-                env_path = Path(".env")
-                lines = []
-                if env_path.exists():
-                    lines = env_path.read_text(encoding="utf-8").splitlines()
-
-                key_var = f"{payload.provider.upper()}_API_KEY"
-                new_lines = [l for l in lines if not l.startswith(f"{key_var}=") and not l.startswith("TIDYFLOW_API_KEY=")]
-                new_lines.append(f"{key_var}={clean_key}")
-                new_lines.append(f"TIDYFLOW_API_KEY={clean_key}")
-                env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-            except Exception:
-                pass
         elif payload.provider:
             # User switched provider without changing key
             _, existing_key, _ = load_settings()
@@ -366,7 +408,8 @@ async def update_settings(payload: SettingsPayload):
         except Exception as e:
             logger.warning("Could not persist config.yaml: %s", e)
 
-        return {"status": "success", "message": "Settings updated"}
+        ai_error = await asyncio.to_thread(verify_llm_key)
+        return {"status": "success", "message": "Settings updated", "ai_error": ai_error}
     except Exception as e:
         logger.error("Error in update_settings: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -741,7 +784,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
             auto_apply=req.auto_apply,
             dry_run=req.dry_run,
             db=db,
-            strict_mode=is_custom_categories,
+            strict_mode=req.strict and is_custom_categories,
             progress_callback=sync_progress_callback,
             cancellation_token=active_cancel_event,
         )
@@ -756,35 +799,14 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     finally:
         active_cancel_event = None
 
-    # Transform records into JSON serializable format for UI
-    file_list = []
-    for r in records:
-        text_snip = r.extracted_text_normalized or r.extracted_text_raw or ""
-        file_list.append({
-            "file_id": r.file_id,
-            "filename": r.filename,
-            "abs_path": str(r.abs_path),
-            "rel_path": str(r.rel_path),
-            "extension": r.extension,
-            "file_size_bytes": r.file_size_bytes,
-            "file_category": r.file_category,
-            "category": r.classification.category if r.classification else "Unknown",
-            "confidence": r.classification.confidence if r.classification else 0.0,
-            "suggested_filename": r.classification.suggested_filename if r.classification else "",
-            "reason": r.classification.reason if r.classification else "",
-            "action": r.classification.action if r.classification else "manual_review",
-            "source": r.classification.source if r.classification else "unknown",
-            "thumbnail_b64": r.thumbnail_b64,
-            "extracted_text": text_snip[:400] if text_snip else "",
-            "duplicate_group_id": r.duplicate_group_id,
-            "near_duplicate_group_id": r.near_duplicate_group_id,
-            "keyword_scores": r.keyword_scores,
-        })
+    file_list = [_serialize_record(r) for r in records]
 
     latest_pipeline_data["records"] = records
     latest_pipeline_data["summary"] = summary
     latest_pipeline_data["input_dir"] = str(input_path)
     latest_pipeline_data["output_dir"] = str(out_path)
+    latest_pipeline_data["categories"] = sorted(cfg.categories.keys())
+    _save_latest_run()
 
     await broadcast_event("pipeline_complete", {
         "total_scanned": summary.total_scanned,
@@ -797,6 +819,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
         "output_dir": str(out_path),
         "summary": summary.model_dump(),
         "files": file_list,
+        "categories": latest_pipeline_data["categories"],
         "report_html_path": str(out_path / "review_report.html"),
     }
 
@@ -815,68 +838,15 @@ async def cancel_pipeline():
 
 @app.get("/pipeline/latest")
 async def get_latest_pipeline_results():
-    """Retrieve in-memory results from the most recent run."""
-    records = latest_pipeline_data.get("records", [])
+    """Return the most recent run (kept in memory, restored from disk on startup)."""
     summary = latest_pipeline_data.get("summary")
-    out_path = latest_pipeline_data.get("output_dir", "")
-
-    needs_disk_load = (
-        not records
-        or sum(1 for r in records if r.classification and r.classification.category != "Unknown") == 0
-    )
-    if needs_disk_load:
-        candidate_paths = []
-        if out_path:
-            candidate_paths.append(Path(out_path))
-        candidate_paths.extend([
-            Path("/Users/arpan/test files/Organized_Output"),
-            Path("./Organized_Output"),
-            Path.home() / "Desktop" / "Organized_Output",
-            Path.home() / "Downloads" / "Organized_Output",
-        ])
-        for cand in candidate_paths:
-            records_file = cand / "file_records.jsonl"
-            if records_file.exists():
-                loaded = load_records_jsonl(records_file)
-                if loaded:
-                    records = loaded
-                    out_path = str(cand)
-                    try:
-                        await db.index_records(records)
-                    except Exception:
-                        pass
-                    break
-
-    file_list = []
-    for r in records:
-        text_snip = r.extracted_text_normalized or r.extracted_text_raw or ""
-        file_list.append({
-            "file_id": r.file_id,
-            "filename": r.filename,
-            "abs_path": str(r.abs_path),
-            "rel_path": str(r.rel_path),
-            "extension": r.extension,
-            "file_size_bytes": r.file_size_bytes,
-            "file_category": r.file_category,
-            "category": r.classification.category if r.classification else "Unknown",
-            "confidence": r.classification.confidence if r.classification else 0.0,
-            "suggested_filename": r.classification.suggested_filename if r.classification else "",
-            "reason": r.classification.reason if r.classification else "",
-            "action": r.classification.action if r.classification else "manual_review",
-            "source": r.classification.source if r.classification else "unknown",
-            "thumbnail_b64": r.thumbnail_b64,
-            "extracted_text": text_snip[:400] if text_snip else "",
-            "duplicate_group_id": r.duplicate_group_id,
-            "near_duplicate_group_id": r.near_duplicate_group_id,
-            "keyword_scores": r.keyword_scores,
-        })
-
     return {
         "status": "success",
         "input_dir": latest_pipeline_data.get("input_dir", ""),
-        "output_dir": out_path,
+        "output_dir": latest_pipeline_data.get("output_dir", ""),
         "summary": summary.model_dump() if summary else None,
-        "files": file_list,
+        "files": [_serialize_record(r) for r in latest_pipeline_data.get("records", [])],
+        "categories": latest_pipeline_data.get("categories", []),
     }
 
 
@@ -891,18 +861,7 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
     # Load FileRecords from cache or disk
     records = latest_pipeline_data.get("records")
     if not records:
-        candidate_paths = [
-            out_dir,
-            Path("/Users/arpan/test files/Organized_Output"),
-            Path("./Organized_Output"),
-        ]
-        for cp in candidate_paths:
-            records_file = cp / "file_records.jsonl"
-            if records_file.exists():
-                records = load_records_jsonl(records_file)
-                break
-        if not records:
-            raise HTTPException(status_code=400, detail="No active file records found to apply decisions.")
+        raise HTTPException(status_code=400, detail="No scan results found. Please scan the folder again.")
 
     id_to_record = {r.file_id: r for r in records}
 
@@ -939,6 +898,9 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         if getattr(req, "export_reports", False):
             write_copy_manifest(manifest, out_dir)
 
+    if not req.dry_run:
+        _save_last_apply(manifest, out_dir)
+
     action_label = "simulated" if req.dry_run else ("moved" if req.move_mode else "copied")
     return {
         "status": "success",
@@ -947,6 +909,82 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         "manifest": [m.model_dump() for m in manifest],
         "output_dir": str(out_dir),
     }
+
+
+def _last_apply_file() -> Path:
+    return get_app_data_dir() / "last_apply.json"
+
+
+def _save_last_apply(manifest: list, output_dir: Path) -> None:
+    data = {"output_dir": str(output_dir), "entries": [m.model_dump(mode="json") for m in manifest]}
+    try:
+        _last_apply_file().write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to save undo information: %s", e)
+
+
+@app.get("/pipeline/undo-last")
+async def get_undo_last():
+    """Report whether the most recent organize can be undone."""
+    f = _last_apply_file()
+    if not f.exists():
+        return {"available": False, "count": 0}
+    try:
+        entries = json.loads(f.read_text(encoding="utf-8"))["entries"]
+    except Exception:
+        return {"available": False, "count": 0}
+    return {"available": bool(entries), "count": len(entries)}
+
+
+@app.post("/pipeline/undo-last")
+async def undo_last_apply():
+    """Reverse the most recent organize: delete the copies we made, or move moved files back."""
+    from .utils import compute_sha256
+
+    f = _last_apply_file()
+    if not f.exists():
+        raise HTTPException(status_code=400, detail="There is nothing to undo.")
+    data = json.loads(f.read_text(encoding="utf-8"))
+    entries = data.get("entries", [])
+    output_root = Path(data["output_dir"]) if data.get("output_dir") else None
+
+    restored, skipped = 0, 0
+    touched_dirs: set[Path] = set()
+    for e in entries:
+        dest = Path(e["destination_path"])
+        orig = Path(e["original_path"])
+        # Only touch a file that is still exactly what we put there.
+        if not dest.exists() or compute_sha256(dest) != e["sha256"]:
+            skipped += 1
+            continue
+        try:
+            if e.get("operation") == "move":
+                if orig.exists():
+                    skipped += 1
+                    continue
+                orig.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(dest), str(orig))
+            else:
+                dest.unlink()
+            touched_dirs.add(dest.parent)
+            restored += 1
+        except OSError as exc:
+            logger.warning("Undo failed for %s: %s", dest, exc)
+            skipped += 1
+
+    # Remove category folders we emptied, walking up nested ones but never past the output folder.
+    for d in sorted(touched_dirs, key=lambda p: len(p.parts), reverse=True):
+        while d.exists() and (output_root is None or (d != output_root and output_root in d.parents)):
+            try:
+                if any(d.iterdir()):
+                    break
+                d.rmdir()
+            except OSError:
+                break
+            d = d.parent
+
+    f.unlink(missing_ok=True)
+    return {"status": "success", "restored": restored, "skipped": skipped}
 
 
 @app.get("/search")
@@ -986,13 +1024,14 @@ async def update_rules(rules_req: dict[str, Any]):
 @app.post("/ai/chat-structure")
 async def ai_chat_structure_endpoint(req: AiStructureChatRequest):
     """Generate or refine category structure and rules via natural language or auto-discovery."""
-    sample_filenames = []
+    sample_filenames: list[str] = []
+    inventory_summary = ""
     if req.input_dir:
         try:
-            sample_filenames = await asyncio.to_thread(
-                inspect_directory_files,
+            sample_filenames, inventory_summary = await asyncio.to_thread(
+                inspect_directory,
                 input_dir=req.input_dir,
-                max_files=100,
+                sample_size=80,
             )
         except Exception as e:
             logger.warning(f"Error inspecting directory {req.input_dir}: {e}")
@@ -1005,6 +1044,7 @@ async def ai_chat_structure_endpoint(req: AiStructureChatRequest):
         sample_filenames=sample_filenames,
         complexity_level=req.complexity_level or "medium",
         auto_discover=bool(req.auto_discover),
+        inventory_summary=inventory_summary,
     )
     return result
 

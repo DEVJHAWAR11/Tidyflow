@@ -9,7 +9,7 @@ import {
   Trash2,
   FolderTree,
   Folder,
-  Sparkles,
+  SlidersHorizontal,
   Layers,
   LayoutGrid,
   CheckCircle2,
@@ -39,7 +39,7 @@ const TRIGGER_BADGES: Record<
     label: "AI Synthesis",
     bg: "bg-[#7c3aed]/10 dark:bg-[#7c3aed]/20",
     text: "text-[#7c3aed] dark:text-[#c084fc]",
-    icon: Sparkles,
+    icon: FolderTree,
   },
   preset: {
     label: "Preset Pack",
@@ -57,7 +57,7 @@ const TRIGGER_BADGES: Record<
     label: "AI Edit",
     bg: "bg-[#0891b2]/10 dark:bg-[#0891b2]/20",
     text: "text-[#0891b2] dark:text-[#22d3ee]",
-    icon: Sparkles,
+    icon: SlidersHorizontal,
   },
   restore: {
     label: "Restored",

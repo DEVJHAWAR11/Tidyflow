@@ -1,7 +1,6 @@
 import React from "react";
 import { CategoryItem, RunSummary } from "../types";
 import { AiStructureAssistant } from "./AiStructureAssistant";
-import { WorkflowStepper } from "./WorkflowStepper";
 import { ScanProgressOverlay } from "./ScanProgressOverlay";
 import {
   FolderOpen,
@@ -51,7 +50,6 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
   onStartPipeline,
   onNavigateToReview,
   onChangeFolder,
-  fileCount = 0,
   complexityLevel = "medium",
   setComplexityLevel,
   onCancelPipeline,
@@ -70,15 +68,6 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
       />
 
       {/* Interactive Workflow Stepper */}
-      <WorkflowStepper
-        currentStep="blueprint"
-        inputFolder={inputFolder}
-        fileCount={fileCount}
-        onNavigate={(step) => {
-          if (step === "select_folder" && onChangeFolder) onChangeFolder();
-          else if (step === "review") onNavigateToReview();
-        }}
-      />
 
       {/* Active Workspace Source Folder Bar */}
       <div className="bg-[#ffffff] dark:bg-[#1c1c1e] rounded-xl border border-[#e5e5e7] dark:border-[#2c2c2e] px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
@@ -152,20 +141,25 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({
           </div>
 
           <div className="bg-[#f6f5f4] dark:bg-[#191919] rounded-lg p-3.5 font-mono text-[12px] text-[#31302e] dark:text-[#d4d4d4] max-h-52 overflow-y-auto space-y-1 border border-[#e6e6e6] dark:border-[#2e2e2e]">
-            {progressLogs.map((log, i) => (
-              <div
-                key={i}
-                className={
-                  log.startsWith("✓")
-                    ? "text-[#166534] dark:text-[#4ade80] font-semibold"
-                    : log.startsWith("✗")
-                    ? "text-[#9d174d] dark:text-[#f472b6] font-semibold"
-                    : "text-[#615d59] dark:text-[#9b9a97]"
-                }
-              >
-                {log}
-              </div>
-            ))}
+            {progressLogs.map((log, i) => {
+              const isSuccess = log.startsWith("✓");
+              const isError = log.startsWith("✗");
+              const cleanLog = log.replace(/^[✓✗>]\s*/, "");
+              return (
+                <div
+                  key={i}
+                  className={
+                    isSuccess
+                      ? "text-[#166534] dark:text-[#4ade80] font-semibold"
+                      : isError
+                      ? "text-[#9d174d] dark:text-[#f472b6] font-semibold"
+                      : "text-[#615d59] dark:text-[#9b9a97]"
+                  }
+                >
+                  {cleanLog}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

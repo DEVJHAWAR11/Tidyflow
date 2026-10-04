@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Sparkles,
+  SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -186,7 +186,7 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
         <div className="p-4 sm:p-5 border-b border-[#e6e6e6] dark:border-[#2e2e2e] flex items-center justify-between gap-4 bg-[#faf9f8] dark:bg-[#202020]">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-[#0075de]/10 dark:bg-[#2383e2]/20 text-[#0075de] dark:text-[#2383e2]">
-              <Sparkles className="w-5 h-5" />
+              <SlidersHorizontal className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -293,8 +293,8 @@ export const QuickTriageModal: React.FC<QuickTriageModalProps> = ({
                   </div>
                 ) : (
                   <div className="text-center py-8 space-y-2 text-[#615d59] dark:text-[#9b9a97]">
-                    <div className="w-12 h-12 rounded-full bg-[#f6f5f4] dark:bg-[#252525] flex items-center justify-center mx-auto text-xl">
-                      📄
+                    <div className="w-12 h-12 rounded-full bg-[#f6f5f4] dark:bg-[#252525] flex items-center justify-center mx-auto text-[#615d59] dark:text-[#9b9a97]">
+                      <FileText className="w-6 h-6" />
                     </div>
                     <p className="text-[12px] font-medium">No direct text/thumbnail preview available</p>
                     <p className="text-[11px] max-w-xs mx-auto">

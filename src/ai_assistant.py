@@ -15,7 +15,9 @@ from .llm_provider import (
     _resolve_provider_model,
     _resolve_provider_url,
     _strip_markdown_fences,
+    get_llm_error,
     load_settings,
+    record_llm_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,74 +147,118 @@ OUTPUT FORMAT — Return ONLY strict JSON:
 # Deep Directory Inspection for Bespoke Taxonomy Synthesis
 # ---------------------------------------------------------------------------
 
-def inspect_directory_files(input_dir: str, max_files: int = 100) -> list[str]:
+_TEXT_PREVIEW_EXTS = {".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".html", ".css", ".sql", ".sh", ".yaml", ".yml"}
+_KIND_LABELS = {
+    "image": "images", "document": "documents", "code": "code files", "data": "data files",
+    "media": "audio/video files", "archive": "archives", "binary": "programs/installers", "other": "other files",
+}
+
+
+def _describe_file(path: Path, root: Path) -> str:
+    """One line for the AI: relative path, type, size and a short content preview where cheap."""
+    rel = path.relative_to(root).as_posix()
+    ext = path.suffix.lower()
+    try:
+        size_kb = round(path.stat().st_size / 1024, 1)
+    except OSError:
+        size_kb = 0.0
+    preview = ""
+    try:
+        if ext in _TEXT_PREVIEW_EXTS:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                snippet = f.read(400).replace("\n", " ").strip()
+            if snippet:
+                preview = f' | Content: "{snippet[:160]}"'
+        elif ext == ".pdf":
+            import fitz
+            with fitz.open(path) as doc:
+                if len(doc) > 0:
+                    page_text = doc[0].get_text()[:400].replace("\n", " ").strip()
+                    if page_text:
+                        preview = f' | PDF Content: "{page_text[:160]}"'
+    except Exception:
+        pass
+    return f"{rel} ({ext.upper() if ext else 'FILE'}, {size_kb} KB){preview}"
+
+
+def _spread_sample(paths: list[Path], root: Path, size: int) -> list[Path]:
+    """Pick up to `size` files covering every file type and subfolder, not just the first ones found.
+
+    Files are grouped by (top-level subfolder, extension). Groups take turns claiming one slot each
+    until the sample is full, so rare kinds still appear; then each group's picks are spaced evenly
+    through its sorted list.
     """
-    Recursively inspect up to `max_files` from input_dir, extracting filenames,
-    relative paths, extensions, file sizes, and short content previews for text/PDF files.
-    """
-    if not input_dir:
-        return []
+    groups: dict[tuple[str, str], list[Path]] = {}
+    for p in paths:
+        parts = p.relative_to(root).parts
+        top = parts[0] if len(parts) > 1 else ""
+        groups.setdefault((top, p.suffix.lower()), []).append(p)
+    ordered = sorted(groups.values(), key=len, reverse=True)
 
-    p = Path(input_dir).resolve()
-    if not p.exists() or not p.is_dir():
-        return []
-
-    ignored_names = {
-        ".git", ".svn", ".hg", "__pycache__", ".pytest_cache", ".venv", "venv",
-        "node_modules", ".DS_Store", "Thumbs.db", ".tidyflow",
-        "Organized_Output", "organized_output", "Organized", "organized", "Staging", "staging",
-    }
-
-    discovered: list[str] = []
-
-    for root, dirs, files in os.walk(p):
-        dirs[:] = [d for d in dirs if d not in ignored_names and not d.startswith(".")]
-        try:
-            rel_root = Path(root).relative_to(p)
-        except ValueError:
-            rel_root = Path(".")
-
-        for file_name in files:
-            if file_name.startswith(".") or file_name in ignored_names:
-                continue
-
-            file_path = Path(root) / file_name
-            rel_file_path = (rel_root / file_name).as_posix() if str(rel_root) != "." else file_name
-            ext = file_path.suffix.lower()
-
-            try:
-                size_kb = round(file_path.stat().st_size / 1024, 1)
-            except OSError:
-                size_kb = 0.0
-
-            preview = ""
-            try:
-                if ext in {".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".html", ".css", ".sql", ".sh", ".yaml", ".yml"}:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        snippet = f.read(400).replace("\n", " ").strip()
-                        if snippet:
-                            preview = f' | Content: "{snippet[:180]}"'
-                elif ext == ".pdf":
-                    import fitz
-                    doc = fitz.open(file_path)
-                    if len(doc) > 0:
-                        page_text = doc[0].get_text()[:400].replace("\n", " ").strip()
-                        if page_text:
-                            preview = f' | PDF Content: "{page_text[:180]}"'
-                    doc.close()
-            except Exception:
-                pass
-
-            file_desc = f"{rel_file_path} ({ext.upper() if ext else 'FILE'}, {size_kb} KB){preview}"
-            discovered.append(file_desc)
-
-            if len(discovered) >= max_files:
+    quota = [0] * len(ordered)
+    remaining = min(size, len(paths))
+    while remaining > 0:
+        for i, group in enumerate(ordered):
+            if remaining == 0:
                 break
+            if quota[i] < len(group):
+                quota[i] += 1
+                remaining -= 1
 
-        if len(discovered) >= max_files:
+    picked: list[Path] = []
+    for group, n in zip(ordered, quota):
+        picked.extend(group[(j * len(group)) // n] for j in range(n))
+    return picked
+
+
+def inspect_directory(input_dir: str, sample_size: int = 80, max_walk: int = 20000) -> tuple[list[str], str]:
+    """Describe a folder for folder suggestions.
+
+    Returns (sample, summary): `sample` is one line per representative file (name, type, size,
+    short content preview); `summary` counts the whole folder by kind, extension and subfolder.
+    Uses the scanner's rules, so hidden files and app/package bundles are skipped here too.
+    """
+    from collections import Counter
+    from .scanner import determine_file_category, iter_candidate_files
+
+    if not input_dir:
+        return [], ""
+    root = Path(input_dir).resolve()
+    if not root.is_dir():
+        return [], ""
+
+    paths: list[Path] = []
+    truncated = False
+    for path in iter_candidate_files(root):
+        paths.append(path)
+        if len(paths) >= max_walk:
+            truncated = True
             break
+    if not paths:
+        return [], "The folder has no files to organize."
 
-    return discovered
+    kinds = Counter(determine_file_category(p.suffix.lower()) for p in paths)
+    exts = Counter(p.suffix.lower() or "(none)" for p in paths)
+    subfolders = Counter(p.relative_to(root).parts[0] for p in paths if len(p.relative_to(root).parts) > 1)
+    loose = sum(1 for p in paths if len(p.relative_to(root).parts) == 1)
+
+    lines = [f"{len(paths)}{'+' if truncated else ''} files in total."]
+    lines.append("By kind: " + ", ".join(f"{n} {_KIND_LABELS.get(k, k)}" for k, n in kinds.most_common()))
+    lines.append("Top extensions: " + ", ".join(f"{e} x{n}" for e, n in exts.most_common(12)))
+    if subfolders:
+        lines.append(
+            f"Location: {loose} loose files at the top level; subfolders: "
+            + ", ".join(f"{name}/ ({n})" for name, n in subfolders.most_common(10))
+        )
+    summary = "\n".join(lines)
+
+    sample = [_describe_file(p, root) for p in _spread_sample(paths, root, sample_size)]
+    return sample, summary
+
+
+def inspect_directory_files(input_dir: str, max_files: int = 100) -> list[str]:
+    """Representative file descriptions for a folder (see inspect_directory)."""
+    return inspect_directory(input_dir, sample_size=max_files)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +272,7 @@ def chat_generate_structure(
     sample_filenames: list[str] | None = None,
     complexity_level: str = "medium",
     auto_discover: bool = False,
+    inventory_summary: str | None = None,
 ) -> dict[str, Any]:
     """
     Process natural language instruction or auto-discovery trigger to generate or update categories.
@@ -265,8 +312,16 @@ def chat_generate_structure(
         active_cats = {k: v for k, v in current_categories.items() if v.get("active", True)}
         context_parts.append(f"CURRENT CONFIGURED CATEGORIES ({len(active_cats)} active):\n{json.dumps(active_cats, indent=2)}")
 
+    if inventory_summary:
+        context_parts.append(
+            "WHOLE-FOLDER SUMMARY (every file, use this to make sure each kind of file has a home):\n"
+            + inventory_summary
+        )
     if sample_filenames:
-        context_parts.append(f"ACTUAL DIRECTORY INVENTORY (sample of {len(sample_filenames)} files):\n" + "\n".join(sample_filenames[:60]))
+        context_parts.append(
+            f"REPRESENTATIVE FILES (sample of {len(sample_filenames)}, spread across types and subfolders):\n"
+            + "\n".join(sample_filenames)
+        )
 
     context_str = "\n\n".join(context_parts) if context_parts else "No existing files/categories provided."
 
@@ -344,8 +399,10 @@ def chat_generate_structure(
                 f"Generated custom {complexity_level} taxonomy with {len(normalized_cats)} categories."
             )
 
+            record_llm_result(None)
             return {
                 "message": msg,
+                "ai_error": None,
                 "categories": normalized_cats if normalized_cats else (current_categories or {}),
                 "custom_instructions": parsed.get("custom_instructions", ""),
                 "is_ready": parsed.get("is_ready", True),
@@ -354,13 +411,16 @@ def chat_generate_structure(
 
     except Exception as exc:
         logger.warning("LLM category generation failed (%s), falling back to heuristic planner", exc)
-        return _fallback_heuristic_structure(
+        record_llm_result(str(exc))
+        result = _fallback_heuristic_structure(
             message=message,
             current_categories=current_categories,
             sample_filenames=sample_filenames,
             complexity_level=complexity_level,
             auto_discover=auto_discover,
         )
+        result["ai_error"] = get_llm_error()
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +662,31 @@ def _fallback_heuristic_clustering(
 # Smart Heuristic Structure Planner & Fallback
 # ---------------------------------------------------------------------------
 
+_ADD_FILLER = {"a", "an", "the", "new", "separate", "another", "some", "folder", "folders",
+               "category", "categories", "one", "ones", "for", "my", "all", "of", "called", "named"}
+
+
+def _parse_add_targets(message: str) -> list[str]:
+    """Extract folder names from requests like "add separate folders for travel and for resumes"."""
+    m = re.search(r"\b(?:add|create|make)\b(.*)", message, re.IGNORECASE)
+    if not m:
+        return []
+    tail = m.group(1)
+    # Prefer what follows "for"/"called"/"named" when present ("folders for X and Y").
+    lead = re.search(r"\b(?:for|called|named)\b(.*)", tail, re.IGNORECASE)
+    if lead:
+        tail = lead.group(1)
+    tail = re.split(r"[.;!?]", tail)[0]
+    names: list[str] = []
+    for part in re.split(r",|\band\b|&", tail, flags=re.IGNORECASE):
+        words = [w for w in re.findall(r"[A-Za-z0-9]+", part) if w.lower() not in _ADD_FILLER]
+        if words:
+            name = "_".join(w.capitalize() for w in words[:3])
+            if len(name) >= 2 and name not in names:
+                names.append(name)
+    return names
+
+
 def _fallback_heuristic_structure(
     message: str,
     current_categories: dict[str, Any] | None = None,
@@ -648,19 +733,13 @@ def _fallback_heuristic_structure(
                     val["name"] = new_clean
                     cats[new_clean] = val
 
-        # Check for ADD commands: "add a new folder for X" or "create X"
-        add_matches = re.findall(
-            r"(?:add|create|new folder for|make folder for)\s+(?:a\s+)?(?:new\s+)?(?:folder\s+for\s+|category\s+for\s+)?([a-zA-Z0-9_\-\/ ]+?)(?:\s+category|\s+folder|and|\.|$|,)",
-            message,
-            re.IGNORECASE,
-        )
-        for new_item in add_matches:
-            new_item_clean = re.sub(r"^(?:a|the|new|folder|category|for)\s+", "", new_item.strip(), flags=re.IGNORECASE).strip().replace(" ", "_")
-            if new_item_clean and len(new_item_clean) >= 2 and new_item_clean not in cats:
-                cats[new_item_clean] = {
-                    "name": new_item_clean,
-                    "description": f"Files for {new_item_clean}",
-                    "keywords": [new_item_clean.lower()],
+        # Check for ADD commands: "add a folder for X", "add separate folders for X and Y", "create X"
+        for new_name in _parse_add_targets(message):
+            if new_name not in cats:
+                cats[new_name] = {
+                    "name": new_name,
+                    "description": f"Files about {new_name.replace('_', ' ').lower()}",
+                    "keywords": [w.lower() for w in new_name.split("_")],
                     "extensions": [],
                     "active": True,
                 }

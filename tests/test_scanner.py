@@ -31,3 +31,17 @@ def test_determine_file_category():
     assert determine_file_category(".json") == "data"
     assert determine_file_category(".zip") == "archive"
     assert determine_file_category(".mp3") == "media"
+
+
+def test_scan_skips_hidden_files_and_bundle_contents(tmp_path):
+    (tmp_path / "report.pdf").write_text("real document")
+    (tmp_path / ".localized").write_text("")
+    (tmp_path / "._report.pdf").write_text("resource fork")
+    app = tmp_path / "Some App.app" / "Contents" / "Frameworks" / "Sparkle.framework"
+    app.mkdir(parents=True)
+    (app / "Autoupdate").write_text("binary")
+    (tmp_path / "Some App.app" / "Contents" / "CodeResources").write_text("plist")
+
+    records = scan_directory(TidyConfig(input_dir=tmp_path))
+
+    assert {r.filename for r in records} == {"report.pdf"}
