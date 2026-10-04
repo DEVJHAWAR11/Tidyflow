@@ -1,414 +1,162 @@
-# 🌊 TidyFlow 2.0 — Universal AI Workspace & File Organizer
+<p align="center">
+  <img src="frontend/public/logo.png" width="72" height="72" alt="TidyFlow" />
+</p>
+
+<h1 align="center">TidyFlow</h1>
 
 <p align="center">
-  <img src="frontend/public/favicon.svg" width="80" height="80" alt="TidyFlow Logo" />
+  Point it at a messy folder. It reads your files, proposes a clean set of folders,
+  shows you where everything will go, and only touches a file after you say so.
 </p>
 
 <p align="center">
-  <b>A privacy-first, agentic AI file organization system with interactive web controls, native OCR, batched LLM intelligence, duplicate detection, and safe execution.</b>
+  <a href="https://github.com/DEVJHAWAR11/Tidyflow/releases/latest"><b>Download for macOS</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/DEVJHAWAR11/Tidyflow/releases/latest"><b>Download for Windows</b></a>
+  &nbsp;·&nbsp;
+  <a href="#run-from-source">Run from source</a>
 </p>
 
 <p align="center">
-  <a href="#-architecture--how-it-works"><img src="https://img.shields.io/badge/Architecture-7--Stage%20Pipeline-blue.svg" alt="Architecture" /></a>
-  <a href="#-quickstart--installation"><img src="https://img.shields.io/badge/Python-3.10+-brightgreen.svg" alt="Python" /></a>
-  <a href="#-web-ui--quickstart"><img src="https://img.shields.io/badge/Frontend-React%20%7C%20Vite%20%7C%20Lucide-purple.svg" alt="Frontend" /></a>
-  <a href="#-running-unit-tests"><img src="https://img.shields.io/badge/Tests-51%20Passed-success.svg" alt="Tests" /></a>
-  <a href="#-license--privacy"><img src="https://img.shields.io/badge/Privacy-100%25%20Local%20Safe-orange.svg" alt="Privacy" /></a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/plan-dark.png" />
+    <img src="assets/screenshots/plan-light.png" alt="TidyFlow proposing folders for a Downloads folder" width="100%" />
+  </picture>
 </p>
 
----
+## How it works
 
-## 📖 Table of Contents
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/home-dark.png" />
+        <img src="assets/screenshots/home-light.png" alt="Choose a folder" />
+      </picture>
+      <p><b>1. Pick a folder</b><br />Downloads, Desktop, or any folder. Then agree on a plan like the one above, or ask for changes in plain English.</p>
+    </td>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/sorting-dark.png" />
+        <img src="assets/screenshots/sorting-light.png" alt="Sorting files" />
+      </picture>
+      <p><b>2. It reads every file</b><br />Contents, not just names, including the text inside scans and screenshots.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/review-dark.png" />
+        <img src="assets/screenshots/review-light.png" alt="Review where files will go" />
+      </picture>
+      <p><b>3. Review</b><br />Files it is sure about are already placed. The few it isn't sure about are waiting for you.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="assets/screenshots/done-light.png" alt="Files organized" />
+      <p><b>4. Done, and undoable</b><br />Files are copied into an <code>Organized</code> folder. One click puts everything back.</p>
+    </td>
+  </tr>
+</table>
 
-- [✨ Overview](#-overview)
-- [🚀 Key Features](#-key-features)
-- [🧠 Architecture & How It Works](#-architecture--how-it-works)
-- [📦 Installation & Setup](#-installation--setup)
-- [🖥️ Running the Desktop App (Recommended for Users)](#️-running-the-desktop-app-recommended-for-users)
-- [🌐 Running the Web UI via CLI](#-running-the-web-ui-via-cli)
-- [🔨 Building & Packaging Standalone Apps (macOS & Windows)](#-building--packaging-standalone-apps-macos--windows)
-- [⌨️ Running via CLI](#️-running-via-cli)
-- [⚙️ Configuration (`config.yaml` & `.env`)](#️-configuration-configyaml--env)
-- [🎯 Interactive Modes & Workflows](#-interactive-modes--workflows)
-  - [1. AI Organization Architect](#1-ai-organization-architect)
-  - [2. Quick Triage Queue & AI Auto-Clustering](#2-quick-triage-queue--ai-auto-clustering)
-  - [3. Review Chat Assistant](#3-review-chat-assistant)
-- [🔒 Privacy & Safety Guarantees](#-privacy--safety-guarantees)
-- [🧪 Running Unit Tests](#-running-unit-tests)
-- [📁 Project Structure](#-project-structure)
+## What makes it different
 
----
+- **It reads the files, not just the names.** It reads text from PDFs, Office documents, code and spreadsheets, and uses on-device OCR for scans and screenshots (Apple Vision on macOS, PaddleOCR on Windows). So `scan_0412.pdf` ends up next to your other invoices.
+- **The folders come from your files.** The plan is built from your actual files, not a fixed template, and the detail level runs from *Fewer* to *Detailed*.
+- **Nothing happens until you approve.** By default files are copied, not moved. Every copy is checked with SHA-256, and existing files are never overwritten.
+- **Undo is real.** Undo checks each file's hash before removing anything, then cleans up the empty folders it created.
+- **Duplicates are flagged.** That covers exact copies and near-identical images such as resized photos or repeat screenshots.
+- **It works without AI.** With no API key it falls back to rules and file types. With a key, it uses the provider you pick: DeepSeek, OpenAI, Gemini, Groq, OpenRouter, or any OpenAI-compatible endpoint.
 
-## ✨ Overview
+## Privacy
 
-Messy `Downloads`, cluttered `Desktop`, or disorganized shared project folders often contain hundreds of mixed PDFs, screenshots, invoices, code snippets, archives, and datasets.
+Your files stay on your computer, and so do the OCR and text extraction. If you connect an AI provider, only file names and short text excerpts are sent to classify them. Passwords, API keys and tokens are scrubbed from that text before it leaves. Without a key, nothing is sent anywhere.
 
-**TidyFlow** automates the entire decluttering process without risking accidental data loss:
-1. It deep-scans the directory and inspects content via **native text extractors** and **local OCR** (Apple Vision on macOS / PaddleOCR).
-2. It detects **exact SHA-256 duplicates** and **near-duplicate images** using perceptual hashing (`pHash`).
-3. It uses **fast-path heuristics** for instant rule matches and **batched LLMs** (DeepSeek, OpenAI, Groq, Gemini, OpenRouter) for intelligent semantic classification.
-4. It provides an **interactive dark-mode Web UI** with **AI Organization Architect**, **Card-by-Card Quick Triage**, and **1-Click AI Auto-Clustering** so you have 100% control over the proposed structure before any files are copied.
+Settings and keys live in your user data folder (`~/Library/Application Support/TidyFlow` or `%APPDATA%\TidyFlow`) and are readable only by you.
 
----
+## Install
 
-## 🚀 Key Features
+Grab the latest build from [**Releases**](https://github.com/DEVJHAWAR11/Tidyflow/releases/latest):
 
-| Feature | Description |
-| :--- | :--- |
-| **🤖 AI Organization Architect** | Define custom folder layouts using plain English (e.g. *"Separate my university lecture notes from bills"*), verify proposed taxonomy, and refine anytime via interactive chat. |
-| **⚡ Native & Local OCR** | High-speed Apple Vision OCR on macOS (`src/native/macos_ocr.swift`) and PaddleOCR on Linux/Windows. Persistent SHA-256 cache prevents re-scanning. |
-| **🔍 Multi-Format Text Extraction** | Extracts text and metadata from PDFs (`pymupdf`), Images (`PIL`), Office docs (`.docx`, `.xlsx`, `.pptx`), Code, Markdown, CSV, and SQL. |
-| **🧹 Exact & Near-Duplicate Detection** | Identifies exact identical files via SHA-256 and visual near-duplicates (screenshots, resized images) via Perceptual Hashing + Union-Find clustering. |
-| **🪄 1-Click AI Auto-Clustering** | Automatically groups unclassified or unrecognized files into clean, newly discovered topic folders in a single click. |
-| **🎴 Card-by-Card Quick Triage** | Fullscreen distraction-free queue with thumbnail/OCR preview, number-key fast sort (`1`-`9`), and custom folder creation. |
-| **🛡️ Safe Copy by Default** | Non-destructive execution: files are copied with SHA-256 integrity checks. Original files are never modified or deleted unless explicitly run in `--move` mode with `--confirm`. |
-| **🔐 Secret Redaction** | Automatically scrubs API keys (OpenAI, AWS, GitHub), passwords, and auth tokens before payloads are sent to LLMs. |
+| Platform | File | |
+| :-- | :-- | :-- |
+| macOS | `TidyFlow.dmg` | Open it and drag TidyFlow into Applications |
+| Windows 10/11 | `TidyFlow-windows.zip` | Unzip and run `TidyFlow.exe` |
 
----
+On first launch, open **Settings** to add an AI key (optional). The builds aren't notarized yet, so on macOS right-click the app and choose **Open** the first time. On Windows, choose **More info → Run anyway**.
 
-## 🧠 Architecture & How It Works
+## Run from source
 
-TidyFlow processes files through a robust 7-stage pipeline:
+Requires Python 3.10+ and Node.js 18+.
 
-```mermaid
-flowchart TD
-    A["📂 Input Directory"] --> B["1. Universal Scanner & Filter"]
-    B --> C["2. Visual Metadata & Thumbnails"]
-    C --> D["3. Exact (SHA-256) & Near-Duplicate (pHash) Detection"]
-    D --> E["4. Multi-Format Text Extraction (PDF, Docs, Code)"]
-    E --> F["5. High-Speed Local OCR (Apple Vision / PaddleOCR)"]
-    F --> G["6. Heuristics & Fast-Path Rule Engine"]
-    G --> H{"Rule Match?"}
-    H -- "High Confidence" --> J["Staged Classification"]
-    H -- "Ambiguous / Complex" --> I["7. Batched LLM Classifier (30-40 files/req)"]
-    I --> J
-    J --> K["📊 Interactive Web UI / HTML Review Report"]
-    K --> L["⚡ Verified Safe Copy / Move Execution"]
-```
-
-### 1. Universal Scanner & Filter
-Scans files while honoring ignore rules (`.DS_Store`, `.git`, `node_modules`, system files) and maximum file size limits (default: 200 MB).
-
-### 2. Visual Metadata & Thumbnails
-Generates base64 thumbnails (max 200px) for images and PDF first pages for instantaneous visual inspection in the UI.
-
-### 3. Deduplication Engine
-- **Exact Duplicates**: Computes SHA-256 digests and groups identical files.
-- **Near Duplicates**: Computes perceptual hashes (`imagehash.phash`) on images and clusters visually similar files using Union-Find algorithm within a Hamming distance threshold.
-
-### 4. Text Extraction & Secret Redaction
-Directly extracts text from PDFs, Office documents, markdown, text files, and source code. Redacts detected tokens, private keys, and passwords.
-
-### 5. Local OCR Engine
-Extracts textual content from scanned documents and images. On macOS, uses the precompiled native Swift binary for sub-second OCR without heavy Python deep-learning overhead.
-
-### 6. Heuristics & Rules
-Scores filenames and extracted text against keyword sets and file extensions. Obvious matches bypass the LLM, reducing latency and saving API costs.
-
-### 7. Dual-Mode Batched LLM Classification
-Files that need semantic analysis are bundled into compact JSON payloads (15–40 files per batch). The LLM categorizes them, assigns confidence scores, suggests clean filenames, and provides short rationale:
-- **Standard Mode**: Best-effort classification across full multi-category taxonomies.
-- **Strict Mode**: Prevents false matches when using narrow custom criteria (e.g. specific project files).
-
----
-
-## 📦 Installation & Setup
-
-### 1. Prerequisites
-- **Python**: `3.10` or higher
-- **Node.js**: `18.0` or higher (for frontend build)
-- **macOS / Linux / Windows** (macOS includes native Apple Vision OCR out-of-the-box)
-
-### 2. Clone the Repository
 ```bash
 git clone https://github.com/DEVJHAWAR11/Tidyflow.git
 cd Tidyflow
-```
-
-### 3. Install Python Dependencies
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-### 4. Build the Frontend
-```bash
-cd frontend
-npm install
-npm run build
-cd ..
-```
-
-### 5. Configure Your LLM API Key
-TidyFlow supports **DeepSeek**, **OpenAI**, **Groq**, **Gemini**, **OpenRouter**, or any **Custom OpenAI-compatible API**.
-
-You can set your key in a `.env` file in the root directory:
-```env
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-# or
-OPENAI_API_KEY=your_openai_api_key_here
-# or
-GROQ_API_KEY=your_groq_api_key_here
-# or
-GEMINI_API_KEY=your_gemini_api_key_here
-# or
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-```
-
-*Alternatively, configure it via the Web UI Settings modal (⚙️) or CLI command `python3 -m src.cli config-set-llm`.*
-
----
-
-## 🖥️ Running the Desktop App (Recommended for Users)
-
-Launch TidyFlow in a dedicated native desktop window (uses macOS WebKit / Windows WebView2):
-```bash
+npm --prefix frontend install && npm --prefix frontend run build
 python3 desktop.py
 ```
-This automatically starts the FastAPI backend server in the background and opens the TidyFlow native window. Closing the window cleanly shuts down the server.
 
----
-
-## 🌐 Running the Web UI via CLI
-
-If you prefer running in a browser tab:
-```bash
-python3 -m src.cli serve --host 127.0.0.1 --port 8000
-```
-Open your browser at **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
-
----
-
-## 🔨 Building & Packaging Standalone Apps (macOS & Windows)
-
-TidyFlow can be packaged into a **1-click standalone desktop application** for distribution to end-users. The bundled executable contains the compiled React frontend, FastAPI backend server, and native OCR engines so users **do not need Python, Node.js, or any developer tools installed**.
-
-### Prerequisites (For Builders)
-* **Python 3.10+** (with project dependencies: `pip install -r requirements.txt`)
-* **Node.js 18+ & npm** (for Vite frontend compilation)
-* **macOS** (optional): Xcode Command Line Tools (`xcode-select --install`) to compile the native Apple Vision Swift OCR binary.
-* **Windows**: WebView2 runtime (pre-installed on modern Windows 10 and 11).
-
----
-
-### 🍏 Building on macOS
-
-Run the automated 1-command build script:
+`desktop.py` starts the local server and opens TidyFlow in a native window. To work on the UI with hot reload, run the backend and the Vite dev server side by side:
 
 ```bash
-python3 scripts/build_desktop.py
-# or
-./scripts/build_desktop.sh
+python3 -m uvicorn src.api:app --port 8000
+npm --prefix frontend run dev        # http://localhost:1420
 ```
 
-#### What it does automatically:
-1. **Frontend**: Compiles the React SPA via Vite (`npm run build` ➔ `frontend/dist`).
-2. **Native OCR**: Compiles `src/native/macos_ocr.swift` using `swiftc` into a high-performance Apple Vision OCR binary (`bin/macos_ocr`).
-3. **App Bundle**: Packages the application into `dist/TidyFlow.app` with PyInstaller.
-4. **Installer**: Generates `dist/TidyFlow.dmg` containing a drag-and-drop installer with an `/Applications` shortcut.
+## Build
 
-#### macOS Distribution Outputs:
-* 📦 **`dist/TidyFlow.dmg`** *(Recommended)*: Distribute this 1-click DMG installer to macOS users. Users double-click the DMG and drag **TidyFlow** into their **Applications** folder.
-* 📱 **`dist/TidyFlow.app`**: Direct application bundle that can be launched immediately (`open dist/TidyFlow.app`).
+Everything needed to package the desktop app is in [`build/`](build):
 
----
-
-### 🪟 Building on Windows
-
-Run the build script in Command Prompt or PowerShell:
-
-```cmd
-python scripts\build_desktop.py
-:: or
-scripts\build_desktop.bat
 ```
-
-#### What it does automatically:
-1. **Frontend**: Compiles the React SPA via Vite (`npm run build`).
-2. **OCR Engine**: Bundles the PaddleOCR fallback engine.
-3. **App Bundle**: Packages `TidyFlow.exe` with PyInstaller utilizing Microsoft Edge WebView2.
-
-#### Windows Distribution Outputs:
-* 💻 **`dist/TidyFlow.exe`** (or `dist/TidyFlow/` folder): Self-contained executable. Users simply double-click `TidyFlow.exe` to launch the app.
-
----
-
-### ⚙️ How Packaging Works Under the Hood
-
-| Component | Technical Implementation |
-| :--- | :--- |
-| **PyInstaller Spec** | [`tidyflow.spec`](file:///Users/arpan/Tidyflow/tidyflow.spec) specifies bundle targets, static resource mapping, and metadata hooks for FastAPI, Uvicorn, and FastMCP. |
-| **Native Webview Window** | [`desktop.py`](file:///Users/arpan/Tidyflow/desktop.py) spawns FastAPI on an isolated background thread and opens a native Cocoa (macOS WebKit) or Windows (WebView2) desktop frame via `pywebview`. |
-| **Cross-Platform User Data** | User configuration (`config.yaml`), LLM API keys (`settings.json`), and SQLite databases (`tidyflow.db`) are saved in the OS application support directory (`~/Library/Application Support/TidyFlow` on macOS, `%APPDATA%\TidyFlow` on Windows) with secure user-only permissions (`0600`). |
-| **Native Folder Pickers** | macOS triggers native AppleScript `choose folder` dialogs without requiring accessibility entitlements; Windows invokes Win32 `FolderBrowserDialog`. |
-
----
-
-### Web UI Workflow:
-1. **AI Architect Tab**:
-   - Type custom folder organization goals in natural language or click a preset template (e.g., *Freelancer & Client Work*, *Student & Academic*, *Tax & Finance*).
-   - Review proposed categories, keywords, and rules.
-2. **Scan & Extract**:
-   - Select your input directory (e.g. `~/Downloads` or `/path/to/messy_files`) and target output directory.
-   - Click **"Start Organization Run"** to watch live progress.
-3. **Review & Apply**:
-   - Inspect files in a rich table with thumbnails, OCR snippets, duplicate badges, and confidence indicators.
-   - Use **"✨ Auto-Cluster with AI"** or **"⚡ Quick Triage Queue"** for unrecognized files.
-   - Click **"Organize Files Now"** to execute safe copying with SHA-256 verification.
-
----
-
-## ⌨️ Running via CLI
-
-TidyFlow includes a comprehensive Typer-powered CLI (`tidy`).
-
-### 1. Run Full Organization Pipeline
-```bash
-# Scan, extract text, deduplicate, classify with LLM, and generate reports
-python3 -m src.cli run --input-dir "/path/to/messy_folder" --output-dir "/path/to/organized_folder"
-
-# Auto-apply high-confidence matches (>= 85% confidence) directly
-python3 -m src.cli run --input-dir "/path/to/folder" --output-dir "/path/to/organized" --auto-apply --confirm
-
-# Move files instead of copying (requires explicit --confirm)
-python3 -m src.cli run --input-dir "/path/to/folder" --output-dir "/path/to/organized" --move --confirm
+build/
+├── build.py          shared build script (frontend → OCR helper → PyInstaller → installer)
+├── tidyflow.spec     PyInstaller spec
+├── macos/build.sh    → dist/TidyFlow.app, dist/TidyFlow.dmg
+└── windows/
+    ├── build.ps1     → dist/TidyFlow/TidyFlow.exe, dist/TidyFlow-windows.zip
+    └── build.bat     same, for Command Prompt or double-click
 ```
-
-### 2. Local Inventory Only (No LLM calls / Offline)
-```bash
-python3 -m src.cli inventory --input-dir "/path/to/folder" --output-dir "/path/to/output"
-```
-
-### 3. Apply Saved Decisions from CSV
-```bash
-python3 -m src.cli apply --decisions review_decisions.csv --output-dir "/path/to/organized" --confirm
-```
-
-### 4. Configure LLM Credentials via Keyring
-```bash
-python3 -m src.cli config-set-llm deepseek YOUR_API_KEY
-# or
-python3 -m src.cli config-set-llm openai YOUR_API_KEY
-# or
-python3 -m src.cli config-set-llm groq YOUR_API_KEY
-```
-
----
-
-## ⚙️ Configuration (`config.yaml` & `.env`)
-
-The core behavior is controlled by `config.yaml`:
-
-```yaml
-input_dir: "./sample_data"
-output_dir: "./organized_output"
-staging_dir: "./organized_output/Staging"
-
-max_file_size_mb: 200.0
-thumbnail_max_dim: 200
-
-ocr:
-  enabled: true
-  languages: ["en"]
-  max_image_dimension: 768
-  skip_images_smaller_than: 120
-
-llm:
-  enabled: true
-  provider: "deepseek"           # deepseek | openai | groq | openrouter | gemini | custom
-  model: "deepseek-chat"
-  batch_size: 15
-  max_retries: 3
-  timeout_seconds: 120
-
-classification:
-  auto_copy_threshold: 0.85
-  heuristic_bypass_enabled: true
-  heuristic_high_threshold: 88.0
-  heuristic_low_second: 50.0
-
-duplicates:
-  hamming_distance_threshold: 8  # Perceptual hash threshold for images
-```
-
----
-
-## 🎯 Interactive Modes & Workflows
-
-### 1. AI Organization Architect
-Instead of being restricted to fixed categories, tell the AI your specific goals:
-> *"Sort my university files by course code (CS101, MATH200) and separate past exam papers from homework assignments."*
-
-The AI proposes a complete taxonomy with folder descriptions, target keywords, and file extension filters for your approval.
-
-### 2. Quick Triage Queue & AI Auto-Clustering
-For unrecognized or low-confidence files:
-- **Auto-Cluster**: Click **"✨ Auto-Cluster with AI"** to let the LLM inspect all unclassified files simultaneously and group them into logical folders (e.g., *Receipts*, *Trip Photos*, *Configs*).
-- **Quick Triage Queue**: Open a modal showing each file's thumbnail or OCR excerpt. Press **`1`-`9`** to instantly assign categories or create a new folder on the fly.
-
-### 3. Review Chat Assistant
-Ask natural language questions or issue bulk modification commands directly on the Review tab:
-> *"Select only files with confidence higher than 90%"*  
-> *"Change all .jpg files from Unknown to Personal/Photos"*  
-> *"Deselect all near duplicates"*
-
----
-
-## 🔒 Privacy & Safety Guarantees
-
-1. **Non-Destructive Copying**: Files are copied to target folders by default. Original files remain intact.
-2. **Post-Copy Verification**: Destination files are hashed after copying. If the SHA-256 hash does not match the source, the copied file is deleted immediately.
-3. **Collision Resistance**: If a file with the same name already exists in the destination folder, TidyFlow appends a unique short hash (`filename_<sha256[:8]>.ext`) to prevent overwriting.
-4. **Local Redaction**: All API keys, passwords, and sensitive credentials found in extracted text are automatically masked before any payload leaves your machine.
-5. **Dynamic Directory Sandboxing**: File operations are strictly restricted to the specified input and output directories.
-
----
-
-## 🧪 Running Unit Tests
-
-TidyFlow has a comprehensive test suite covering the pipeline, OCR caching, duplicate clustering, rule evaluation, and API endpoints:
 
 ```bash
-PYTHONPATH=. python3 -m pytest tests/ -v
+./build/macos/build.sh            # on a Mac
 ```
 
----
-
-## 📁 Project Structure
-
-```
-Tidyflow/
-├── config.yaml               # Default system configuration & taxonomy
-├── requirements.txt          # Python dependencies
-├── pyproject.toml            # Project build configuration
-├── src/
-│   ├── api.py                # FastAPI backend & SSE event streaming
-│   ├── cli.py                # Typer CLI application
-│   ├── main_loop.py          # 7-Stage pipeline orchestrator
-│   ├── scanner.py            # Universal file scanner & filters
-│   ├── metadata.py           # Metadata & thumbnail generator
-│   ├── hashing.py            # SHA-256 & pHash duplicate engine
-│   ├── extractor.py          # Multi-format text extractors
-│   ├── ocr_engine.py         # Apple Vision & PaddleOCR engine
-│   ├── rules.py              # Heuristics & keyword scoring
-│   ├── llm_provider.py       # Batched LLM classification engine
-│   ├── ai_assistant.py       # Conversational architect & clustering
-│   ├── applier.py            # Safe copy/move execution engine
-│   ├── reporter.py           # HTML and CSV report generator
-│   ├── config.py             # Pydantic v2 configuration models
-│   └── native/
-│       └── macos_ocr.swift   # Native Apple Vision Swift OCR source
-├── frontend/                 # React + Vite + Tailwind frontend
-│   ├── src/
-│   │   ├── App.tsx           # Main application shell & state
-│   │   ├── components/       # Architect, Review, Triage, Settings components
-│   └── dist/                 # Production-built static assets
-└── tests/                    # Pytest test suite
+```powershell
+.\build\windows\build.ps1         # on Windows
 ```
 
----
+PyInstaller can't cross-compile, so each platform has to be built on that platform. Pushing a `v*` tag runs [`.github/workflows/build.yml`](.github/workflows/build.yml), which builds both and attaches them to the GitHub release. Pass `--skip-deps` to either script to skip the `pip install` step.
 
-## 📄 License & Privacy
+## Command line
 
-TidyFlow is open-source under the **MIT License**. Your files remain private on your computer; only truncated, secret-scrubbed text snippets are sent to your configured LLM for semantic categorization.
+The same pipeline is also available from the terminal:
+
+```bash
+python3 -m src.cli run -i ~/Downloads -o ~/Downloads/Organized          # dry run with an HTML report
+python3 -m src.cli run -i ~/Downloads -o ~/Organized --auto-apply --confirm
+python3 -m src.cli inventory -i ~/Downloads -o ./report                  # offline, no AI
+python3 -m src.cli config-set-llm deepseek <your-key>
+```
+
+Defaults such as the confidence threshold, OCR, batch size and duplicate sensitivity live in [`config.yaml`](config.yaml).
+
+## Project layout
+
+```
+src/            FastAPI server, classification pipeline, CLI
+  scanner.py      file discovery and ignore rules
+  extractor.py    text from PDFs, Office files, code
+  ocr_engine.py   Apple Vision / PaddleOCR
+  hashing.py      SHA-256 and perceptual-hash duplicates
+  llm_provider.py batched AI classification
+  ai_assistant.py folder planning and plain-English edits
+  applier.py      verified copy / move and undo
+frontend/       React + TypeScript + Tailwind UI
+build/          desktop packaging for macOS and Windows
+tests/          pytest suite
+```
+
+```bash
+python3 -m pytest tests/
+```

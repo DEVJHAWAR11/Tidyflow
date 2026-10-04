@@ -6,7 +6,8 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 block_cipher = None
-project_root = Path.cwd()
+# This spec lives in build/; everything it bundles is relative to the repo root.
+project_root = Path(SPECPATH).resolve().parent
 
 # Collect data files
 datas = []
@@ -143,7 +144,7 @@ elif sys.platform == "win32":
         icon_path = str(win_icon)
 
 a = Analysis(
-    ["desktop.py"],
+    [str(project_root / "desktop.py")],
     pathex=[str(project_root)],
     binaries=[],
     datas=datas,

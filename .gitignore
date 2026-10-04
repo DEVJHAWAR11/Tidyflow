@@ -24,9 +24,9 @@ interview-prep/
 data/
 *.exe
 dist/
-build/
+.pyinstaller/
 *.spec
-!tidyflow.spec
+!build/tidyflow.spec
 node_modules/
 .DS_Store
 organized_output/

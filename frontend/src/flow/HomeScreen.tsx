@@ -208,7 +208,11 @@ export function HomeScreen({
         </div>
         <div className="flex items-center gap-2">
           <HardDrive size={14} strokeWidth={1.75} className="text-tf-muted shrink-0" />
-          <span>Files never leave your computer</span>
+          <span>
+            {hasLlmKey
+              ? "Files stay on your computer — AI sees only names and short excerpts"
+              : "Nothing leaves your computer"}
+          </span>
         </div>
       </div>
     </Screen>
