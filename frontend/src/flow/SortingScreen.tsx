@@ -98,7 +98,7 @@ export function SortingScreen({
   return (
     <Screen className="max-w-[420px] mx-auto pt-[12vh] pb-16 px-4 text-center">
       {/* The wizard sorts while the user waits */}
-      <SortingWizard />
+      <SortingWizard stage={stage} />
 
       {/* Title */}
       <div className="mt-6 min-h-[28px] flex items-center justify-center">
