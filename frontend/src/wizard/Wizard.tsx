@@ -1,5 +1,6 @@
 import { useId, useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
 import { WIZARD_PARTS, WIZARD_TIP, WIZARD_VIEWBOX, type WizardPart } from "./rig";
+import { WIZARD_POSES, type WizardPoseName } from "./poses";
 
 /** DOM handles for animating the rig. Every group rotates around its own joint. */
 export interface WizardHandle {
@@ -98,6 +99,27 @@ export function Wizard({ size, flutter = false, className = "", style, ref, titl
             </g>
           </g>
         </g>
+      </svg>
+    </div>
+  );
+}
+
+interface WizardPoseProps {
+  pose: WizardPoseName;
+  size: number;
+  className?: string;
+  style?: CSSProperties;
+  ref?: Ref<HTMLDivElement>;
+}
+
+/** One of the extra poses (standing, casting, reading, sitting, braking), in the current text colour. */
+export function WizardPose({ pose, size, className = "", style, ref }: WizardPoseProps) {
+  const art = WIZARD_POSES[pose];
+  return (
+    <div ref={ref} className={className} style={{ width: size, height: size, ...style }} aria-hidden>
+      <svg viewBox={art.viewBox} width="100%" height="100%" fill="currentColor" style={{ overflow: "visible", display: "block" }}>
+        <path d={art.d} />
+        {art.tip && <circle data-tip cx={art.tip[0]} cy={art.tip[1]} r={1} fill="none" />}
       </svg>
     </div>
   );

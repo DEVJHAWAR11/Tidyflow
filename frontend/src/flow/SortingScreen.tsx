@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
-import { Check, Loader2, AlertTriangle, CircleSlash } from "lucide-react";
+import { Check, Loader2, AlertTriangle } from "lucide-react";
 import { Screen, Button, Card, ease } from "./ui";
-import { SortingWizard } from "../wizard/scenes";
+import { SortingWizard, WizardStopped } from "../wizard/scenes";
 import { folderLabel } from "../utils/folderVisuals";
 import type { SortingScreenProps } from "./contracts";
 
@@ -69,8 +69,8 @@ export function SortingScreen({
   if (stage === "Cancelled") {
     return (
       <Screen className="max-w-[420px] mx-auto pt-[12vh] pb-16 px-4 text-center">
-        <div className="w-11 h-11 rounded-[12px] bg-tf-surface-2 border border-tf-border flex items-center justify-center mx-auto mb-4">
-          <CircleSlash size={20} strokeWidth={1.75} className="text-tf-muted" />
+        <div className="flex justify-center mb-3">
+          <WizardStopped size={104} />
         </div>
         <h2 className="text-[19px] font-semibold tracking-[-0.015em] text-tf-ink mb-1.5">
           Sorting stopped
