@@ -11,7 +11,7 @@ import {
   ArrowLeft,
   ArrowRight,
   SlidersHorizontal, RefreshCw } from "lucide-react";
-import { WizardStatus } from "../wizard/scenes";
+import { WizardStatus, WizardWaiting } from "../wizard/scenes";
 import type { PlanScreenProps } from "./contracts";
 import type { ComplexityLevel } from "../types";
 import { Screen, Card, Button, StepHeader, Skeleton, ease } from "./ui";
@@ -181,7 +181,7 @@ export function PlanScreen(props: PlanScreenProps) {
           {/* Empty State */}
           {activeCategories.length === 0 && !props.planError ? (
             <Card className="mt-6 p-10 text-center flex flex-col items-center justify-center gap-3 max-w-lg mx-auto">
-              <FolderIcon name="" glyph={false} size={40} />
+              <WizardWaiting size={104} />
               <div>
                 <h3 className="text-[15px] font-medium text-tf-ink">No folders yet</h3>
                 <p className="text-[13.5px] text-tf-muted mt-1 leading-relaxed">

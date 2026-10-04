@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Wizard, type WizardHandle } from "./Wizard";
-import { burst, cast, fly, idle, spark, tipPoint, wave, type Cancelable } from "./motions";
+import { Wizard, WizardPose, type WizardHandle } from "./Wizard";
+import { cast, fly, idle, spark, tipPoint, wave, type Cancelable } from "./motions";
 import { FolderIcon } from "../flow/icons";
 
 const cancelAll = (list: Cancelable[]) => list.forEach((a) => a.cancel());
@@ -123,47 +123,50 @@ export function SortingWizard({ stage: progress }: { stage: string }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Flight across the window (Done, Undo).                              */
+/* Done: flies in and lands as the standing pose; Undo: takes off.     */
 /* ------------------------------------------------------------------ */
 
 interface FlightProps {
   /** Increment to start a flight. 0 means don't fly. */
   play: number;
-  /** forward: left to right. back: mirrored, right to left (undo). */
-  direction?: "forward" | "back";
-  /** Element whose vertical band the wizard flies through. */
-  anchor: React.RefObject<HTMLElement | null>;
-  /** Called once when the wizard passes the middle of the window. */
-  onMidpoint?: () => void;
+  /** land: fly in from the left and touch down on `target`. takeoff: leave from `target`, back to the left. */
+  mode: "land" | "takeoff";
+  /** Where the wizard lands, or takes off from. */
+  target: React.RefObject<HTMLElement | null>;
+  /** Called when the flight ends (on landing, the standing pose takes over). */
+  onDone?: () => void;
 }
 
-export function WizardFlight({ play, direction = "forward", anchor, onMidpoint }: FlightProps) {
+const FLIGHT_SIZE = 96;
+
+export function WizardFlight({ play, mode, target, onDone }: FlightProps) {
   const reduced = useReducedMotion();
   const lane = useRef<HTMLDivElement>(null);
   const wiz = useRef<WizardHandle>(null);
-  const [band, setBand] = useState<{ top: number; height: number } | null>(null);
-  const midpoint = useRef(onMidpoint);
-  midpoint.current = onMidpoint;
+  const [flying, setFlying] = useState(0);
+  const done = useRef(onDone);
+  done.current = onDone;
 
-  // Measure the anchor after commit (all refs attached). The lane only renders once measured.
-  useEffect(() => {
-    if (!play || reduced || !anchor.current) return;
-    const r = anchor.current.getBoundingClientRect();
-    setBand({ top: r.top + r.height / 2 - 110, height: 220 });
-  }, [play, reduced, anchor]);
-
+  // Start after commit, when the target has been laid out and measured.
   useEffect(() => {
     if (!play) return;
     if (reduced) {
-      midpoint.current?.();
+      done.current?.();
       return;
     }
+    setFlying(play);
+  }, [play, reduced]);
+
+  useEffect(() => {
     const w = wiz.current;
     const s = lane.current;
-    if (!w || !s || !band) return;
-    const size = 120;
-    const back = direction === "back";
-    let passed = false;
+    const t = target.current;
+    if (!flying || !w || !s || !t) return;
+    const r = t.getBoundingClientRect();
+    const tx = r.left + r.width / 2;
+    const ty = r.top + r.height / 2;
+    const size = FLIGHT_SIZE;
+    const landing = mode === "land";
     const running: Cancelable[] = [...idle(w, { bob: false })];
     w.el.style.opacity = "1";
     running.push(
@@ -171,45 +174,44 @@ export function WizardFlight({ play, direction = "forward", anchor, onMidpoint }
         s,
         w,
         size,
-        (e, W, H) => {
-          const t = back ? 1 - e : e;
-          const x = -size + t * (W + 2 * size);
-          const y = H * 0.62 - Math.sin(e * Math.PI) * H * 0.38;
-          const tilt = Math.cos(e * Math.PI) * (back ? 12 : -16);
-          return [x, y, tilt];
-        },
+        (e) =>
+          landing
+            ? [-size + (tx + size) * e, ty - 150 * (1 - e) - Math.sin(e * Math.PI) * 50, -14 * (1 - e)]
+            : [tx - (tx + size) * e, ty - 190 * e - Math.sin(e * Math.PI) * 40, 12 * e],
         {
-          duration: 1700,
-          mirror: back,
+          duration: landing ? 1500 : 1300,
+          mirror: !landing,
           onProgress: (k) => {
-            if (!passed && k >= 0.5) {
-              passed = true;
-              midpoint.current?.();
-            }
-            if (k >= 1) w.el.style.opacity = "0";
+            if (k < 1) return;
+            w.el.style.opacity = "0";
+            setFlying(0);
+            done.current?.();
           },
         },
       ),
     );
     return () => cancelAll(running);
-  }, [play, reduced, band, direction]);
+  }, [flying, mode, target]);
 
-  if (!play || reduced || !band) return null;
+  if (!flying) return null;
   return createPortal(
-    <div
-      ref={lane}
-      aria-hidden
-      className="pointer-events-none fixed left-0 right-0 z-50 overflow-hidden text-tf-ink"
-      style={{ top: band.top, height: band.height }}
-    >
-      <Wizard ref={wiz} size={120} flutter className="absolute left-0 top-0" style={{ opacity: 0 }} />
+    <div ref={lane} aria-hidden className="pointer-events-none fixed inset-0 z-50 overflow-hidden text-tf-ink">
+      <Wizard ref={wiz} size={FLIGHT_SIZE} flutter className="absolute left-0 top-0" style={{ opacity: 0 }} />
     </div>,
     document.body,
   );
 }
 
+/** Sparkle burst from a pose's wand tip. `stage` must be position: relative. */
+export function poseBurst(stage: HTMLElement, pose: HTMLElement | null, count = 9, drift = 44) {
+  const tip = pose?.querySelector("[data-tip]");
+  if (!tip) return;
+  const b = tip.getBoundingClientRect();
+  for (let i = 0; i < count; i++) spark(stage, b.left, b.top, { drift, life: 850 });
+}
+
 /* ------------------------------------------------------------------ */
-/* Status line while the AI reads the folder (Plan).                   */
+/* Plan: reads a scroll while the AI reads the folder, then casts.     */
 /* ------------------------------------------------------------------ */
 
 export function WizardStatus({ active, label }: { active: boolean; label: string }) {
@@ -217,37 +219,41 @@ export function WizardStatus({ active, label }: { active: boolean; label: string
   const [shown, setShown] = useState(active);
   const [finishing, setFinishing] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
-  const wiz = useRef<WizardHandle>(null);
+  const figure = useRef<HTMLDivElement>(null);
+  const caster = useRef<HTMLDivElement>(null);
 
   // Become visible as soon as work starts.
   if (active && !shown) setShown(true);
 
-  // Hover while working.
+  // Bob gently while reading.
   useEffect(() => {
-    const w = wiz.current;
-    if (!shown || !active || reduced || !w) return;
-    const running = idle(w);
-    return () => cancelAll(running);
+    const el = figure.current;
+    if (!shown || !active || reduced || !el) return;
+    const a = el.animate(
+      [
+        { transform: "translateY(0) rotate(0deg)" },
+        { transform: "translateY(-4px) rotate(-1.5deg)" },
+        { transform: "translateY(0) rotate(0deg)" },
+      ],
+      { duration: 2600, iterations: Infinity, easing: "ease-in-out" },
+    );
+    return () => a.cancel();
   }, [shown, active, reduced]);
 
-  // When the work finishes: one cast with a burst, then leave.
+  // When the work finishes: switch to the casting pose, one burst, then leave.
   useEffect(() => {
     if (active || !shown) return;
-    const w = wiz.current;
-    const s = stage.current;
-    if (reduced || !w || !s) {
+    if (reduced) {
       setShown(false);
       return;
     }
     setFinishing(true);
-    const { anims, release } = cast(w, 800);
-    const t1 = window.setTimeout(() => burst(s, w, 9, 44), release);
+    const t1 = window.setTimeout(() => stage.current && poseBurst(stage.current, caster.current), 160);
     const t2 = window.setTimeout(() => {
       setShown(false);
       setFinishing(false);
-    }, 900);
+    }, 1100);
     return () => {
-      cancelAll(anims);
       clearTimeout(t1);
       clearTimeout(t2);
     };
@@ -263,12 +269,64 @@ export function WizardStatus({ active, label }: { active: boolean; label: string
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         >
           <div ref={stage} className="relative mt-5 flex items-center gap-3 text-tf-ink">
-            <Wizard ref={wiz} size={46} flutter={!reduced} />
+            <div ref={figure} className="relative w-[58px] h-[58px] shrink-0">
+              <AnimatePresence initial={false}>
+                {finishing ? (
+                  <motion.div
+                    key="casting"
+                    className="absolute inset-0"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.16 }}
+                  >
+                    <WizardPose ref={caster} pose="casting" size={58} />
+                  </motion.div>
+                ) : (
+                  <motion.div key="reading" className="absolute inset-0" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                    <WizardPose pose="reading" size={58} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
             <span className="text-[13.5px] text-tf-muted">{finishing ? "Here's the plan." : label}</span>
           </div>
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Still moments: sitting (nothing to do yet), braking (stopped).      */
+/* ------------------------------------------------------------------ */
+
+/** Sitting on the hovering broom, for empty states. Settles in once, then stays still. */
+export function WizardWaiting({ size = 96 }: { size?: number }) {
+  const reduced = useReducedMotion();
+  return (
+    <motion.div
+      className="text-tf-ink"
+      initial={reduced ? false : { opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 160, damping: 14 }}
+    >
+      <WizardPose pose="sitting" size={size} />
+    </motion.div>
+  );
+}
+
+/** Braking to a stop, for when the user cancels. Skids in once. */
+export function WizardStopped({ size = 96 }: { size?: number }) {
+  const reduced = useReducedMotion();
+  return (
+    <motion.div
+      className="text-tf-ink"
+      initial={reduced ? false : { opacity: 0, x: -40, rotate: 8 }}
+      animate={{ opacity: 1, x: 0, rotate: 0 }}
+      transition={{ type: "spring", stiffness: 220, damping: 13 }}
+    >
+      <WizardPose pose="braking" size={size} />
+    </motion.div>
   );
 }
 

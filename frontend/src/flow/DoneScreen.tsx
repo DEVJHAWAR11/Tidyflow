@@ -4,7 +4,8 @@ import { FolderOpen, Undo2, ArrowRight, CheckCircle2, AlertTriangle, Loader2 } f
 import { Screen, Button, Card, ease } from "./ui";
 import { FolderIcon } from "./icons";
 import { folderLabel, prettyFolderName } from "../utils/folderVisuals";
-import { WizardFlight } from "../wizard/scenes";
+import { WizardFlight, poseBurst } from "../wizard/scenes";
+import { WizardPose } from "../wizard/Wizard";
 import type { DoneScreenProps } from "./contracts";
 
 export function DoneScreen({
@@ -16,23 +17,44 @@ export function DoneScreen({
   onTidyAnother,
 }: DoneScreenProps) {
   const isUndone = undoState === "done";
-  // The wizard swoops through once; the check appears as it passes.
+  // The wizard flies in and lands beside the check; Undo sends it off again.
   const markRef = useRef<HTMLDivElement>(null);
+  const spotRef = useRef<HTMLDivElement>(null);
+  const poseRef = useRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = useState(false);
-  const [undoFlight, setUndoFlight] = useState(0);
+  const [landed, setLanded] = useState(false);
+  const [takeoff, setTakeoff] = useState(0);
   useEffect(() => {
-    if (undoState === "working") setUndoFlight((n) => n + 1);
+    if (undoState !== "working") return;
+    setLanded(false);
+    setTakeoff((n) => n + 1);
   }, [undoState]);
+  const onLand = () => {
+    setLanded(true);
+    setRevealed(true);
+    window.setTimeout(() => markRef.current && poseBurst(markRef.current, poseRef.current), 140);
+  };
   const folderCountLabel = result.folderCount === 1 ? "1 folder" : `${result.folderCount} folders`;
   const actionPrefix = result.action === "moved" ? "Moved into " : "Copied into ";
 
   return (
     <Screen className="max-w-[460px] mx-auto pt-[10vh] pb-16 px-4 text-center">
-      <WizardFlight play={1} anchor={markRef} onMidpoint={() => setRevealed(true)} />
-      <WizardFlight play={undoFlight} direction="back" anchor={markRef} />
+      <WizardFlight play={1} mode="land" target={spotRef} onDone={onLand} />
+      <WizardFlight play={takeoff} mode="takeoff" target={spotRef} />
 
-      {/* Success Mark */}
-      <div ref={markRef} className="w-[52px] h-[52px] mx-auto">
+      {/* Success Mark, with the wizard standing beside it once it lands */}
+      <div ref={markRef} className="relative w-[52px] h-[52px] mx-auto">
+        <div ref={spotRef} className="absolute -bottom-3.5 right-[calc(100%+12px)] w-[76px] h-[76px] text-tf-ink">
+          {landed && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, scale: 1.08 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: "spring", stiffness: 380, damping: 18 }}
+            >
+              <WizardPose ref={poseRef} pose="standing" size={76} />
+            </motion.div>
+          )}
+        </div>
         {revealed && (
           <motion.div
             initial={{ scale: 0.6, opacity: 0 }}
