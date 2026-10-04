@@ -1,8 +1,10 @@
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { FolderOpen, Undo2, ArrowRight, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { Screen, Button, Card, ease } from "./ui";
 import { FolderIcon } from "./icons";
 import { folderLabel, prettyFolderName } from "../utils/folderVisuals";
+import { WizardFlight } from "../wizard/scenes";
 import type { DoneScreenProps } from "./contracts";
 
 export function DoneScreen({
@@ -14,39 +16,53 @@ export function DoneScreen({
   onTidyAnother,
 }: DoneScreenProps) {
   const isUndone = undoState === "done";
+  // The wizard swoops through once; the check appears as it passes.
+  const markRef = useRef<HTMLDivElement>(null);
+  const [revealed, setRevealed] = useState(false);
+  const [undoFlight, setUndoFlight] = useState(0);
+  useEffect(() => {
+    if (undoState === "working") setUndoFlight((n) => n + 1);
+  }, [undoState]);
   const folderCountLabel = result.folderCount === 1 ? "1 folder" : `${result.folderCount} folders`;
   const actionPrefix = result.action === "moved" ? "Moved into " : "Copied into ";
 
   return (
     <Screen className="max-w-[460px] mx-auto pt-[10vh] pb-16 px-4 text-center">
+      <WizardFlight play={1} anchor={markRef} onMidpoint={() => setRevealed(true)} />
+      <WizardFlight play={undoFlight} direction="back" anchor={markRef} />
+
       {/* Success Mark */}
-      <motion.div
-        initial={{ scale: 0.92, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.25, ease }}
-        className="w-[52px] h-[52px] rounded-full bg-tf-success-soft flex items-center justify-center mx-auto select-none"
-      >
-        <svg
-          width={24}
-          height={24}
-          viewBox="0 0 24 24"
-          fill="none"
-          className="text-tf-success"
-          aria-hidden
-        >
-          <motion.path
-            d="M6 12.5l4 4 8-9"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2.25}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            initial={{ pathLength: 0 }}
-            animate={{ pathLength: 1 }}
-            transition={{ duration: 0.45, delay: 0.1, ease }}
-          />
-        </svg>
-      </motion.div>
+      <div ref={markRef} className="w-[52px] h-[52px] mx-auto">
+        {revealed && (
+          <motion.div
+            initial={{ scale: 0.6, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 420, damping: 22 }}
+            className="w-[52px] h-[52px] rounded-full bg-tf-success-soft flex items-center justify-center select-none"
+          >
+            <svg
+              width={24}
+              height={24}
+              viewBox="0 0 24 24"
+              fill="none"
+              className="text-tf-success"
+              aria-hidden
+            >
+              <motion.path
+                d="M6 12.5l4 4 8-9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.25}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                initial={{ pathLength: 0 }}
+                animate={{ pathLength: 1 }}
+                transition={{ duration: 0.45, delay: 0.1, ease }}
+              />
+            </svg>
+          </motion.div>
+        )}
+      </div>
 
       {/* Title */}
       <h1 className="mt-5 text-[24px] font-semibold tracking-[-0.02em] text-tf-ink tf-num">

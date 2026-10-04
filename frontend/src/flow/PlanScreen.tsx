@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ArrowRight,
   SlidersHorizontal, RefreshCw } from "lucide-react";
+import { WizardStatus } from "../wizard/scenes";
 import type { PlanScreenProps } from "./contracts";
 import type { ComplexityLevel } from "../types";
 import { Screen, Card, Button, StepHeader, Skeleton, ease } from "./ui";
@@ -156,14 +157,12 @@ export function PlanScreen(props: PlanScreenProps) {
         </div>
       )}
 
+      {/* The wizard reads the folder, then casts the plan */}
+      <WizardStatus active={props.isGenerating} label="Reading your files…" />
+
       {/* Generating State */}
       {props.isGenerating ? (
-        <div className="mt-6 space-y-3">
-          <div className="flex items-center gap-2 text-[13.5px] text-tf-muted">
-            <Loader2 size={15} strokeWidth={2} className="animate-spin text-tf-muted shrink-0" />
-            <span>Reading your files…</span>
-          </div>
-
+        <div className="mt-4 space-y-3">
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <Card key={i} className="p-4 flex gap-3.5 items-start min-h-[92px]">
