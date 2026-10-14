@@ -9,7 +9,7 @@ import {
   BackendStatus,
   ComplexityLevel,
 } from "./types";
-import type { AppView, DoneResult, FlowStep, QuickLocation } from "./flow/contracts";
+import type { AppView, DoneResult, FlowStep, QuickLocation, ReviewAiOutcome } from "./flow/contracts";
 import { TopBar } from "./flow/TopBar";
 import { HomeScreen } from "./flow/HomeScreen";
 import { PlanScreen } from "./flow/PlanScreen";
@@ -615,15 +615,16 @@ export default function App() {
 
   // --- Organize (apply) ---
 
+  // Same rule as the review screen: a file still waiting in "To review" has no folder yet, so it is
+  // never organized, even if it happens to be checked.
+  const isDecided = (f: ClassifiedFile) =>
+    categoryOverrides[f.file_id] !== undefined ||
+    (f.category !== "Unknown" && f.confidence >= autoThreshold && activeFolderNames.includes(f.category));
+
   const handleApplyDecisions = async () => {
     if (selectedFileIds.size === 0) return;
     setIsApplying(true);
 
-    // Same rule as the review screen: a file still waiting in "To review" has no folder yet, so it is
-    // never organized, even if it happens to be checked.
-    const isDecided = (f: ClassifiedFile) =>
-      categoryOverrides[f.file_id] !== undefined ||
-      (f.category !== "Unknown" && f.confidence >= autoThreshold && activeFolderNames.includes(f.category));
     const decisionList: ApplyDecisionItem[] = files.map((f) => ({
       file_id: f.file_id,
       approved: selectedFileIds.has(f.file_id) && isDecided(f),
@@ -706,16 +707,96 @@ export default function App() {
     setCategoryOverrides((prev) => ({ ...prev, [fileId]: folder }));
   };
 
+  // The switch only adds or removes the AI's suggested names; renames asked for in plain language stay.
+  const renamesEnabled =
+    renameSuggestions.length > 0 &&
+    renameSuggestions.every((f) => filenameOverrides[f.file_id] === f.suggested_filename);
+
   const handleToggleRenames = (enabled: boolean) => {
-    if (!enabled) {
-      setFilenameOverrides({});
-      return;
-    }
-    const next: Record<string, string> = {};
-    renameSuggestions.forEach((f) => {
-      next[f.file_id] = f.suggested_filename as string;
+    setFilenameOverrides((prev) => {
+      const next = { ...prev };
+      renameSuggestions.forEach((f) => {
+        const suggested = f.suggested_filename as string;
+        if (enabled && next[f.file_id] === undefined) next[f.file_id] = suggested;
+        if (!enabled && next[f.file_id] === suggested) delete next[f.file_id];
+      });
+      return next;
     });
-    setFilenameOverrides(next);
+  };
+
+  const handleClearRename = (fileId: string) => {
+    setFilenameOverrides((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+  };
+
+  // --- Plain-language changes on the review screen ---
+
+  const aiUndoSnapshot = useRef<{
+    categories: Record<string, string>;
+    filenames: Record<string, string>;
+    selected: string[];
+  } | null>(null);
+
+  const handleAskAi = async (command: string): Promise<ReviewAiOutcome> => {
+    const folders = Array.from(new Set([...activeFolderNames, ...Object.values(categoryOverrides)]));
+    const res = await fetch(`${API_BASE}/ai/review-chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command,
+        categories: folders,
+        files: files.map((f) => ({
+          file_id: f.file_id,
+          filename: filenameOverrides[f.file_id] || f.filename,
+          extension: f.extension,
+          category: isDecided(f) ? categoryOverrides[f.file_id] ?? f.category : "(undecided)",
+          extracted_text: f.extracted_text,
+          file_size_bytes: f.file_size_bytes,
+          included: selectedFileIds.has(f.file_id),
+        })),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const moves: Record<string, string> = data.category_overrides || {};
+    const renames: Record<string, string> = data.filename_overrides || {};
+    const exclude: string[] = data.exclude || [];
+    const include: string[] = data.include || [];
+    const outcome: ReviewAiOutcome = {
+      message: data.message || "",
+      error: !res.ok ? "Something went wrong. Nothing was changed." : data.error || null,
+      changedIds: Array.from(new Set([...Object.keys(moves), ...Object.keys(renames), ...include])),
+      excludedIds: exclude,
+      moved: Object.keys(moves).length,
+      renamed: Object.keys(renames).length,
+      left: exclude.length,
+      included: include.length,
+      newFolders: data.new_folders || [],
+    };
+    if (outcome.error || outcome.changedIds.length + exclude.length === 0) return outcome;
+
+    aiUndoSnapshot.current = { categories: categoryOverrides, filenames: filenameOverrides, selected: selectedIdList };
+    setCategoryOverrides((prev) => ({ ...prev, ...moves }));
+    setFilenameOverrides((prev) => ({ ...prev, ...renames }));
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      // Giving a file a folder means it should be organized; leaving it out unchecks it.
+      [...Object.keys(moves), ...include].forEach((id) => next.add(id));
+      exclude.forEach((id) => next.delete(id));
+      return next;
+    });
+    return outcome;
+  };
+
+  const handleUndoAi = () => {
+    const snap = aiUndoSnapshot.current;
+    if (!snap) return;
+    setCategoryOverrides(snap.categories);
+    setFilenameOverrides(snap.filenames);
+    setSelectedIdList(snap.selected);
+    aiUndoSnapshot.current = null;
   };
 
   // --- Settings ---
@@ -969,8 +1050,12 @@ export default function App() {
             onMoveFile={handleMoveFile}
             autoThreshold={autoThreshold}
             renameSuggestionCount={renameSuggestions.length}
-            renamesEnabled={Object.keys(filenameOverrides).length > 0}
+            renamesEnabled={renamesEnabled}
             onToggleRenames={handleToggleRenames}
+            filenameOverrides={filenameOverrides}
+            onClearRename={handleClearRename}
+            onAskAi={handleAskAi}
+            onUndoAi={handleUndoAi}
             moveMode={moveMode}
             setMoveMode={setMoveMode}
             outputFolder={outputFolder}

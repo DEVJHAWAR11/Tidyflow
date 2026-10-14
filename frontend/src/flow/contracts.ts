@@ -127,6 +127,28 @@ export interface PreviewScreenProps {
   onOpenFile: (absPath: string) => void;
   advancedMode: boolean;
   onOpenAdvancedReview: () => void;
+  /** New name per file (AI suggestions the user turned on, or renames asked for in plain language) */
+  filenameOverrides: Record<string, string>;
+  onClearRename: (fileId: string) => void;
+  /** Apply a plain-language change request to the review; resolves with what changed */
+  onAskAi: (command: string) => Promise<ReviewAiOutcome>;
+  /** Revert the last plain-language change */
+  onUndoAi: () => void;
+}
+
+/** What a plain-language change request did on the review screen. */
+export interface ReviewAiOutcome {
+  message: string;
+  error: string | null;
+  /** Files that were moved, renamed or added back */
+  changedIds: string[];
+  /** Files the user asked to leave where they are */
+  excludedIds: string[];
+  moved: number;
+  renamed: number;
+  left: number;
+  included: number;
+  newFolders: string[];
 }
 
 export interface DoneResult {

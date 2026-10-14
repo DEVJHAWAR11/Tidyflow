@@ -263,3 +263,16 @@ html.dark ::-webkit-scrollbar-thumb:hover {
   box-shadow: 0 4px 0 var(--color-tf-ink), 0 8px 0 var(--color-tf-ink);
   opacity: 0.55;
 }
+
+/* A row changed by "Ask for a change": a soft sweep of light that fades away. */
+@keyframes tf-glow {
+  0% { background-color: var(--color-tf-brand-soft); box-shadow: inset 2px 0 0 var(--color-tf-ink); }
+  70% { background-color: var(--color-tf-brand-soft); box-shadow: inset 2px 0 0 var(--color-tf-ink); }
+  100% { background-color: transparent; box-shadow: inset 2px 0 0 transparent; }
+}
+.tf-glow {
+  animation: tf-glow 2.6s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tf-glow { animation-duration: 0.01s; }
+}

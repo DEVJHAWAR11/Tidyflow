@@ -214,7 +214,18 @@ export function poseBurst(stage: HTMLElement, pose: HTMLElement | null, count = 
 /* Plan: reads a scroll while the AI reads the folder, then casts.     */
 /* ------------------------------------------------------------------ */
 
-export function WizardStatus({ active, label }: { active: boolean; label: string }) {
+export function WizardStatus({
+  active,
+  label,
+  doneLabel = "Here's the plan.",
+  className = "mt-5",
+}: {
+  active: boolean;
+  label: string;
+  /** Shown while the wizard casts, once the work is done */
+  doneLabel?: string;
+  className?: string;
+}) {
   const reduced = useReducedMotion();
   const [shown, setShown] = useState(active);
   const [finishing, setFinishing] = useState(false);
@@ -268,7 +279,7 @@ export function WizardStatus({ active, label }: { active: boolean; label: string
           exit={{ opacity: 0, height: 0 }}
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         >
-          <div ref={stage} className="relative mt-5 flex items-center gap-3 text-tf-ink">
+          <div ref={stage} className={`relative flex items-center gap-3 text-tf-ink ${className}`}>
             <div ref={figure} className="relative w-[58px] h-[58px] shrink-0">
               <AnimatePresence initial={false}>
                 {finishing ? (
@@ -288,7 +299,7 @@ export function WizardStatus({ active, label }: { active: boolean; label: string
                 )}
               </AnimatePresence>
             </div>
-            <span className="text-[13.5px] text-tf-muted">{finishing ? "Here's the plan." : label}</span>
+            <span className="text-[13.5px] text-tf-muted">{finishing ? doneLabel : label}</span>
           </div>
         </motion.div>
       )}

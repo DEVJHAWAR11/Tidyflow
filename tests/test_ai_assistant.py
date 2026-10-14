@@ -217,3 +217,102 @@ def test_inspect_directory_sample_covers_rare_types_and_subfolders(tmp_path):
     assert "203 files in total." in summary
     assert ".png x200" in summary
     assert "Work/ (1)" in summary
+
+
+_REVIEW_FILES = [
+    {"file_id": "a", "filename": "1.jpeg", "category": "Images", "extracted_text": "react course module 1"},
+    {"file_id": "b", "filename": "2.jpeg", "category": "Images", "extracted_text": "react course module 2"},
+    {"file_id": "c", "filename": "notes.md", "category": "Documents", "extracted_text": "sprint notes"},
+]
+
+
+def _fake_ai(monkeypatch, answer=None, fail=False):
+    import json
+    import src.ai_assistant as aa
+
+    class FakeResponse:
+        def raise_for_status(self):
+            if fail:
+                raise RuntimeError("boom")
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps(answer)}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            FakeClient.sent = json
+            return FakeResponse()
+
+    monkeypatch.setattr(aa, "load_settings", lambda: ("deepseek", "sk-test", None))
+    monkeypatch.setattr(aa.httpx, "Client", FakeClient)
+    return FakeClient
+
+
+def test_review_command_keeps_only_real_safe_changes(monkeypatch):
+    client = _fake_ai(monkeypatch, {
+        "message": "Moved the course screenshots to Academic.",
+        "moves": {"a": "academic coursework", "b": "Academic_Coursework", "c": "Documents", "zzz": "Academic_Coursework"},
+        "renames": {"a": "react_module_01", "c": "notes.md", "b": "../../evil/name.jpeg"},
+        "exclude": ["c", "nope"],
+        "include": ["c"],
+    })
+
+    res = apply_review_command("move course screenshots to academic", _REVIEW_FILES, ["Academic_Coursework", "Images", "Documents"])
+
+    assert res["error"] is None
+    assert res["category_overrides"] == {"a": "Academic_Coursework", "b": "Academic_Coursework"}
+    assert res["filename_overrides"] == {"a": "react_module_01.jpeg", "b": "evilname.jpeg"}
+    assert res["exclude"] == ["c"] and res["include"] == []
+    assert res["new_folders"] == []
+    # The AI saw the file contents, not just names.
+    assert "react course module 1" in client.sent["messages"][1]["content"]
+
+
+def test_review_command_reports_new_folders(monkeypatch):
+    _fake_ai(monkeypatch, {"message": "Done.", "moves": {"c": "Meetings"}})
+    res = apply_review_command("put notes in a new Meetings folder", _REVIEW_FILES, ["Images", "Documents"])
+    assert res["category_overrides"] == {"c": "Meetings"}
+    assert res["new_folders"] == ["Meetings"]
+
+
+def test_review_command_changes_nothing_when_ai_fails(monkeypatch):
+    _fake_ai(monkeypatch, fail=True)
+    res = apply_review_command("move everything to Images", _REVIEW_FILES, ["Images"])
+    assert res["error"]
+    assert res["category_overrides"] == {} and res["filename_overrides"] == {}
+
+
+def test_review_command_says_when_nothing_matched(monkeypatch):
+    _fake_ai(monkeypatch, {"message": "", "moves": {}})
+    res = apply_review_command("move the tax returns to Finance", _REVIEW_FILES, ["Images"])
+    assert res["category_overrides"] == {}
+    assert "couldn't find" in res["message"]
+
+
+def test_review_command_drops_no_op_exclusions_and_fixes_the_message(monkeypatch):
+    files = [dict(f, included=(f["file_id"] != "c")) for f in _REVIEW_FILES]
+    _fake_ai(monkeypatch, {"message": "Moved tax returns to Finance and left notes out.", "exclude": ["c"]})
+    res = apply_review_command("move tax returns to Finance", files, ["Images", "Documents"])
+    assert res["exclude"] == []
+    assert "couldn't find" in res["message"]
+
+
+def test_review_command_rewrites_message_when_changes_were_dropped(monkeypatch):
+    _fake_ai(monkeypatch, {"message": "Moved 5 screenshots to Images.", "moves": {"a": "Documents", "ghost": "Images"}})
+    res = apply_review_command("move screenshots", _REVIEW_FILES, ["Images", "Documents"])
+    assert res["message"] == "Moved 1 file to Documents."
+
+
+def test_review_command_keeps_explanations_when_nothing_changed(monkeypatch):
+    _fake_ai(monkeypatch, {"message": "I can't delete files; I can only move or rename them."})
+    res = apply_review_command("delete everything", _REVIEW_FILES, ["Images"])
+    assert res["message"].startswith("I can't delete files")

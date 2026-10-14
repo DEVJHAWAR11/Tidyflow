@@ -102,25 +102,41 @@ OUTPUT FORMAT — Return ONLY strict JSON:
 
 
 _REVIEW_COMMAND_SYSTEM_PROMPT = """\
-You are TidyFlow AI assisting the user with bulk editing classified files in the review dashboard.
-The user will provide a command in natural language (e.g., "Move all invoices to Finance/Invoices", "Set files containing 'tax' to Taxes/2026", "Change all .png files to Screenshots", "Create category Travel and move vacation photos there").
+You are TidyFlow's review assistant. The user is looking at a list of their files and the folder each one
+is about to be filed into, and asks for a change in plain language, for example:
+  "move the course screenshots to Academic", "put all invoices in a new folder called Bills",
+  "give the resumes clearer names", "don't organize the empty files", "put the files to review where they fit best".
 
-TASK:
-1. Examine the list of files provided (file_id, filename, current_category, extension).
-2. Determine which files match the user's intent.
-3. You can assign files to EXISTING categories or introduce a NEW target category if the user asked for one.
-4. Output category overrides mapping file_id to the target category.
-5. Output optional suggested filename changes if requested.
+Each file has: id, name, folder (where it is going now, or "(undecided)"), organize (false = the user already
+left it out), size, and text (an excerpt of its contents; screenshots and scans were read with OCR, so expect
+some noise).
 
-OUTPUT FORMAT — Return ONLY strict JSON:
+RULES
+1. Change only files that clearly match the request. Use the name AND the text to decide. A file you are
+   unsure about is simply not mentioned in your answer; that keeps it exactly as it is.
+2. Move files only into the user's existing folders, unless the user names a new folder or clearly asks for
+   one. A new folder gets a short, clean name (e.g. "Bills", "Academic/Courses"). Pick the folder whose
+   purpose fits the file's kind and content: notes and letters are documents, not code; photos and
+   screenshots go to a photos/images/media folder when one exists.
+3. "Undecided" files have no folder yet. When asked to place them ("where they fit best", "sort the rest"),
+   give EVERY undecided file the closest existing folder, even when its text is empty or unreadable: judge by
+   its name and type (a .jpg with no text is still a photo).
+4. Rename only when the user asks for renaming. Keep each file's original extension. New names are short,
+   readable and specific (e.g. "react_course_module_03.jpeg", "invoice_acme_2026-03.pdf").
+5. "exclude" is ONLY for files the user explicitly asks to leave out ("leave", "skip", "don't organize",
+   "keep out"). Never exclude a file just because you are unsure about it. "include" is for files the user
+   asks to organize after all.
+6. Never invent file ids. Only use ids from the list.
+7. "message" is ONE short sentence, at most 14 words, saying what you did in the user's terms
+   (e.g. "Moved 6 course screenshots to Academic."). If nothing matched, say so and suggest a rewording.
+
+OUTPUT: only this JSON object:
 {
-  "message": "Clear explanation of what was changed (e.g., 'Moved 5 invoice files to Finance/Invoices').",
-  "category_overrides": {
-    "file_id_1": "Target_Category_Name"
-  },
-  "filename_overrides": {
-    "file_id_1": "suggested_new_filename.ext"
-  }
+  "message": "string",
+  "moves": {"<id>": "<folder>"},
+  "renames": {"<id>": "<new name with extension>"},
+  "exclude": ["<id>"],
+  "include": ["<id>"]
 }
 """
 
@@ -440,52 +456,45 @@ def apply_review_command(
     categories: list[str] | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Process natural language command to bulk edit categories or filenames in review table.
-    Returns:
-        {
-            "message": str,
-            "category_overrides": dict[str, str],
-            "filename_overrides": dict[str, str]
-        }
+    Turn a plain-language request on the review screen into per-file changes.
+
+    Returns {"message", "category_overrides", "filename_overrides", "exclude", "include",
+    "new_folders", "error"}. Every id in the result belongs to `files`, and no-op changes are dropped.
+    When the AI call fails nothing is changed (a guess could move the wrong files); without an AI key
+    a simple keyword matcher is used instead.
     """
     provider, api_key, custom_url = load_settings()
+    cat_list = list(categories.keys()) if isinstance(categories, dict) else list(categories or [])
 
-    cat_list = list(categories.keys()) if isinstance(categories, dict) else (categories or [])
-
-    # If no LLM, use regex/rule-based matcher
     if not api_key:
-        return _fallback_heuristic_review_command(command, files, cat_list)
+        result = _fallback_heuristic_review_command(command, files, cat_list)
+        return _validate_review_result(result, files, cat_list, note="Matched by file name (no AI key is set).")
 
-    base_url = custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    # Compact files list for prompt (up to 120 files)
+    # Short excerpts keep big folders inside one request; small folders get more of each file.
+    snippet_len = 220 if len(files) <= 120 else 110
     files_payload = [
         {
-            "file_id": f.get("file_id"),
-            "filename": f.get("filename"),
-            "extension": f.get("extension"),
-            "current_category": f.get("category"),
-            "reason": f.get("reason", "")[:60],
+            "id": f.get("file_id"),
+            "name": f.get("filename"),
+            "folder": f.get("category") or "(undecided)",
+            "organize": f.get("included", True),
+            "size": f.get("file_size_bytes"),
+            "text": " ".join(str(f.get("extracted_text") or "").split())[:snippet_len],
         }
-        for f in files[:120]
+        for f in files[:400]
     ]
-
     user_payload = (
-        f"USER COMMAND: {command}\n\n"
-        f"AVAILABLE CATEGORIES (you may also create a new one if command requests): {json.dumps(cat_list)}\n\n"
-        f"FILES TO REVIEW ({len(files_payload)} items):\n{json.dumps(files_payload, indent=2)}"
+        f"REQUEST: {command}\n\n"
+        f"EXISTING FOLDERS: {json.dumps(cat_list)}\n\n"
+        f"FILES ({len(files_payload)}):\n{json.dumps(files_payload, ensure_ascii=False)}"
     )
 
+    base_url = custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")
     try:
-        with httpx.Client(timeout=40.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             resp = client.post(
-                url,
-                headers=headers,
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "model": _resolve_provider_model(provider),
                     "messages": [
@@ -497,32 +506,140 @@ def apply_review_command(
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
-            raw_content = data["choices"][0]["message"]["content"]
-            cleaned = _strip_markdown_fences(raw_content)
-            parsed = json.loads(cleaned)
-
-            cat_overrides = parsed.get("category_overrides", {})
-            fn_overrides = parsed.get("filename_overrides", {})
-
-            # Clean and validate overrides
-            valid_cat_overrides = {str(k): str(v) for k, v in cat_overrides.items() if v}
-            valid_fn_overrides = {str(k): str(v) for k, v in fn_overrides.items() if v}
-
-            msg = parsed.get(
-                "message",
-                f"Updated {len(valid_cat_overrides)} files based on your instruction."
-            )
-
-            return {
-                "message": msg,
-                "category_overrides": valid_cat_overrides,
-                "filename_overrides": valid_fn_overrides,
-            }
-
+            parsed = json.loads(_strip_markdown_fences(resp.json()["choices"][0]["message"]["content"]))
     except Exception as exc:
-        logger.warning("LLM review edit command failed (%s), using heuristic matching", exc)
-        return _fallback_heuristic_review_command(command, files, cat_list)
+        logger.warning("Review request failed: %s", exc)
+        return {
+            "message": "",
+            "category_overrides": {},
+            "filename_overrides": {},
+            "exclude": [],
+            "include": [],
+            "new_folders": [],
+            "error": "The AI didn't answer, so nothing was changed. Please try again.",
+        }
+
+    result = {
+        "message": parsed.get("message", ""),
+        # Older answers used the original key names; accept both.
+        "category_overrides": parsed.get("moves") or parsed.get("category_overrides") or {},
+        "filename_overrides": parsed.get("renames") or parsed.get("filename_overrides") or {},
+        "exclude": parsed.get("exclude") or [],
+        "include": parsed.get("include") or [],
+    }
+    return _validate_review_result(result, files, cat_list)
+
+
+_UNSAFE_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _clean_folder(name: str, existing: list[str]) -> str | None:
+    """Match a folder name to an existing one (ignoring case and separators), or clean up a new one."""
+    raw = str(name or "").strip().strip("/").strip()
+    if not raw or ".." in raw or raw.lower() in ("unknown", "(undecided)"):
+        return None
+    key = re.sub(r"[^a-z0-9]", "", raw.lower())
+    for cat in existing:
+        if re.sub(r"[^a-z0-9]", "", cat.lower()) == key:
+            return cat
+    parts = [_UNSAFE_NAME_CHARS.sub("", part).strip() for part in raw.split("/")]
+    cleaned = "/".join(part for part in parts if part)
+    return cleaned[:60] or None
+
+
+def _clean_filename(new_name: str, original: str) -> str | None:
+    """Make a suggested name safe and keep the original extension."""
+    name = _UNSAFE_NAME_CHARS.sub("", str(new_name or "")).strip().strip(".")
+    if not name:
+        return None
+    orig_ext = Path(original).suffix
+    suffix = Path(name).suffix
+    if orig_ext and suffix.lower() != orig_ext.lower():
+        # Swap a wrong extension ("x.pdf" for a .txt file); keep dotted words ("v2.1 notes") and append.
+        looks_like_ext = 1 < len(suffix) <= 6 and suffix[1:].isalnum() and not suffix[1:].isdigit()
+        name = f"{name[: -len(suffix)] if looks_like_ext else name}{orig_ext}"
+    name = name[:120]
+    return None if name == original else name
+
+
+def _describe_review_changes(
+    moves: dict[str, str], renames: dict[str, str], exclude: list[str], include: list[str]
+) -> str:
+    """Plain summary of the changes that will actually be applied."""
+    def files(n: int) -> str:
+        return f"{n} file{'s' if n != 1 else ''}"
+
+    parts = []
+    if moves:
+        targets = sorted(set(moves.values()))
+        parts.append(f"moved {files(len(moves))} to {targets[0] if len(targets) == 1 else f'{len(targets)} folders'}")
+    if renames:
+        parts.append(f"renamed {files(len(renames))}")
+    if exclude:
+        parts.append(f"left {files(len(exclude))} out")
+    if include:
+        parts.append(f"added {files(len(include))} back")
+    text = ", ".join(parts)
+    return text[0].upper() + text[1:] + "."
+
+
+def _validate_review_result(
+    result: dict[str, Any],
+    files: list[dict[str, Any]],
+    categories: list[str],
+    note: str = "",
+) -> dict[str, Any]:
+    """Keep only real, safe, non-empty changes and describe what will actually happen."""
+    by_id = {str(f.get("file_id")): f for f in files if f.get("file_id")}
+
+    moves: dict[str, str] = {}
+    for fid, folder in (result.get("category_overrides") or {}).items():
+        f = by_id.get(str(fid))
+        target = _clean_folder(folder, categories)
+        if f is not None and target and target != f.get("category"):
+            moves[str(fid)] = target
+
+    renames: dict[str, str] = {}
+    for fid, new_name in (result.get("filename_overrides") or {}).items():
+        f = by_id.get(str(fid))
+        cleaned = _clean_filename(new_name, f.get("filename", "")) if f is not None else None
+        if cleaned:
+            renames[str(fid)] = cleaned
+
+    def included(fid: str) -> bool:
+        return by_id[fid].get("included", True) is not False
+
+    # Leaving out a file that is already left out (or adding back one that is in) changes nothing.
+    exclude = [str(i) for i in dict.fromkeys(result.get("exclude") or []) if str(i) in by_id and included(str(i))]
+    include = [
+        str(i) for i in dict.fromkeys(result.get("include") or [])
+        if str(i) in by_id and not included(str(i)) and str(i) not in exclude
+    ]
+    new_folders = sorted({t for t in moves.values() if t not in categories})
+
+    asked = sum(len(result.get(k) or []) for k in ("category_overrides", "filename_overrides", "exclude", "include"))
+    changed = len(moves) + len(renames) + len(exclude) + len(include)
+    message = str(result.get("message") or "").strip()
+    if not changed:
+        # With nothing applied, only keep a message that explains why (e.g. "I can't delete files");
+        # never one that claims a change happened.
+        explains = re.search(r"\b(can't|cannot|couldn't|could not|no |not |none|nothing|didn't|unable)", message, re.I)
+        message = message if explains else "I couldn't find files matching that. Try describing them differently."
+    elif not message or asked != changed:
+        # The model's sentence described changes that were partly dropped; describe what really happens.
+        message = _describe_review_changes(moves, renames, exclude, include)
+    if note:
+        message = f"{message} {note}"
+
+    return {
+        "message": message,
+        "category_overrides": moves,
+        "filename_overrides": renames,
+        "exclude": exclude,
+        "include": include,
+        "new_folders": new_folders,
+        "error": None,
+    }
 
 
 # ---------------------------------------------------------------------------

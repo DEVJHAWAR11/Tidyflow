@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   AlertTriangle,
@@ -13,7 +13,9 @@ import {
   Table2,
   ArrowLeft,
   ArrowRight,
+  X,
 } from "lucide-react";
+import { ReviewAssistant } from "./ReviewAssistant";
 import type { PreviewScreenProps } from "./contracts";
 import type { ClassifiedFile } from "../types";
 import { Screen, Button, Card, StepHeader, SectionTitle, ease } from "./ui";
@@ -45,6 +47,60 @@ export function PreviewScreen(props: PreviewScreenProps) {
       return next;
     });
   };
+
+  // Rows changed by the last plain-language request glow briefly so the user can see what happened.
+  const [glowIds, setGlowIds] = useState<Set<string>>(() => new Set());
+  const glowTimer = useRef<number | null>(null);
+  // Files the last request left in place, so its undo can bring them back.
+  const aiLeftIds = useRef<string[]>([]);
+
+  const flash = (ids: string[]) => {
+    setGlowIds(new Set(ids));
+    if (glowTimer.current) window.clearTimeout(glowTimer.current);
+    glowTimer.current = window.setTimeout(() => setGlowIds(new Set()), 2600);
+  };
+
+  const handleAsk = async (command: string) => {
+    const outcome = await props.onAskAi(command);
+    if (outcome.error) return outcome;
+    const undecided = new Set(unsureFiles.map((f) => f.file_id));
+    const toLeave = outcome.excludedIds.filter((id) => undecided.has(id) && !leftIds.has(id));
+    aiLeftIds.current = toLeave;
+    if (toLeave.length) setLeftIds((prev) => new Set([...prev, ...toLeave]));
+    // Open the folders that just received files, after the wizard has finished casting.
+    const touched = [...outcome.changedIds, ...outcome.excludedIds];
+    window.setTimeout(() => {
+      const opened: Record<string, boolean> = {};
+      for (const f of props.files) {
+        if (touched.includes(f.file_id)) opened[effective(f)] = false;
+      }
+      setCollapsedMap((prev) => ({ ...prev, ...opened }));
+      flash(touched);
+      // Bring the first changed file into view if it is off screen (e.g. a new folder at the bottom).
+      // Wait for the folders above it to finish opening, or the target moves mid-scroll.
+      window.setTimeout(() => {
+        const row = touched
+          .map((id) => document.querySelector(`[data-file-id="${CSS.escape(id)}"]`))
+          .find(Boolean) as HTMLElement | undefined;
+        const r = row?.getBoundingClientRect();
+        if (row && r && (r.top < 80 || r.bottom > window.innerHeight - 120)) {
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 260);
+    }, 900);
+    return outcome;
+  };
+
+  const handleUndoAsk = () => {
+    props.onUndoAi();
+    const ids = aiLeftIds.current;
+    if (ids.length) {
+      setLeftIds((prev) => new Set([...prev].filter((id) => !ids.includes(id))));
+    }
+    aiLeftIds.current = [];
+  };
+
+  const glowClass = (id: string) => (glowIds.has(id) ? "tf-glow" : "");
 
   // Close the move popover on Escape or a click outside it
   useEffect(() => {
@@ -245,6 +301,14 @@ export function PreviewScreen(props: PreviewScreenProps) {
           </div>
         </div>
 
+        <ReviewAssistant
+          files={props.files}
+          undecidedCount={undecidedIds.length}
+          hasDuplicates={duplicateOf.size > 0}
+          onAsk={handleAsk}
+          onUndo={handleUndoAsk}
+        />
+
         {/* To Review Section */}
         {unsureFiles.length > 0 && (
           <section className="space-y-3">
@@ -281,7 +345,8 @@ export function PreviewScreen(props: PreviewScreenProps) {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.18, ease } }}
                       transition={{ duration: 0.18, ease }}
-                      className={`min-h-14 px-4 py-2.5 flex items-center gap-3 transition-opacity ${
+                      data-file-id={f.file_id}
+                      className={`min-h-14 px-4 py-2.5 flex items-center gap-3 transition-opacity ${glowClass(f.file_id)} ${
                         isLeftInPlace ? "opacity-60" : ""
                       }`}
                     >
@@ -300,7 +365,9 @@ export function PreviewScreen(props: PreviewScreenProps) {
                           {f.filename}
                         </div>
                         <div className="text-[12px] text-tf-muted truncate tf-num">
-                          {f.file_size_bytes === 0
+                          {props.filenameOverrides[f.file_id]
+                            ? `Will be named ${props.filenameOverrides[f.file_id]} · `
+                            : f.file_size_bytes === 0
                             ? "Empty file · "
                             : duplicateOf.has(f.file_id)
                             ? `Same as ${duplicateOf.get(f.file_id)} · `
@@ -497,19 +564,13 @@ export function PreviewScreen(props: PreviewScreenProps) {
                           {group.files.map((f) => {
                             const isIncluded = props.selectedFileIds.has(f.file_id);
                             const isMoveOpen = activeMoveFileId === f.file_id;
-                            // Matches App's renameSuggestions: case/punctuation-only changes aren't applied.
-                            const plain = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
-                            const hasRename =
-                              props.renamesEnabled &&
-                              Boolean(
-                                f.suggested_filename &&
-                                  plain(f.suggested_filename) !== plain(f.filename)
-                              );
+                            const newName = props.filenameOverrides[f.file_id];
 
                             return (
                               <div
                                 key={f.file_id}
-                                className="min-h-10 px-4 py-1.5 flex items-center gap-3 hover:bg-tf-surface-2/60 group transition-colors"
+                                data-file-id={f.file_id}
+                                className={`min-h-10 px-4 py-1.5 flex items-center gap-3 hover:bg-tf-surface-2/60 group transition-colors ${glowClass(f.file_id)}`}
                               >
                                 {/* Checkbox */}
                                 <button
@@ -553,10 +614,19 @@ export function PreviewScreen(props: PreviewScreenProps) {
                                       Same as {duplicateOf.get(f.file_id)}
                                     </div>
                                   )}
-                                  {hasRename && (
-                                    <div className="text-[12px] text-tf-brand-ink truncate flex items-center gap-1">
+                                  {newName && (
+                                    <div className="text-[12px] text-tf-brand-ink flex items-center gap-1 min-w-0">
                                       <ArrowRight size={11} strokeWidth={2} className="shrink-0" />
-                                      <span className="truncate">{f.suggested_filename}</span>
+                                      <span className="truncate">{newName}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => props.onClearRename(f.file_id)}
+                                        aria-label={`Keep the name ${f.filename}`}
+                                        title="Keep the original name"
+                                        className="shrink-0 w-4 h-4 rounded-[4px] flex items-center justify-center text-tf-faint hover:text-tf-ink hover:bg-tf-surface-2 cursor-pointer"
+                                      >
+                                        <X size={11} strokeWidth={2} />
+                                      </button>
                                     </div>
                                   )}
                                 </div>
