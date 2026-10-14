@@ -896,12 +896,13 @@ export default function App() {
     }
   };
 
-  const handleOpenPath = async (path: string) => {
+  /** Open a file in its default app, or with `reveal` show it selected in Finder/Explorer. */
+  const handleOpenPath = async (path: string, reveal = true) => {
     try {
       await fetch(`${API_BASE}/fs/open-path`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, reveal: true }),
+        body: JSON.stringify({ path, reveal }),
       });
     } catch (err) {
       console.error("Failed to open path:", err);
@@ -980,7 +981,7 @@ export default function App() {
             isApplying={isApplying}
             onApply={handleApplyDecisions}
             onBack={() => setStep("plan")}
-            onOpenFile={handleOpenPath}
+            onOpenFile={(path) => handleOpenPath(path, false)}
             advancedMode={advancedMode}
             onOpenAdvancedReview={() => setView("advanced_review")}
           />
