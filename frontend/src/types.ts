@@ -4,6 +4,10 @@ export interface CategoryItem {
   keywords: string[];
   extensions: string[];
   active: boolean;
+  /** Finder look (macOS 26+): an SF Symbol name ("" = none) or an emoji, plus an optional tag colour. */
+  symbol?: string | null;
+  emoji?: string | null;
+  color?: import("./utils/folderVisuals").FolderColor | null;
 }
 
 export interface ClassifiedFile {

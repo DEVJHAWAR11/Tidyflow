@@ -1,6 +1,7 @@
 // Prop contracts for the guided flow screens. App.tsx owns all state and API calls;
 // screens are presentational and only call these callbacks.
 import type { CategoryItem, ClassifiedFile, ComplexityLevel, BackendStatus } from "../types";
+import type { FolderColor } from "../utils/folderVisuals";
 
 export type FlowStep = "home" | "plan" | "sorting" | "preview" | "done";
 export type AppView = "flow" | "search" | "settings" | "advanced_plan" | "advanced_review";
@@ -79,6 +80,10 @@ export interface PlanScreenProps {
   onBack: () => void;
   advancedMode: boolean;
   onOpenAdvancedEditor: () => void;
+  /** macOS 26+: folders can carry a symbol/emoji and colour in Finder. */
+  folderLooksSupported: boolean;
+  onChangeLook: (name: string, patch: { symbol?: string; emoji?: string | null; color?: FolderColor | null }) => void;
+  onResetLook: (name: string) => void;
 }
 
 export interface SortingScreenProps {
@@ -111,6 +116,9 @@ export interface PreviewScreenProps {
   renameSuggestionCount: number;
   renamesEnabled: boolean;
   onToggleRenames: (enabled: boolean) => void;
+  folderLooksSupported: boolean;
+  folderLooksEnabled: boolean;
+  onToggleFolderLooks: (enabled: boolean) => void;
   /** false = copy (originals stay), true = move */
   moveMode: boolean;
   setMoveMode: (move: boolean) => void;

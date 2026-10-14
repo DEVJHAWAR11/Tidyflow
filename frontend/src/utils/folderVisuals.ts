@@ -2,25 +2,40 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Archive,
+  BarChart3,
+  Banknote,
   BookOpen,
   Briefcase,
+  Calendar,
   Camera,
-  Clapperboard,
   Code2,
+  CreditCard,
   Database,
   FileText,
+  Film,
+  Gamepad2,
+  Globe,
   GraduationCap,
-  HeartPulse,
+  Heart,
   House,
-  Image,
+  Images,
+  Landmark,
+  Lock,
+  Mail,
   Monitor,
   Music2,
+  Newspaper,
   Package,
   Palette,
   Plane,
   Receipt,
-  Scale,
-  Sheet,
+  ShoppingCart,
+  Signature,
+  Sparkles,
+  Star,
+  Stethoscope,
+  Table2,
+  Terminal,
   UserRound,
 } from "lucide-react";
 
@@ -46,29 +61,103 @@ const TONES: FolderTone[] = [
   { front: "#a4abb5", frontTop: "#b7bdc5", back: "#8b929d", glyph: "#3d444e", swatch: "#8b929d" }, // graphite
 ];
 
-const GLYPH_RULES: [RegExp, LucideIcon, number][] = [
-  // [pattern, icon, preferred tone index]
-  [/screen ?shot|screen ?cap/i, Monitor, 7],
-  [/photo|picture|image|img|camera|wallpaper/i, Image, 4],
-  [/resume|\bcv\b|cover ?letter|job|career/i, UserRound, 0],
-  [/invoice|receipt|bill|payment|finance|bank|tax|statement|expense|money/i, Receipt, 1],
-  [/course|class|study|school|academic|lecture|homework|assignment|certificate|learn/i, GraduationCap, 3],
-  [/work|project|client|meeting|business|office/i, Briefcase, 0],
-  [/install|software|setup|\bdmg\b|\bapps?\b/i, Package, 7],
-  [/archive|zip|compress|backup/i, Archive, 3],
-  [/spreadsheet|excel|budget|csv/i, Sheet, 1],
-  [/database|sql|data|dataset/i, Database, 5],
-  [/code|dev|script|source|program/i, Code2, 5],
-  [/music|audio|song|podcast|sound/i, Music2, 6],
-  [/video|movie|film|clip|recording/i, Clapperboard, 6],
-  [/design|icon|logo|figma|sketch|asset|font/i, Palette, 4],
-  [/travel|trip|ticket|flight|booking|hotel/i, Plane, 5],
-  [/health|medical|doctor|insurance/i, HeartPulse, 6],
-  [/legal|contract|agreement|license/i, Scale, 7],
-  [/book|ebook|reading|notes?/i, BookOpen, 2],
-  [/document|docs?\b|paper|pdf|general|misc/i, FileText, 0],
-  [/personal|family|home/i, House, 2],
-  [/camera|dcim/i, Camera, 4],
+/** Finder colours (macOS tag colours), with the folder artwork shades used for previews. */
+export type FolderColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray";
+
+export interface FolderShade {
+  top: string;
+  front: string;
+  back: string;
+  glyph: string;
+}
+
+export const FOLDER_COLORS: ({ id: FolderColor; label: string; swatch: string } & FolderShade)[] = [
+  { id: "red", label: "Red", swatch: "#f2544b", top: "#ff8178", front: "#f5554b", back: "#de433b", glyph: "#b9322b" },
+  { id: "orange", label: "Orange", swatch: "#f8962f", top: "#ffb661", front: "#fb9a35", back: "#e98524", glyph: "#c36a15" },
+  { id: "yellow", label: "Yellow", swatch: "#f6c42a", top: "#ffdb5c", front: "#fbc82e", back: "#e8b31d", glyph: "#b98c0b" },
+  { id: "green", label: "Green", swatch: "#35c158", top: "#66d983", front: "#3cc35b", back: "#2dac4b", glyph: "#21903b" },
+  { id: "blue", label: "Blue", swatch: "#2f7df6", top: "#5d9cff", front: "#2f80f7", back: "#2269e0", glyph: "#1a55bd" },
+  { id: "purple", label: "Purple", swatch: "#b941d3", top: "#d474e8", front: "#c444dc", back: "#aa33c3", glyph: "#8c23a3" },
+  { id: "gray", label: "Gray", swatch: "#8e8e93", top: "#b9b9be", front: "#9b9ba1", back: "#86868c", glyph: "#6c6c72" },
+];
+
+/** Finder's own folder, used when no colour is chosen. */
+export const DEFAULT_FOLDER_SHADE: FolderShade = { top: "#7fd0f8", front: "#5cbcf0", back: "#45a7e3", glyph: "#2f8dcc" };
+
+/** SF Symbols TidyFlow can put on a folder (macOS name), with a matching icon for previews in the app. */
+export const FOLDER_SYMBOLS: { id: string; label: string; Icon: LucideIcon }[] = [
+  { id: "photo.on.rectangle", label: "Photos", Icon: Images },
+  { id: "camera", label: "Camera", Icon: Camera },
+  { id: "display", label: "Screen", Icon: Monitor },
+  { id: "film", label: "Video", Icon: Film },
+  { id: "music.note", label: "Music", Icon: Music2 },
+  { id: "paintpalette", label: "Design", Icon: Palette },
+  { id: "doc.text", label: "Documents", Icon: FileText },
+  { id: "book", label: "Books", Icon: BookOpen },
+  { id: "newspaper", label: "Articles", Icon: Newspaper },
+  { id: "graduationcap", label: "Study", Icon: GraduationCap },
+  { id: "briefcase", label: "Work", Icon: Briefcase },
+  { id: "person.crop.circle", label: "Personal", Icon: UserRound },
+  { id: "receipt", label: "Receipts", Icon: Receipt },
+  { id: "creditcard", label: "Payments", Icon: CreditCard },
+  { id: "banknote", label: "Money", Icon: Banknote },
+  { id: "chart.bar", label: "Charts", Icon: BarChart3 },
+  { id: "tablecells", label: "Spreadsheets", Icon: Table2 },
+  { id: "cylinder.split.1x2", label: "Data", Icon: Database },
+  { id: "chevron.left.forwardslash.chevron.right", label: "Code", Icon: Code2 },
+  { id: "terminal", label: "Scripts", Icon: Terminal },
+  { id: "shippingbox", label: "Apps", Icon: Package },
+  { id: "archivebox", label: "Archives", Icon: Archive },
+  { id: "airplane", label: "Travel", Icon: Plane },
+  { id: "house", label: "Home", Icon: House },
+  { id: "heart", label: "Favorites", Icon: Heart },
+  { id: "cross.case", label: "Health", Icon: Stethoscope },
+  { id: "building.columns", label: "Legal", Icon: Landmark },
+  { id: "signature", label: "Signed", Icon: Signature },
+  { id: "envelope", label: "Mail", Icon: Mail },
+  { id: "calendar", label: "Dates", Icon: Calendar },
+  { id: "cart", label: "Shopping", Icon: ShoppingCart },
+  { id: "gamecontroller", label: "Games", Icon: Gamepad2 },
+  { id: "globe", label: "Web", Icon: Globe },
+  { id: "lock", label: "Private", Icon: Lock },
+  { id: "star", label: "Important", Icon: Star },
+  { id: "sparkles", label: "Ideas", Icon: Sparkles },
+];
+
+const SYMBOL_BY_ID = new Map(FOLDER_SYMBOLS.map((s) => [s.id, s]));
+
+export function symbolIcon(id: string | null | undefined): LucideIcon | null {
+  return (id && SYMBOL_BY_ID.get(id)?.Icon) || null;
+}
+
+export function symbolLabel(id: string | null | undefined): string {
+  return (id && SYMBOL_BY_ID.get(id)?.label) || "";
+}
+
+// [pattern, symbol, preferred tone index]: the folder's symbol when nobody picked one.
+const GLYPH_RULES: [RegExp, string, number][] = [
+  [/photo|media|picture|image|img|wallpaper/i, "photo.on.rectangle", 4],
+  [/screen ?shot|screen ?cap/i, "display", 7],
+  [/resume|\bcv\b|cover ?letter|job|career/i, "person.crop.circle", 0],
+  [/invoice|receipt|bill/i, "receipt", 1],
+  [/payment|finance|bank|tax|statement|expense|money/i, "creditcard", 1],
+  [/course|class|study|school|academic|lecture|homework|assignment|certificate|learn/i, "graduationcap", 3],
+  [/work|project|client|meeting|business|office/i, "briefcase", 0],
+  [/install|software|setup|\bdmg\b|\bapps?\b/i, "shippingbox", 7],
+  [/archive|zip|compress|backup/i, "archivebox", 3],
+  [/spreadsheet|excel|budget|csv/i, "tablecells", 1],
+  [/database|sql|data|dataset/i, "cylinder.split.1x2", 5],
+  [/code|dev|script|source|program/i, "chevron.left.forwardslash.chevron.right", 5],
+  [/music|audio|song|podcast|sound/i, "music.note", 6],
+  [/video|movie|film|clip|recording/i, "film", 6],
+  [/design|icon|logo|figma|sketch|asset|font/i, "paintpalette", 4],
+  [/travel|trip|ticket|flight|booking|hotel/i, "airplane", 5],
+  [/health|medical|doctor|insurance/i, "cross.case", 6],
+  [/legal|contract|agreement|license/i, "building.columns", 7],
+  [/book|ebook|reading|notes?/i, "book", 2],
+  [/document|docs?\b|paper|pdf|general|misc/i, "doc.text", 0],
+  [/personal|family|home/i, "house", 2],
+  [/camera|dcim/i, "camera", 4],
 ];
 
 function hash(s: string): number {
@@ -96,9 +185,46 @@ export function folderGroup(name: string): string {
   return parts.length > 1 ? parts.slice(0, -1).join(" / ").replace(/[_-]+/g, " ") : "";
 }
 
+/** Symbol suggested for a folder from its name; null for a plain folder. */
+export function suggestedSymbol(name: string): string | null {
+  return matchRule(name)?.[1] ?? null;
+}
+
 /** Symbol pressed into the folder artwork; null for a plain folder. */
 export function folderGlyph(name: string): LucideIcon | null {
-  return matchRule(name)?.[1] ?? null;
+  return symbolIcon(suggestedSymbol(name));
+}
+
+export interface FolderLook {
+  symbol: string | null;
+  emoji: string | null;
+  color: FolderColor | null;
+}
+
+/**
+ * How a folder will look in Finder. An emoji wins over a symbol; `symbol: ""` means the user chose none,
+ * while a missing symbol falls back to one suggested by the folder's name.
+ */
+export function folderLook(cat: {
+  name: string;
+  description?: string;
+  symbol?: string | null;
+  emoji?: string | null;
+  color?: FolderColor | null;
+}): FolderLook {
+  const emoji = cat.emoji?.trim() || null;
+  let symbol: string | null = null;
+  if (!emoji && cat.symbol !== "") {
+    symbol =
+      cat.symbol && SYMBOL_BY_ID.has(cat.symbol)
+        ? cat.symbol
+        : suggestedSymbol(cat.name) ?? (cat.description ? suggestedSymbol(cat.description) : null);
+  }
+  return { symbol, emoji, color: cat.color ?? null };
+}
+
+export function folderShade(color: FolderColor | null): FolderShade {
+  return FOLDER_COLORS.find((c) => c.id === color) ?? DEFAULT_FOLDER_SHADE;
 }
 
 /** Stable tint for a folder: themed by its symbol when recognised, else by name. */

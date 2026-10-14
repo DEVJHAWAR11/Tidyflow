@@ -14,7 +14,9 @@ import {
   Presentation,
   Database,
 } from "lucide-react";
-import { folderGlyph, fileKind } from "../utils/folderVisuals";
+import { useContext } from "react";
+import { folderGlyph, fileKind, folderShade, symbolIcon } from "../utils/folderVisuals";
+import { FolderLooksContext } from "./FolderLookPicker";
 
 function plateRadius(size: number) {
   return size >= 40 ? 10 : size >= 28 ? 8 : 6;
@@ -41,7 +43,10 @@ function Plate({
   );
 }
 
-/** Folder symbol: the category's own glyph when recognised, otherwise a plain folder. */
+/**
+ * Folder symbol: the look chosen for Finder when folder looks are on (symbol or emoji, with a colour dot),
+ * else the category's own glyph when recognised, otherwise a plain folder.
+ */
 export function FolderIcon({
   name,
   size = 32,
@@ -54,8 +59,32 @@ export function FolderIcon({
   glyph?: boolean;
   className?: string;
 }) {
-  const Icon = (glyph && folderGlyph(name)) || Folder;
-  return <Plate Icon={Icon} size={size} className={className} />;
+  const look = useContext(FolderLooksContext)?.[name];
+  if (!glyph || !look) {
+    const Icon = (glyph && folderGlyph(name)) || Folder;
+    return <Plate Icon={Icon} size={size} className={className} />;
+  }
+  const dot = Math.max(6, Math.round(size * 0.2));
+  return (
+    <span aria-hidden className={`relative shrink-0 inline-grid ${className}`} style={{ width: size, height: size }}>
+      {look.emoji ? (
+        <span
+          className="inline-grid place-items-center bg-tf-surface-3 border border-tf-border-strong/60 leading-none"
+          style={{ width: size, height: size, borderRadius: plateRadius(size), fontSize: Math.round(size * 0.5) }}
+        >
+          {look.emoji}
+        </span>
+      ) : (
+        <Plate Icon={symbolIcon(look.symbol) || Folder} size={size} />
+      )}
+      {look.color && (
+        <span
+          className="absolute rounded-full ring-2 ring-tf-surface"
+          style={{ width: dot, height: dot, right: -1, bottom: -1, background: folderShade(look.color).front }}
+        />
+      )}
+    </span>
+  );
 }
 
 const KIND_ICONS: Record<string, LucideIcon> = {

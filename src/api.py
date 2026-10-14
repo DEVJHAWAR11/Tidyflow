@@ -24,6 +24,7 @@ from .ai_assistant import (
     inspect_directory,
 )
 from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
+from . import folder_style
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
 from .llm_provider import (
@@ -275,6 +276,8 @@ class ApplyDirectRequest(BaseModel):
     decisions: list[ApplyDecisionItem]
     dry_run: bool = False
     move_mode: bool = False
+    # Finder look per category ({"symbol" | "emoji", "color"}), applied on macOS 26+ to folders this creates.
+    folder_looks: dict[str, Any] = Field(default_factory=dict)
 
 
 class SettingsPayload(BaseModel):
@@ -300,6 +303,7 @@ async def get_status():
         "has_llm_key": has_key,
         "llm_error": get_llm_error() if has_key else None,
         "provider": provider,
+        "folder_looks_supported": folder_style.is_supported(),
         "active_clients": len(clients),
     }
 
@@ -901,6 +905,7 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         raise HTTPException(status_code=400, detail="No scan results found. Please scan the folder again.")
 
     id_to_record = {r.file_id: r for r in records}
+    looks_existed = {(out_dir / c).resolve() for c in req.folder_looks if (out_dir / c).exists()}
 
     # Convert incoming UI decision items to ReviewDecision models
     decisions: list[ReviewDecision] = []
@@ -927,6 +932,9 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         move_mode=req.move_mode,
         db=db,
     )
+
+    if not req.dry_run and manifest and req.folder_looks:
+        folder_style.style_new_folders(out_dir, req.folder_looks, looks_existed)
 
     if not req.dry_run and manifest:
         audit_dir = Path("data/manifests")
