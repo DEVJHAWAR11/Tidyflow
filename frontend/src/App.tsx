@@ -17,7 +17,8 @@ import { SortingScreen } from "./flow/SortingScreen";
 import { PreviewScreen } from "./flow/PreviewScreen";
 import { DoneScreen } from "./flow/DoneScreen";
 import { ConfirmDialog } from "./flow/ConfirmDialog";
-import { folderLabel } from "./utils/folderVisuals";
+import { folderLabel, folderLook, type FolderLook } from "./utils/folderVisuals";
+import { FolderLooksContext } from "./flow/FolderLookPicker";
 import { Screen } from "./flow/ui";
 import { OrganizeView } from "./components/OrganizeView";
 import { ReviewView } from "./components/ReviewView";
@@ -79,6 +80,9 @@ function toCategoryItems(raw: Record<string, any>): Record<string, CategoryItem>
       keywords: c?.keywords || [],
       extensions: c?.extensions || [],
       active: c?.active !== false,
+      symbol: typeof c?.symbol === "string" ? c.symbol : undefined,
+      emoji: c?.emoji || undefined,
+      color: c?.color || undefined,
     };
   });
   return out;
@@ -97,6 +101,8 @@ export default function App() {
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [hasLlmKey, setHasLlmKey] = useState(false);
+  const [folderLooksSupported, setFolderLooksSupported] = useState(false);
+  const [folderLooksEnabled, setFolderLooksEnabled] = usePersistentState<boolean>("tidyflow_folder_looks", true);
   const [aiError, setAiError] = useState<string | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerTarget, setFolderPickerTarget] = useState<"source" | "destination">("source");
@@ -236,6 +242,7 @@ export default function App() {
         const data = await res.json();
         setBackendStatus("running");
         setHasLlmKey(data.has_llm_key);
+        setFolderLooksSupported(!!data.folder_looks_supported);
         setAiError(data.llm_error || null);
       } else {
         setBackendStatus("offline");
@@ -441,7 +448,14 @@ export default function App() {
       if (!res.ok) throw new Error("That change didn't work. Try saying it another way.");
       const data = await res.json();
       if (data.categories && Object.keys(data.categories).length > 0) {
-        updateCategories(toCategoryItems(data.categories));
+        const next = toCategoryItems(data.categories);
+        Object.values(next).forEach((cat) => {
+          const prev = categories[cat.name];
+          if (prev && (prev.symbol !== undefined || prev.emoji || prev.color)) {
+            Object.assign(cat, { symbol: prev.symbol, emoji: prev.emoji, color: prev.color });
+          }
+        });
+        updateCategories(next);
       }
       if (data.custom_instructions) setCustomInstructions(data.custom_instructions);
       setAiError(data.ai_error || null);
@@ -478,6 +492,26 @@ export default function App() {
     const next = { ...categories };
     delete next[name];
     updateCategories(next);
+  };
+
+  const handleChangeLook = (
+    name: string,
+    patch: { symbol?: string; emoji?: string | null; color?: CategoryItem["color"] }
+  ) => {
+    const cat = categories[name];
+    if (!cat) return;
+    // Choosing a symbol clears an emoji and the other way round; a colour leaves both alone.
+    const next: CategoryItem = { ...cat, ...patch };
+    if (patch.symbol !== undefined) next.emoji = null;
+    if (patch.emoji) next.symbol = undefined;
+    updateCategories({ ...categories, [name]: next });
+  };
+
+  const handleResetLook = (name: string) => {
+    const cat = categories[name];
+    if (!cat) return;
+    const { symbol: _s, emoji: _e, color: _c, ...rest } = cat;
+    updateCategories({ ...categories, [name]: rest });
   };
 
   const handleAddFolder = (name: string) => {
@@ -645,7 +679,13 @@ export default function App() {
       const res = await fetch(`${API_BASE}/pipeline/apply-direct`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ output_dir: outputFolder, decisions: decisionList, dry_run: false, move_mode: moveMode }),
+        body: JSON.stringify({
+        output_dir: outputFolder,
+        decisions: decisionList,
+        dry_run: false,
+        move_mode: moveMode,
+        folder_looks: folderLooksSupported && folderLooksEnabled ? looksForFolders(folders.map((f) => f.name)) : {},
+      }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || data.error || "Failed to organize files");
@@ -998,6 +1038,24 @@ export default function App() {
 
   // --- Render ---
 
+  /** Finder look for each folder: from the plan when it has one, else suggested by the folder's name. */
+  const looksForFolders = (names: string[]): Record<string, FolderLook> => {
+    const out: Record<string, FolderLook> = {};
+    names.forEach((name) => {
+      out[name] = folderLook(categories[name] ?? { name });
+    });
+    return out;
+  };
+  const folderLooks = useMemo(() => {
+    if (!folderLooksSupported) return null;
+    // The plan always shows the looks being chosen; later steps only when they'll be applied.
+    if (!(view === "flow" && step === "plan") && !folderLooksEnabled) return null;
+    const names = new Set([...Object.keys(categories), ...Object.values(categoryOverrides), ...files.map((f) => f.category)]);
+    if (doneResult) doneResult.folders?.forEach((f) => names.add(f.name));
+    return looksForFolders([...names]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderLooksSupported, folderLooksEnabled, view, step, categories, categoryOverrides, files, doneResult]);
+
   const screenKey = view === "flow" ? `flow-${step}` : view;
 
   const renderFlowStep = () => {
@@ -1026,6 +1084,9 @@ export default function App() {
             onBack={() => setStep("home")}
             advancedMode={advancedMode}
             onOpenAdvancedEditor={() => setView("advanced_plan")}
+            folderLooksSupported={folderLooksSupported}
+            onChangeLook={handleChangeLook}
+            onResetLook={handleResetLook}
           />
         );
       case "sorting":
@@ -1054,6 +1115,9 @@ export default function App() {
             renameSuggestionCount={renameSuggestions.length}
             renamesEnabled={renamesEnabled}
             onToggleRenames={handleToggleRenames}
+            folderLooksSupported={folderLooksSupported}
+            folderLooksEnabled={folderLooksEnabled}
+            onToggleFolderLooks={setFolderLooksEnabled}
             filenameOverrides={filenameOverrides}
             onClearRename={handleClearRename}
             onAskAi={handleAskAi}
@@ -1261,9 +1325,11 @@ export default function App() {
       />
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-6 pt-8 pb-16">
-        <AnimatePresence mode="wait">
-          <div key={screenKey}>{renderView()}</div>
-        </AnimatePresence>
+        <FolderLooksContext.Provider value={folderLooks}>
+          <AnimatePresence mode="wait">
+            <div key={screenKey}>{renderView()}</div>
+          </AnimatePresence>
+        </FolderLooksContext.Provider>
       </main>
     </div>
   );

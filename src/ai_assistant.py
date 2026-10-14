@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 import httpx
 
+from . import folder_style
 from .utils import is_secret_file
 from .llm_provider import (
     _resolve_provider_model,
@@ -51,6 +52,7 @@ CLASSIFICATION COMPLEXITY LEVEL: BALANCED (STANDARD)
 
 def _build_structure_chat_system_prompt(complexity_level: str = "medium") -> str:
     complexity_guide = _get_complexity_guidelines(complexity_level)
+    symbols = ", ".join(folder_style.SYMBOLS)
     return f"""\
 You are TidyFlow AI, an expert workspace organizer, taxonomist, and file structure architect.
 Your goal is to help users organize their disorganized directories into clean, intuitive, and tailored category folders.
@@ -75,6 +77,8 @@ CRITICAL RULES FOR REFINEMENT & CATEGORY MODIFICATIONS:
    - "keywords": 4 to 8 distinct matching keywords (lowercase).
    - "extensions": Target file extensions (e.g. [".pdf", ".docx", ".xlsx", ".png"]) or [] if all extensions are allowed.
    - "active": true
+   - "symbol": the one symbol from this list that best shows what the folder holds, or "" if none fits:
+     {symbols}
 8. Set "is_ready" to true if a concrete category structure is proposed.
 9. In "message", provide a friendly, conversational explanation explicitly detailing what changes were made.
 10. SIZE THE PLAN TO THE FOLDER: every folder should end up holding several files. Do not create a folder or
@@ -94,7 +98,8 @@ OUTPUT FORMAT — Return ONLY strict JSON:
       "description": "Short description",
       "keywords": ["kw1", "kw2"],
       "extensions": [".pdf", ".docx"],
-      "active": true
+      "active": true,
+      "symbol": "doc.text"
     }}
   }},
   "custom_instructions": "Specific rules for file classification if any",
@@ -402,6 +407,7 @@ def chat_generate_structure(
                             "keywords": v.get("keywords", []),
                             "extensions": v.get("extensions", []),
                             "active": v.get("active", True),
+                            "symbol": v.get("symbol") if v.get("symbol") in folder_style.SYMBOLS else None,
                         }
                     elif isinstance(v, str):
                         normalized_cats[k] = {

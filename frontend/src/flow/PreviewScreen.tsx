@@ -823,6 +823,34 @@ export function PreviewScreen(props: PreviewScreenProps) {
               </div>
             )}
 
+            {/* Folder looks in Finder (macOS 26+) */}
+            {props.folderLooksSupported && (
+              <div className="px-4 py-3.5 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-[13.5px] font-medium text-tf-ink">Folder symbols in Finder</div>
+                  <div className="text-[12.5px] text-tf-muted mt-0.5">
+                    New folders get the symbol and colour from your plan
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={props.folderLooksEnabled}
+                  aria-label="Folder symbols in Finder"
+                  onClick={() => props.onToggleFolderLooks(!props.folderLooksEnabled)}
+                  className={`w-8 h-[18px] rounded-full relative transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-tf-ink shrink-0 ${
+                    props.folderLooksEnabled ? "bg-tf-primary" : "bg-tf-surface-3"
+                  }`}
+                >
+                  <span
+                    className={`w-[14px] h-[14px] rounded-full shadow-xs absolute top-[2px] transition-all duration-150 ease-out ${
+                      props.folderLooksEnabled ? "left-[16px] bg-tf-on-primary" : "left-[2px] bg-white dark:bg-tf-faint"
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
+
             {/* Row 3: Destination output folder */}
             <div className="px-4 py-3 text-[12.5px] text-tf-muted flex items-center gap-1.5 min-w-0">
               <span className="shrink-0">Saving to</span>

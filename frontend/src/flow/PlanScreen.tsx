@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FolderLookPicker } from "./FolderLookPicker";
 import { motion, AnimatePresence } from "motion/react";
 import {
   AlertTriangle,
@@ -10,7 +11,7 @@ import {
   CornerDownRight,
   ArrowLeft,
   ArrowRight,
-  SlidersHorizontal, RefreshCw } from "lucide-react";
+  SlidersHorizontal, RefreshCw, Palette } from "lucide-react";
 import { WizardStatus, WizardWaiting } from "../wizard/scenes";
 import type { PlanScreenProps } from "./contracts";
 import type { ComplexityLevel } from "../types";
@@ -19,6 +20,7 @@ import { FolderIcon } from "./icons";
 import {
   folderLabel,
   folderGroup,
+  folderLook,
   prettyFolderName,
   toFolderName,
 } from "../utils/folderVisuals";
@@ -35,6 +37,7 @@ export function PlanScreen(props: PlanScreenProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [refineText, setRefineText] = useState("");
+  const [lookFor, setLookFor] = useState<{ name: string; anchor: HTMLElement } | null>(null);
 
   const activeCategories = Object.values(props.categories || {}).filter((c) => c.active);
 
@@ -206,7 +209,25 @@ export function PlanScreen(props: PlanScreenProps) {
                     transition={{ duration: 0.18, ease }}
                   >
                     <Card className="p-4 flex gap-3.5 items-start group relative hover:border-tf-border-strong hover:shadow-[var(--shadow-tf-lift)] transition-colors min-h-[92px] h-full">
-                      <FolderIcon name={cat.name} size={40} />
+                      {props.folderLooksSupported ? (
+                        <button
+                          type="button"
+                          aria-label={`Change how ${prettyFolderName(cat.name)} looks in Finder`}
+                          title="Change how it looks in Finder"
+                          aria-expanded={lookFor?.name === cat.name}
+                          onClick={(e) => {
+                            const anchor = e.currentTarget;
+                            setLookFor((cur) => (cur?.name === cat.name ? null : { name: cat.name, anchor }));
+                          }}
+                          className={`rounded-[10px] cursor-pointer transition-[box-shadow,transform] duration-150 hover:ring-2 hover:ring-tf-border-strong active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-ink ${
+                            lookFor?.name === cat.name ? "ring-2 ring-tf-ink" : ""
+                          }`}
+                        >
+                          <FolderIcon name={cat.name} size={40} />
+                        </button>
+                      ) : (
+                        <FolderIcon name={cat.name} size={40} />
+                      )}
                       <div className="min-w-0 flex-1 pr-12">
                         {folderGroup(cat.name) && (
                           <div className="text-[12px] text-tf-faint truncate">
@@ -333,6 +354,24 @@ export function PlanScreen(props: PlanScreenProps) {
                 </motion.div>
               )}
             </div>
+          )}
+
+          {props.folderLooksSupported && activeCategories.length > 0 && (
+            <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-tf-muted">
+              <Palette size={13} strokeWidth={1.75} className="shrink-0" />
+              Click a folder's icon to pick its symbol and colour in Finder.
+            </p>
+          )}
+          {lookFor && props.categories[lookFor.name] && (
+            <FolderLookPicker
+              open
+              anchor={lookFor.anchor}
+              folderName={lookFor.name}
+              look={folderLook(props.categories[lookFor.name])}
+              onChange={(patch) => props.onChangeLook(lookFor.name, patch)}
+              onReset={() => props.onResetLook(lookFor.name)}
+              onClose={() => setLookFor(null)}
+            />
           )}
 
           {/* Change Request Card */}
