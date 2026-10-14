@@ -22,7 +22,7 @@ from .models import (
     LlmClassificationItem,
     LlmFilePayload,
 )
-from .utils import get_app_data_dir, redact_secrets, text_contains_secrets, truncate
+from .utils import get_app_data_dir, looks_like_credential_table, redact_secrets, text_contains_secrets, truncate
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +366,9 @@ def classify_files_batched(
 def _make_payload(rec: FileRecord) -> LlmFilePayload:
     """Construct a clean, compact, scrubbed payload for LLM."""
     text = rec.extracted_text_normalized or ""
-    if text_contains_secrets(text):
+    if looks_like_credential_table(rec.extracted_text_raw or text):
+        text = ""  # a saved-logins table can't be redacted cell by cell; send nothing from it
+    elif text_contains_secrets(text):
         text = redact_secrets(text)
 
     return LlmFilePayload(

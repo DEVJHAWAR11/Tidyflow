@@ -45,3 +45,17 @@ def test_scan_skips_hidden_files_and_bundle_contents(tmp_path):
     records = scan_directory(TidyConfig(input_dir=tmp_path))
 
     assert {r.filename for r in records} == {"report.pdf"}
+
+
+def test_oversized_files_are_kept_with_unique_ids(tmp_path):
+    (tmp_path / "a.dmg").write_bytes(b"a" * 4096)
+    (tmp_path / "b.dmg").write_bytes(b"b" * 4096)
+    (tmp_path / "passwords.csv").write_text("url,username,password\n")
+
+    records = scan_directory(TidyConfig(input_dir=tmp_path, max_file_size_mb=0.001))
+    by_name = {r.filename: r for r in records}
+
+    # Too big to read, but still organized by name, each with its own id.
+    assert by_name["a.dmg"].too_large and not by_name["a.dmg"].skipped
+    assert by_name["a.dmg"].file_id and by_name["a.dmg"].file_id != by_name["b.dmg"].file_id
+    assert by_name["passwords.csv"].skipped

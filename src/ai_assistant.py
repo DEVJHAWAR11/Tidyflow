@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 import httpx
 
+from .utils import is_secret_file
 from .llm_provider import (
     _resolve_provider_model,
     _resolve_provider_url,
@@ -190,7 +191,9 @@ def _describe_file(path: Path, root: Path) -> str:
         size_kb = 0.0
     preview = ""
     try:
-        if ext in _TEXT_PREVIEW_EXTS:
+        if is_secret_file(path):
+            pass  # name and size only
+        elif ext in _TEXT_PREVIEW_EXTS:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 snippet = f.read(400).replace("\n", " ").strip()
             if snippet:

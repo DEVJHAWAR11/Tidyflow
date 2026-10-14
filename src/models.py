@@ -122,6 +122,8 @@ class FileRecord(BaseModel):
 
     # skip tracking
     skipped: bool = False
+    # Over the size limit: organized by name and type only, its contents are never read.
+    too_large: bool = False
     skip_reason: str | None = None
 
     model_config = {"arbitrary_types_allowed": True}

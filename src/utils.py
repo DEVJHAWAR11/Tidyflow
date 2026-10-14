@@ -78,7 +78,14 @@ SECRET_FILENAMES: set[str] = {
 
 SECRET_EXTENSIONS: set[str] = {
     ".keystore", ".jks", ".pem", ".p12", ".pfx", ".key", ".crt",
+    # Password manager vaults and exports
+    ".kdbx", ".kdb", ".1pux", ".1pif", ".psafe3",
 }
+# Browser and password-manager exports ("passwords.csv", "Chrome Passwords.csv", "logins.json").
+_CREDENTIAL_NAME_RE = re.compile(r"(^|[^a-z])(passwords?|passwd|credentials?|logins?)([^a-z]|$)", re.IGNORECASE)
+_CREDENTIAL_DATA_EXTS = {".csv", ".tsv", ".txt", ".json", ".xml", ".xlsx", ".xls"}
+_CREDENTIAL_HEADER_RE = re.compile(r"(?<![a-z])password(?![a-z])", re.IGNORECASE)
+_CREDENTIAL_PARTNER_RE = re.compile(r"(?<![a-z])(user ?name|login|e-?mail|url|uri|website|hostname|origin)(?![a-z])", re.IGNORECASE)
 
 UNSAFE_COPY_EXTENSIONS: set[str] = {
     ".exe", ".bat", ".cmd", ".ps1", ".sh", ".msi", ".dll", ".so", ".dylib",
@@ -107,12 +114,28 @@ def redact_secrets(text: str) -> str:
 
 
 def is_secret_file(path: Path) -> bool:
-    """Return True if the file name or extension represents credentials or secrets."""
+    """Return True if the file holds credentials or secrets: by name, extension, or a password-table header."""
     if path.name.lower() in {n.lower() for n in SECRET_FILENAMES}:
         return True
-    if path.suffix.lower() in SECRET_EXTENSIONS:
+    ext = path.suffix.lower()
+    if ext in SECRET_EXTENSIONS:
         return True
+    if ext in _CREDENTIAL_DATA_EXTS and _CREDENTIAL_NAME_RE.search(path.stem):
+        return True
+    if ext in {".csv", ".tsv", ".txt"}:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                header = f.readline(2048)
+        except OSError:
+            return False
+        return looks_like_credential_table(header)
     return False
+
+
+def looks_like_credential_table(text: str) -> bool:
+    """True when the first line reads like a saved-logins export header (a password column next to a login/url one)."""
+    first_line = (text or "").lstrip().split("\n", 1)[0][:2048]
+    return bool(_CREDENTIAL_HEADER_RE.search(first_line) and _CREDENTIAL_PARTNER_RE.search(first_line))
 
 
 def is_safe_to_copy(path: Path) -> bool:

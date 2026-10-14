@@ -23,3 +23,17 @@ async def test_llm_provider_deepseek():
         assert "category" in res
         assert "filename" in res
         assert "confidence" in res
+
+
+def test_payload_never_carries_a_saved_logins_table():
+    from pathlib import Path
+    from src.llm_provider import _make_payload
+    from src.models import FileRecord
+
+    raw = '"url","username","password"\n"https://example.com","me","hunter2"\n'
+    rec = FileRecord(
+        file_id="x", abs_path=Path("/tmp/export.csv"), rel_path=Path("export.csv"), filename="export.csv",
+        extension=".csv", file_size_bytes=len(raw), file_category="data",
+        extracted_text_raw=raw, extracted_text_normalized=raw.lower(),
+    )
+    assert _make_payload(rec).extracted_text == ""
