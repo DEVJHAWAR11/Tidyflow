@@ -420,12 +420,15 @@ export function PreviewScreen(props: PreviewScreenProps) {
         <section className="space-y-3">
           <SectionTitle>Sorted</SectionTitle>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* Collapsed folders pack two per row; an expanded folder spans the full width so it
+              never sits as a tall half-width card beside empty space. `dense` lets a later
+              collapsed folder fill a hole left before a full-width one. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 lg:grid-flow-row-dense gap-3 items-start">
             {folderGroups.map((group) => {
               const expanded = isFolderExpanded(group.folder, group.files.length);
 
               return (
-                <Card key={group.folder} className="overflow-visible">
+                <Card key={group.folder} className={`overflow-visible ${expanded ? "lg:col-span-2" : ""}`}>
                   {/* Header button row */}
                   <div
                     role="button"
@@ -461,7 +464,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                             fileCategory={file.file_category}
                             thumbnailB64={file.thumbnail_b64}
                             size={18}
-                            className={idx > 0 ? "-ml-1.5" : ""}
+                            className={`ring-2 ring-tf-surface ${idx > 0 ? "-ml-1.5" : ""}`}
                           />
                         ))}
                       </div>
@@ -621,8 +624,8 @@ export function PreviewScreen(props: PreviewScreenProps) {
 
                                   <button
                                     type="button"
-                                    aria-label="Show in folder"
-                                    title="Show in folder"
+                                    aria-label={`Open ${f.filename}`}
+                                    title="Open file"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       props.onOpenFile(f.abs_path);
