@@ -113,6 +113,23 @@ def redact_secrets(text: str) -> str:
     return result
 
 
+# Words that describe nothing about a file's contents, so adding them doesn't make a name clearer.
+_FILLER_NAME_WORDS = {
+    "image", "img", "photo", "picture", "pic", "screenshot", "screen", "shot", "file", "document", "doc",
+    "copy", "new", "final", "untitled", "scan", "scanned", "jpeg", "jpg", "png", "pdf", "the", "and", "for",
+}
+
+
+def _name_words(name: str) -> set[str]:
+    stem = Path(name).stem.lower()
+    return {w for w in re.split(r"[^a-z]+", stem) if len(w) >= 3}
+
+
+def rename_adds_meaning(original: str, suggested: str) -> bool:
+    """True when a suggested name adds at least one real word, not just new formatting of the old name."""
+    return bool(_name_words(suggested) - _name_words(original) - _FILLER_NAME_WORDS)
+
+
 def is_secret_file(path: Path) -> bool:
     """Return True if the file holds credentials or secrets: by name, extension, or a password-table header."""
     if path.name.lower() in {n.lower() for n in SECRET_FILENAMES}:

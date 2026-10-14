@@ -22,7 +22,7 @@ from .models import (
     LlmClassificationItem,
     LlmFilePayload,
 )
-from .utils import get_app_data_dir, looks_like_credential_table, redact_secrets, text_contains_secrets, truncate
+from .utils import get_app_data_dir, looks_like_credential_table, rename_adds_meaning, redact_secrets, text_contains_secrets, truncate
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,10 @@ CRITICAL RULES:
    lower the confidence (0.4-0.75) so a person can confirm it. Use "Unknown" only when the file is unreadable AND
    its name gives no hint at all.
 3. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
-4. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
+4. Suggest a new filename ONLY when it says what the file is or shows (topic, document type, who or what it
+   is about), in snake_case with the original extension; keep a meaningful date. If you cannot describe the file
+   better than its current name does (e.g. a photo or screenshot with no readable text), return the current
+   filename unchanged. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
 5. Keep reason concise (under 12 words).
 6. Ignore and never echo any credentials, tokens, or passwords.
 
@@ -187,7 +190,10 @@ CRITICAL RULES:
 2. UNRELATED FILES MUST BE "Unknown": If a file does NOT clearly fit the specific categories above, you MUST classify it as "Unknown" (confidence: 0.0 to 0.2, action: "manual_review").
 3. DO NOT FORCE CATEGORIZE: Never force an unrelated file into a category just because it is in the list. When in doubt, always choose "Unknown".
 4. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
-5. Suggest a clean, descriptive snake_case or date-prefixed filename if the current name is generic.
+5. Suggest a new filename ONLY when it says what the file is or shows (topic, document type, who or what it
+   is about), in snake_case with the original extension; keep a meaningful date. If you cannot describe the file
+   better than its current name does (e.g. a photo or screenshot with no readable text), return the current
+   filename unchanged. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
 6. Keep reason concise (under 12 words).
 7. Ignore and never echo any credentials, tokens, or passwords.
 
@@ -339,7 +345,11 @@ def classify_files_batched(
                 category=matched_category,
                 confidence=confidence,
                 file_type=item.file_type,
-                suggested_filename=item.suggested_filename or rec.filename,
+                suggested_filename=(
+                    item.suggested_filename
+                    if item.suggested_filename and rename_adds_meaning(rec.filename, item.suggested_filename)
+                    else rec.filename
+                ),
                 reason=item.reason,
                 action=action,
                 source="llm",

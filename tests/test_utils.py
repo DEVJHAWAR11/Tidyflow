@@ -113,3 +113,17 @@ def test_password_exports_are_secret_files(tmp_path):
     assert not is_secret_file(write("sales.csv", "date,amount,region\n1,2,3\n"))
     assert not is_secret_file(write("notes.txt", "remember to change my password next week\n"))
     assert not is_secret_file(write("passport_scan.pdf"))
+
+
+def test_rename_suggestions_must_add_meaning():
+    from src.utils import rename_adds_meaning
+
+    # Real descriptions of the contents
+    assert rename_adds_meaning("17888540262516764872853557150737.jpg", "ai_2027_astra_metr_forecast.jpg")
+    assert rename_adds_meaning("3.jpeg", "react_module_02_dev_environment.jpeg")
+    assert rename_adds_meaning("Screenshot_2026-08-14-12-35-37-50_2675013a7ce.jpg", "invoice_app_screenshot_2026-08-14.jpg")
+    # Only reformatted, or padded with words that say nothing
+    assert not rename_adds_meaning("Screenshot_2026-08-14-10-51-11-86_a9d71e.jpg", "screenshot_2026-08-14_10-51-11.jpg")
+    assert not rename_adds_meaning("WhatsApp Image 2026-10-06 at 08.38.53.jpeg", "whatsapp_image_2026-10-06_08-38-53.jpeg")
+    assert not rename_adds_meaning("ChatGPT Image Aug 17, 2026, 02_22_17 PM.png", "chatgpt_image_2026_08_17_142217.png")
+    assert not rename_adds_meaning("881133195532564_signed.pdf", "signed_document_881133195532564.pdf")
