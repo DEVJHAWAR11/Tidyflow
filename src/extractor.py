@@ -36,7 +36,7 @@ def extract_all_text(
     Extract text content from all non-skipped records according to their file type.
     Returns the total number of records from which text was successfully extracted.
     """
-    processable = [r for r in records if not r.skipped]
+    processable = [r for r in records if not r.skipped and not r.too_large]
     extracted_count = 0
 
     for rec in tqdm(processable, desc="Extracting text", unit="file"):

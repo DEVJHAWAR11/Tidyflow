@@ -197,6 +197,7 @@ def run_ocr(
     candidates = [
         r for r in records
         if not r.skipped
+        and not r.too_large
         and (r.file_category == "image" or (r.file_category == "document" and not r.extracted_text_raw))
     ]
 

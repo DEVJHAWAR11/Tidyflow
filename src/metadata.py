@@ -21,7 +21,7 @@ def extract_metadata(records: list[FileRecord], *, thumbnail_max_dim: int = 200)
     """
     Populate visual dimensions, page counts, EXIF, and base64 thumbnails on FileRecords.
     """
-    processable = [r for r in records if not r.skipped]
+    processable = [r for r in records if not r.skipped and not r.too_large]
     for rec in tqdm(processable, desc="Extracting visual metadata", unit="file"):
         try:
             if rec.file_category == "image":

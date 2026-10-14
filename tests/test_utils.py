@@ -92,3 +92,24 @@ def test_get_app_data_dir():
     assert app_dir.exists()
     assert "TidyFlow" in app_dir.name or "tidyflow" in app_dir.name
 
+
+
+def test_password_exports_are_secret_files(tmp_path):
+    def write(name, text="x"):
+        p = tmp_path / name
+        p.write_text(text)
+        return p
+
+    # Browser / password-manager exports by name
+    assert is_secret_file(write("passwords.csv"))
+    assert is_secret_file(write("passwords-firefox.csv"))
+    assert is_secret_file(write("Chrome Passwords.csv"))
+    assert is_secret_file(write("logins.json"))
+    assert is_secret_file(write("vault.kdbx"))
+    # A saved-logins table under any name
+    assert is_secret_file(write("export (3).csv", '"url","username","password","httpRealm"\n"https://a.b","me","hunter2",""\n'))
+    assert is_secret_file(write("bitwarden.csv", "folder,favorite,type,name,notes,login_uri,login_username,login_password\n"))
+    # Ordinary files that merely mention passwords stay organizable
+    assert not is_secret_file(write("sales.csv", "date,amount,region\n1,2,3\n"))
+    assert not is_secret_file(write("notes.txt", "remember to change my password next week\n"))
+    assert not is_secret_file(write("passport_scan.pdf"))

@@ -890,8 +890,10 @@ export default function App() {
   const switchToFolder = (path: string) => {
     resetSession();
     clearBackendRun();
+    // Keep a destination the user picked; only the automatic "<folder>/Organized" follows the folder.
+    const autoOutput = !outputFolder.trim() || outputFolder === `${inputFolder}/Organized`;
     setInputFolder(path);
-    setOutputFolder(`${path}/Organized`);
+    if (autoOutput) setOutputFolder(`${path}/Organized`);
   };
 
   const [confirm, setConfirm] = useState<

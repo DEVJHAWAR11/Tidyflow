@@ -823,7 +823,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     finally:
         active_cancel_event = None
 
-    file_list = [_serialize_record(r) for r in records]
+    file_list = [_serialize_record(r) for r in records if not r.skipped]
 
     latest_pipeline_data["records"] = records
     latest_pipeline_data["summary"] = summary
@@ -881,7 +881,7 @@ async def get_latest_pipeline_results():
         "input_dir": latest_pipeline_data.get("input_dir", ""),
         "output_dir": latest_pipeline_data.get("output_dir", ""),
         "summary": summary.model_dump() if summary else None,
-        "files": [_serialize_record(r) for r in latest_pipeline_data.get("records", [])],
+        "files": [_serialize_record(r) for r in latest_pipeline_data.get("records", []) if not r.skipped],
         "categories": latest_pipeline_data.get("categories", []),
     }
 

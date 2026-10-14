@@ -161,10 +161,8 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
             records.append(_make_skipped(file_path, rel_path, f"Cannot stat file: {exc}"))
             continue
 
-        # Check maximum file size
-        if size > max_bytes:
-            records.append(_make_skipped(file_path, rel_path, f"File size {size}B exceeds {max_bytes}B limit"))
-            continue
+        # Files over the size limit are still organized (by name and type), but their contents are never read.
+        too_large = size > max_bytes
 
         if config.max_files is not None and accepted >= config.max_files:
             break
@@ -190,6 +188,7 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
             modified_at=modified,
             sha256=sha,
             file_category=category_type,
+            too_large=too_large,
         ))
         accepted += 1
 

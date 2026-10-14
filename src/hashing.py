@@ -51,7 +51,7 @@ def compute_perceptual_hashes(records: list[FileRecord]) -> None:
     """Compute imagehash.phash for every non-skipped image record."""
     image_records = [
         r for r in records
-        if not r.skipped and r.file_category == "image"
+        if not r.skipped and not r.too_large and r.file_category == "image"
     ]
     for rec in tqdm(image_records, desc="Perceptual hashing", unit="img"):
         try:
