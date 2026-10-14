@@ -178,6 +178,36 @@ def resolve_filename_collision(dest_dir: Path, filename: str, sha256_hex: str) -
     return dest_dir / new_name
 
 
+_UNSAFE_LABEL_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def choose_destination(dest_dir: Path, filename: str, sha256_hex: str, source_folder: str = "") -> tuple[Path, bool]:
+    """Pick where a file lands inside *dest_dir* when organizing flattens folders.
+
+    Returns (path, already_there). A file with the same name and the same contents is already there.
+    A different file with the same name gets a readable label instead of a hash: the folder it came
+    from ("photo (Trip).jpg"), or else a number ("photo (2).jpg"), like Finder does.
+    """
+    stem, suffix = Path(filename).stem, Path(filename).suffix
+    candidates = [filename]
+    label = _UNSAFE_LABEL_CHARS.sub("", source_folder).strip()[:40].strip()
+    if label:
+        candidates.append(f"{stem} ({label}){suffix}")
+    candidates += [f"{stem} ({n}){suffix}" for n in range(2, 1000)]
+
+    for name in candidates:
+        path = dest_dir / name
+        if not path.exists():
+            return path, False
+        try:
+            if path.is_file() and compute_sha256(path) == sha256_hex:
+                return path, True
+        except OSError:
+            continue
+    # 1000 files sharing one name: fall back to the content hash, which cannot clash with a different file.
+    return dest_dir / f"{stem}_{sha256_hex[:8]}{suffix}", False
+
+
 # ---------------------------------------------------------------------------
 # Truncation & Formatting
 # ---------------------------------------------------------------------------
