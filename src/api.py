@@ -39,7 +39,7 @@ from .main_loop import PipelineCancelledException, Processor, load_records_jsonl
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
 from .scanner import scan_files
-from .utils import get_app_data_dir, get_resource_path
+from .utils import get_app_data_dir, get_resource_path, work_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -937,7 +937,7 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         folder_style.style_new_folders(out_dir, req.folder_looks, looks_existed)
 
     if not req.dry_run and manifest:
-        audit_dir = Path("data/manifests")
+        audit_dir = work_data_dir() / "manifests"
         audit_dir.mkdir(parents=True, exist_ok=True)
         write_copy_manifest(manifest, audit_dir)
         if getattr(req, "export_reports", False):
@@ -1093,7 +1093,7 @@ async def get_files(limit: int = 50, offset: int = 0):
 
 @app.post("/rules")
 async def update_rules(rules_req: dict[str, Any]):
-    rules_path = Path("rules.yaml")
+    rules_path = get_app_data_dir() / "rules.yaml"
     rules_list = rules_req.get("rules", [])
     with open(rules_path, "w", encoding="utf-8") as f:
         yaml.dump({"rules": rules_list}, f)

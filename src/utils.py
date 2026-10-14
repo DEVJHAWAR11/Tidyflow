@@ -279,6 +279,14 @@ def get_resource_path(relative_path: Path | str) -> Path:
 
 
 
+def work_data_dir() -> Path:
+    """Where caches, logs and records go: the app data folder in the packaged app (its working
+    directory is read-only), or ./data when running from source."""
+    import sys
+
+    return get_app_data_dir() if getattr(sys, "frozen", False) else Path("data")
+
+
 def get_app_data_dir() -> Path:
     """
     Get standard OS user data directory for TidyFlow database and user config.

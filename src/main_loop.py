@@ -19,6 +19,7 @@ from .hashing import (
     compute_perceptual_hashes,
 )
 from .llm_provider import classify_files_batched
+from .utils import work_data_dir
 from .metadata import extract_metadata
 from .models import ClassificationResult, FileRecord, RunSummary
 from .ocr_engine import run_ocr
@@ -104,7 +105,7 @@ def run_pipeline(
     logger.info("=== STEP 5: OCR processing ===")
     if progress_callback:
         progress_callback("extract", "Reading text in images and PDFs…")
-    ocr_cache_dir = Path("data/cache")
+    ocr_cache_dir = work_data_dir() / "cache"
     ocr_cache_dir.mkdir(parents=True, exist_ok=True)
     processed_ocr, cached_ocr = run_ocr(records, config.ocr, ocr_cache_dir)
     summary.ocr_processed = processed_ocr
@@ -151,7 +152,7 @@ def run_pipeline(
         logger.info("=== STEP 7: Batched LLM classification ===")
         if progress_callback:
             progress_callback("classify", "Asking the AI where each file belongs…")
-        llm_log_dir = Path("data/logs")
+        llm_log_dir = work_data_dir() / "logs"
         llm_log_dir.mkdir(parents=True, exist_ok=True)
         llm_count = classify_files_batched(
             records,
@@ -182,7 +183,7 @@ def run_pipeline(
     summary.run_finished_at = datetime.now(timezone.utc)
 
     # 8. Reports Generation (Optional - only generated if export_reports is enabled)
-    internal_data_dir = Path("data")
+    internal_data_dir = work_data_dir()
     internal_data_dir.mkdir(parents=True, exist_ok=True)
     _save_records_jsonl(records, internal_data_dir / "file_records.jsonl")
 
