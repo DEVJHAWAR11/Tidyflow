@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { CategoryItem, ComplexityLevel, CategorySnapshot } from "../types";
-import { API_BASE } from "../config";
+import { API_BASE, currentFolder } from "../config";
 import {
   PRESET_PACKS,
   DEFAULT_STANDARD_CATEGORIES,
@@ -201,7 +201,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
       fetch(`${API_BASE}/categories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: proposedCategories }),
+        body: JSON.stringify({ categories: proposedCategories, folder: currentFolder() }),
       }).catch((e) => console.warn("Failed to persist categories:", e));
     } else {
       handleTierChange(pendingTier);
@@ -315,7 +315,7 @@ export const AiStructureAssistant: React.FC<AiStructureAssistantProps> = ({
     fetch(`${API_BASE}/categories`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categories: snap.categories }),
+      body: JSON.stringify({ categories: snap.categories, folder: currentFolder() }),
     }).catch((e) => console.warn("Failed to persist restored snapshot:", e));
   };
 

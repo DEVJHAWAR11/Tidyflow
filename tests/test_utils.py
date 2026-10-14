@@ -23,6 +23,15 @@ def test_compute_sha256(tmp_path):
     assert make_file_id(sha) == sha[:12]
 
 
+def test_make_file_id_tells_identical_files_apart():
+    sha = "a" * 64
+    first = make_file_id(sha, "invoice.txt")
+    copy = make_file_id(sha, "invoice (1).txt")
+    assert first != copy
+    assert len(first) == len(copy) == 12
+    assert make_file_id(sha, "invoice.txt") == first  # stable across scans
+
+
 def test_normalize_ocr_text():
     raw = "  INVOICE #1234 -- Total:  $500.00 !  "
     norm = normalize_ocr_text(raw)

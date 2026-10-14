@@ -59,3 +59,32 @@ def test_apply_decisions_copy(tmp_path):
     dest_path = out_dir / "Finance/Invoices/invoice.pdf"
     assert dest_path.exists()
     assert src_file.exists()  # Original not deleted in copy mode
+
+
+def test_move_mode_moves_each_duplicate_under_its_own_name(tmp_path):
+    """Identical files used to share one ID, so the same file was copied twice and its twin stayed behind."""
+    from src.config import TidyConfig
+    from src.scanner import scan_directory
+
+    src_dir = tmp_path / "in"
+    src_dir.mkdir()
+    (src_dir / "invoice.txt").write_text("INVOICE #1 amount due $10")
+    (src_dir / "invoice (1).txt").write_text("INVOICE #1 amount due $10")
+    (src_dir / "empty_a.txt").write_text("")
+    (src_dir / "empty_b.txt").write_text("")
+
+    records = scan_directory(TidyConfig(input_dir=src_dir))
+    assert len({r.file_id for r in records}) == 4
+
+    decisions = [
+        ReviewDecision(file_id=r.file_id, approved=True, override_category="Finance")
+        for r in records
+    ]
+    out_dir = tmp_path / "out"
+    manifest = apply_decisions(decisions, records, out_dir, dry_run=False, move_mode=True)
+
+    assert len(manifest) == 4
+    assert sorted(p.name for p in (out_dir / "Finance").iterdir()) == [
+        "empty_a.txt", "empty_b.txt", "invoice (1).txt", "invoice.txt",
+    ]
+    assert list(src_dir.iterdir()) == []

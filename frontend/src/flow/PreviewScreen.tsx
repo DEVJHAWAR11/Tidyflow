@@ -91,9 +91,31 @@ export function PreviewScreen(props: PreviewScreenProps) {
     return { sureFiles: sure, unsureFiles: unsure };
   }, [props.files, props.categoryOverrides, props.autoThreshold, props.folders]);
 
+  // Only files that have a folder count: a checked file still waiting in "To review" is not organized.
   const includedCount = useMemo(() => {
-    return props.files.filter((f) => props.selectedFileIds.has(f.file_id)).length;
-  }, [props.files, props.selectedFileIds]);
+    return sureFiles.filter((f) => props.selectedFileIds.has(f.file_id)).length;
+  }, [sureFiles, props.selectedFileIds]);
+
+  // Exact copies share a duplicate_group_id; point each one at another file with the same contents.
+  const duplicateOf = useMemo(() => {
+    const byGroup = new Map<string, ClassifiedFile[]>();
+    for (const f of props.files) {
+      // Empty files all share one hash; calling them copies of each other isn't useful.
+      if (!f.duplicate_group_id || f.file_size_bytes === 0) continue;
+      const members = byGroup.get(f.duplicate_group_id) ?? [];
+      members.push(f);
+      byGroup.set(f.duplicate_group_id, members);
+    }
+    const result = new Map<string, string>();
+    for (const members of byGroup.values()) {
+      if (members.length < 2) continue;
+      for (const f of members) {
+        const other = members.find((m) => m.file_id !== f.file_id);
+        if (other) result.set(f.file_id, other.filename);
+      }
+    }
+    return result;
+  }, [props.files]);
 
   const { folderGroups, emptyFolders } = useMemo(() => {
     const groups: { folder: string; files: ClassifiedFile[] }[] = [];
@@ -278,7 +300,13 @@ export function PreviewScreen(props: PreviewScreenProps) {
                           {f.filename}
                         </div>
                         <div className="text-[12px] text-tf-muted truncate tf-num">
-                          {reason ? `${reason} · ` : ""}
+                          {f.file_size_bytes === 0
+                            ? "Empty file · "
+                            : duplicateOf.has(f.file_id)
+                            ? `Same as ${duplicateOf.get(f.file_id)} · `
+                            : reason
+                            ? `${reason} · `
+                            : ""}
                           {formatBytes(f.file_size_bytes)}
                         </div>
                       </div>
@@ -466,11 +494,13 @@ export function PreviewScreen(props: PreviewScreenProps) {
                           {group.files.map((f) => {
                             const isIncluded = props.selectedFileIds.has(f.file_id);
                             const isMoveOpen = activeMoveFileId === f.file_id;
+                            // Matches App's renameSuggestions: case/punctuation-only changes aren't applied.
+                            const plain = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
                             const hasRename =
                               props.renamesEnabled &&
                               Boolean(
                                 f.suggested_filename &&
-                                  f.suggested_filename !== f.filename
+                                  plain(f.suggested_filename) !== plain(f.filename)
                               );
 
                             return (
@@ -515,6 +545,11 @@ export function PreviewScreen(props: PreviewScreenProps) {
                                   >
                                     {f.filename}
                                   </div>
+                                  {duplicateOf.has(f.file_id) && (
+                                    <div className="text-[12px] text-tf-muted truncate">
+                                      Same as {duplicateOf.get(f.file_id)}
+                                    </div>
+                                  )}
                                   {hasRename && (
                                     <div className="text-[12px] text-tf-brand-ink truncate flex items-center gap-1">
                                       <ArrowRight size={11} strokeWidth={2} className="shrink-0" />

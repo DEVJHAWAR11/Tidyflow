@@ -19,3 +19,12 @@ export const API_BASE = (() => {
   return "http://127.0.0.1:8000";
 })();
 
+
+/** The folder currently being organized (App mirrors it into localStorage). */
+export const currentFolder = (): string => {
+  try {
+    return localStorage.getItem("tidyflow_input_folder") || "";
+  } catch {
+    return "";
+  }
+};

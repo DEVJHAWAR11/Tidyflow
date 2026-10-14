@@ -22,21 +22,9 @@ export const PROVIDER_MODELS: Record<string, ModelOption[]> = {
   deepseek: [
     {
       id: "deepseek-chat",
-      name: "DeepSeek-V3 Chat (deepseek-chat)",
-      badge: "Flagship V3",
-      description: "DeepSeek-V3 671B MoE model — powerful, fast, and highly cost-effective",
-    },
-    {
-      id: "deepseek-reasoner",
-      name: "DeepSeek-R1 Reasoner (deepseek-reasoner)",
-      badge: "Reasoning R1",
-      description: "DeepSeek-R1 reasoning model with chain-of-thought verification",
-    },
-    {
-      id: "deepseek-v4-flash",
-      name: "DeepSeek-V4 Flash (deepseek-v4-flash)",
+      name: "DeepSeek V4.1 Flash (deepseek-chat)",
       badge: "Recommended",
-      description: "Next-gen flagship V4 Flash — ultra-fast speed, high accuracy & low cost",
+      description: "DeepSeek's current fast model: quick, accurate and very cheap",
     },
     {
       id: "deepseek-v4-pro",

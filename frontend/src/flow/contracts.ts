@@ -15,6 +15,8 @@ export interface TopBarProps {
   darkMode: boolean;
   toggleDarkMode: () => void;
   backendStatus: BackendStatus;
+  /** Ask to discard the current sort and return home */
+  onClearSession?: () => void;
 }
 
 export interface QuickLocation {
@@ -28,6 +30,10 @@ export interface HomeScreenProps {
   quickLocations: QuickLocation[];
   /** Pick a folder by path; App resets state if it changed and moves to the plan step */
   onPickFolder: (path: string) => void;
+  /** Select a common location without starting to read it */
+  onSelectLocation: (path: string) => void;
+  /** Ask to discard the current sort (plan and results) */
+  onClearSession: () => void;
   /** Open the OS folder dialog (falls back to the in-app browser); result arrives via onPickFolder */
   onBrowse: () => void;
   /** Change where organized folders get created */

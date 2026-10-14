@@ -1,6 +1,7 @@
 """FastAPI Backend Server for TidyFlow Universal File Organizer."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -257,6 +258,9 @@ class CategoryPayload(BaseModel):
 
 class CategoriesUpdateRequest(BaseModel):
     categories: dict[str, Any]
+    # The folder this plan is for. Plans are kept per folder so sorting one folder never
+    # overwrites another folder's plan or the default categories in config.yaml.
+    folder: Optional[str] = None
 
 
 class ApplyDecisionItem(BaseModel):
@@ -300,9 +304,20 @@ async def get_status():
     }
 
 
+def _plan_file(folder: str) -> Path:
+    key = hashlib.sha1(str(Path(folder).expanduser().resolve()).encode("utf-8")).hexdigest()[:16]
+    return get_app_data_dir() / "plans" / f"{key}.json"
+
+
 @app.get("/categories")
-async def get_categories():
-    """Return configured categories taxonomy."""
+async def get_categories(folder: Optional[str] = None):
+    """Return the saved folder plan for `folder`, or the default categories when no folder is given."""
+    if folder:
+        plan = _plan_file(folder)
+        try:
+            return {"categories": json.loads(plan.read_text(encoding="utf-8")).get("categories", {})}
+        except (OSError, ValueError):
+            return {"categories": {}}
     cfg = load_config()
     res = {}
     for cat_name, cat_obj in cfg.categories.items():
@@ -318,7 +333,16 @@ async def get_categories():
 
 @app.post("/categories")
 async def save_categories(req: CategoriesUpdateRequest):
-    """Update or add categories in user config.yaml."""
+    """Save a folder's plan, or (without a folder) the default categories in config.yaml."""
+    if req.folder:
+        plan = _plan_file(req.folder)
+        try:
+            plan.parent.mkdir(parents=True, exist_ok=True)
+            plan.write_text(json.dumps({"folder": req.folder, "categories": req.categories}), encoding="utf-8")
+        except OSError as e:
+            logger.warning("Could not save the folder plan: %s", e)
+        return {"status": "success", "categories": req.categories}
+
     cfg_file = get_app_data_dir() / "config.yaml"
     raw: dict[str, Any] = {}
     if cfg_file.exists():
@@ -719,8 +743,8 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     if not input_path.exists() or not input_path.is_dir():
         raise HTTPException(status_code=400, detail=f"Directory not found: {req.input_dir}")
 
+    # Only resolve the output folder here; it is created when files are actually organized.
     out_path = Path(req.output_dir).resolve() if req.output_dir else (input_path / "Organized_Output").resolve()
-    out_path.mkdir(parents=True, exist_ok=True)
 
     # Dynamic MCP security allow list
     set_allowed_directories([input_path, out_path])
@@ -836,6 +860,18 @@ async def cancel_pipeline():
     return {"status": "idle", "message": "No active pipeline running"}
 
 
+@app.post("/pipeline/clear")
+async def clear_pipeline(folder: Optional[str] = None):
+    """Forget the current sort (results, saved run, and `folder`'s plan). Files and undo info are untouched."""
+    if folder:
+        _plan_file(folder).unlink(missing_ok=True)
+    if active_cancel_event is not None:
+        active_cancel_event.set()
+    latest_pipeline_data.update(records=[], summary=None, input_dir="", output_dir="", categories=[])
+    shutil.rmtree(_latest_run_dir(), ignore_errors=True)
+    return {"status": "cleared"}
+
+
 @app.get("/pipeline/latest")
 async def get_latest_pipeline_results():
     """Return the most recent run (kept in memory, restored from disk on startup)."""
@@ -854,6 +890,7 @@ async def get_latest_pipeline_results():
 async def apply_decisions_direct(req: ApplyDirectRequest):
     """Directly apply decisions from the UI without exporting to CSV."""
     out_dir = Path(req.output_dir).resolve()
+    created_out_dir = not out_dir.exists()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     set_allowed_directories([out_dir])
@@ -899,7 +936,16 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
             write_copy_manifest(manifest, out_dir)
 
     if not req.dry_run:
-        _save_last_apply(manifest, out_dir)
+        _save_last_apply(manifest, out_dir, created_out_dir)
+        # These results are used up; a restart must not offer them for review again.
+        latest_pipeline_data.update(records=[], summary=None, input_dir="", output_dir="", categories=[])
+        shutil.rmtree(_latest_run_dir(), ignore_errors=True)
+    if created_out_dir and not manifest:
+        # Nothing was organized, so don't leave an empty folder behind.
+        try:
+            out_dir.rmdir()
+        except OSError:
+            pass
 
     action_label = "simulated" if req.dry_run else ("moved" if req.move_mode else "copied")
     return {
@@ -915,8 +961,12 @@ def _last_apply_file() -> Path:
     return get_app_data_dir() / "last_apply.json"
 
 
-def _save_last_apply(manifest: list, output_dir: Path) -> None:
-    data = {"output_dir": str(output_dir), "entries": [m.model_dump(mode="json") for m in manifest]}
+def _save_last_apply(manifest: list, output_dir: Path, created_output_dir: bool = False) -> None:
+    data = {
+        "output_dir": str(output_dir),
+        "created_output_dir": created_output_dir,
+        "entries": [m.model_dump(mode="json") for m in manifest],
+    }
     try:
         _last_apply_file().write_text(json.dumps(data), encoding="utf-8")
     except Exception as e:
@@ -983,6 +1033,14 @@ async def undo_last_apply():
                 break
             d = d.parent
 
+    # The output folder itself goes too, but only if organizing created it and it is now empty.
+    if output_root and data.get("created_output_dir") and output_root.is_dir():
+        try:
+            if not any(output_root.iterdir()):
+                output_root.rmdir()
+        except OSError:
+            pass
+
     f.unlink(missing_ok=True)
     return {"status": "success", "restored": restored, "skipped": skipped}
 
@@ -992,7 +1050,20 @@ async def search_files(q: str):
     if not q or not q.strip():
         return {"results": []}
     results = await db.search(q.strip())
-    return {"results": [dict(r) for r in results]}
+    live, gone = [], []
+    for r in results:
+        # Point at wherever the file is now (organized copy, or back at its original place after an
+        # undo) and drop rows whose file is gone everywhere.
+        row = dict(r)
+        if row.get("new_path") and not Path(row["new_path"]).exists():
+            row["new_path"] = None
+        if row.get("new_path") or (row.get("path") and Path(row["path"]).exists()):
+            live.append(row)
+        else:
+            gone.append(row["id"])
+    for row_id in gone:
+        await db.execute_write("DELETE FROM files WHERE id = ?", (row_id,))
+    return {"results": live}
 
 
 @app.get("/costs")
