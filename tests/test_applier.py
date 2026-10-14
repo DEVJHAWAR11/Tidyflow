@@ -88,3 +88,37 @@ def test_move_mode_moves_each_duplicate_under_its_own_name(tmp_path):
         "empty_a.txt", "empty_b.txt", "invoice (1).txt", "invoice.txt",
     ]
     assert list(src_dir.iterdir()) == []
+
+
+def test_flattened_name_clashes_get_readable_names_and_reruns_add_nothing(tmp_path):
+    from src.config import TidyConfig
+    from src.scanner import scan_directory
+
+    src_dir = tmp_path / "in"
+    for folder, text in [("aryan ppt", "full size"), ("compressedImages", "compressed"), ("", "top level"), ("old", "older")]:
+        (src_dir / folder).mkdir(parents=True, exist_ok=True)
+        (src_dir / folder / "IMG-0025.jpg").write_text(text)
+
+    records = scan_directory(TidyConfig(input_dir=src_dir))
+    decisions = [ReviewDecision(file_id=r.file_id, approved=True, override_category="Images") for r in records]
+    out_dir = tmp_path / "out"
+
+    manifest = apply_decisions(decisions, records, out_dir, dry_run=False)
+    names = sorted(p.name for p in (out_dir / "Images").iterdir())
+    assert len(manifest) == 4
+    # The first keeps its name; the rest are labelled with their folder, never a hash.
+    assert names == ["IMG-0025 (aryan ppt).jpg", "IMG-0025 (compressedImages).jpg", "IMG-0025 (old).jpg", "IMG-0025.jpg"]
+
+    # Organizing the same files again recognises every copy and adds nothing.
+    assert apply_decisions(decisions, records, out_dir, dry_run=False) == []
+    assert len(list((out_dir / "Images").iterdir())) == 4
+
+
+def test_top_level_clash_gets_a_number(tmp_path):
+    from src.utils import choose_destination
+
+    dest = tmp_path / "Images"
+    dest.mkdir()
+    (dest / "photo.jpg").write_text("one")
+    path, already = choose_destination(dest, "photo.jpg", "not-the-same-hash")
+    assert path.name == "photo (2).jpg" and not already

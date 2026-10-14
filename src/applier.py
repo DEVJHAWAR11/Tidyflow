@@ -13,7 +13,7 @@ from typing import Optional
 from tqdm import tqdm
 
 from .models import CopyManifestEntry, FileRecord, ReviewDecision
-from .utils import compute_sha256, is_safe_to_copy, resolve_filename_collision
+from .utils import choose_destination, compute_sha256, is_safe_to_copy
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +114,11 @@ def apply_decisions(
             continue
 
         dest_dir = output_dir / category
-        dest_path = resolve_filename_collision(dest_dir, filename, rec.sha256)
-        if dest_path.exists():
-            # Same name and same content hash already there: this file was organized before.
+        # Folders are flattened, so a clashing name is labelled with the folder the file came from.
+        parent = Path(rec.rel_path).parent.name if rec.rel_path else ""
+        dest_path, already_there = choose_destination(dest_dir, filename, rec.sha256, parent)
+        if already_there:
+            # Same name and same contents already there: this file was organized before.
             # Skipping keeps undo safe, since every manifest entry is then a file we created.
             logger.info("Already organized, skipping %s", rec.filename)
             skipped_count += 1
