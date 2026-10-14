@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
@@ -107,9 +108,11 @@ is about to be filed into, and asks for a change in plain language, for example:
   "move the course screenshots to Academic", "put all invoices in a new folder called Bills",
   "give the resumes clearer names", "don't organize the empty files", "put the files to review where they fit best".
 
-Each file has: id, name, folder (where it is going now, or "(undecided)"), organize (false = the user already
-left it out), size, and text (an excerpt of its contents; screenshots and scans were read with OCR, so expect
-some noise).
+The existing folders are listed with numbers. The files are a tab-separated table with columns:
+id, name, folder (the number of the folder it is going into now, or "-" when undecided), organize ("n" = the
+user already left it out), size in bytes, and text (an excerpt of its contents; screenshots and scans were read
+with OCR, so expect some noise). The request comes last. You may see only part of a large folder; answer for
+the files you are given.
 
 RULES
 1. Change only files that clearly match the request. Use the name AND the text to decide. A file you are
@@ -126,7 +129,7 @@ RULES
 5. "exclude" is ONLY for files the user explicitly asks to leave out ("leave", "skip", "don't organize",
    "keep out"). Never exclude a file just because you are unsure about it. "include" is for files the user
    asks to organize after all.
-6. Never invent file ids. Only use ids from the list.
+6. Never invent file ids. Only use ids from the list. In "moves", write folder NAMES, not numbers.
 7. "message" is ONE short sentence, at most 14 words, saying what you did in the user's terms
    (e.g. "Moved 6 course screenshots to Academic."). If nothing matched, say so and suggest a rewording.
 
@@ -470,44 +473,41 @@ def apply_review_command(
         result = _fallback_heuristic_review_command(command, files, cat_list)
         return _validate_review_result(result, files, cat_list, note="Matched by file name (no AI key is set).")
 
-    # Short excerpts keep big folders inside one request; small folders get more of each file.
-    snippet_len = 220 if len(files) <= 120 else 110
-    files_payload = [
-        {
-            "id": f.get("file_id"),
-            "name": f.get("filename"),
-            "folder": f.get("category") or "(undecided)",
-            "organize": f.get("included", True),
-            "size": f.get("file_size_bytes"),
-            "text": " ".join(str(f.get("extracted_text") or "").split())[:snippet_len],
-        }
-        for f in files[:400]
-    ]
-    user_payload = (
-        f"REQUEST: {command}\n\n"
-        f"EXISTING FOLDERS: {json.dumps(cat_list)}\n\n"
-        f"FILES ({len(files_payload)}):\n{json.dumps(files_payload, ensure_ascii=False)}"
-    )
+    if not files:
+        return _validate_review_result({}, files, cat_list)
 
     base_url = custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")
-    try:
+    model = _resolve_provider_model(provider)
+    folder_numbers = {name: i for i, name in enumerate(cat_list, 1)}
+
+    def ask(chunk: list[dict[str, Any]]) -> dict[str, Any]:
         with httpx.Client(timeout=60.0) as client:
             resp = client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": _resolve_provider_model(provider),
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": _REVIEW_COMMAND_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_payload},
+                        {"role": "user", "content": _review_user_message(command, chunk, folder_numbers)},
                     ],
                     "temperature": 0.1,
                     "response_format": {"type": "json_object"},
                 },
             )
             resp.raise_for_status()
-            parsed = json.loads(_strip_markdown_fences(resp.json()["choices"][0]["message"]["content"]))
+            return json.loads(_strip_markdown_fences(resp.json()["choices"][0]["message"]["content"]))
+
+    # Big folders are split into chunks asked in parallel, so every file is seen and the wait stays short.
+    chunks = [files[i : i + _REVIEW_CHUNK_SIZE] for i in range(0, len(files), _REVIEW_CHUNK_SIZE)]
+    try:
+        if len(chunks) == 1:
+            answers = [ask(chunks[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+                answers = list(pool.map(ask, chunks))
     except Exception as exc:
+        # One failed chunk fails the request: half-applied changes would be confusing.
         logger.warning("Review request failed: %s", exc)
         return {
             "message": "",
@@ -519,15 +519,65 @@ def apply_review_command(
             "error": "The AI didn't answer, so nothing was changed. Please try again.",
         }
 
-    result = {
-        "message": parsed.get("message", ""),
+    result: dict[str, Any] = {"category_overrides": {}, "filename_overrides": {}, "exclude": [], "include": []}
+    for parsed in answers:
+        if not isinstance(parsed, dict):
+            continue
         # Older answers used the original key names; accept both.
-        "category_overrides": parsed.get("moves") or parsed.get("category_overrides") or {},
-        "filename_overrides": parsed.get("renames") or parsed.get("filename_overrides") or {},
-        "exclude": parsed.get("exclude") or [],
-        "include": parsed.get("include") or [],
-    }
+        moves = parsed.get("moves") or parsed.get("category_overrides") or {}
+        if isinstance(moves, dict):
+            result["category_overrides"].update(
+                {fid: _folder_from_number(folder, cat_list) for fid, folder in moves.items()}
+            )
+        renames = parsed.get("renames") or parsed.get("filename_overrides") or {}
+        if isinstance(renames, dict):
+            result["filename_overrides"].update(renames)
+        for key in ("exclude", "include"):
+            if isinstance(parsed.get(key), list):
+                result[key].extend(parsed[key])
+    # Each chunk only describes its own part, so with several chunks the summary is rebuilt from the changes;
+    # an explanation is still kept when nothing changed (e.g. "I can't delete files").
+    messages = [str(a.get("message") or "").strip() for a in answers if isinstance(a, dict)]
+    if len(answers) == 1:
+        result["message"] = messages[0] if messages else ""
+    elif not any(result[k] for k in ("category_overrides", "filename_overrides", "exclude", "include")):
+        result["message"] = next((m for m in messages if m), "")
     return _validate_review_result(result, files, cat_list)
+
+
+_REVIEW_CHUNK_SIZE = 150
+_REVIEW_SNIPPET_LEN = 200
+
+
+def _review_cell(value: Any, limit: int = 0) -> str:
+    text = " ".join(str(value if value is not None else "").split())
+    return text[:limit] if limit else text
+
+
+def _review_user_message(command: str, files: list[dict[str, Any]], folder_numbers: dict[str, int]) -> str:
+    """Compact table of the files, with the request last so repeat asks share a cacheable prefix."""
+    rows = ["id\tname\tfolder\torganize\tsize\ttext"]
+    for f in files:
+        cat = f.get("category")
+        folder = str(folder_numbers.get(cat, cat)) if cat and cat != "(undecided)" else "-"
+        rows.append("\t".join([
+            _review_cell(f.get("file_id")),
+            _review_cell(f.get("filename")),
+            _review_cell(folder),
+            "n" if f.get("included", True) is False else "y",
+            _review_cell(f.get("file_size_bytes") or 0),
+            _review_cell(f.get("extracted_text"), _REVIEW_SNIPPET_LEN),
+        ]))
+    folders = "\n".join(f"{i}. {name}" for name, i in folder_numbers.items()) or "(none yet)"
+    return f"FOLDERS:\n{folders}\n\nFILES ({len(files)}):\n" + "\n".join(rows) + f"\n\nREQUEST: {command}"
+
+
+def _folder_from_number(folder: Any, cat_list: list[str]) -> Any:
+    """The model sometimes answers with a folder's number from the list; map it back to the name."""
+    text = str(folder or "").strip().rstrip(".")
+    if text.isdigit() and text not in cat_list and 1 <= int(text) <= len(cat_list):
+        return cat_list[int(text) - 1]
+    return folder
 
 
 _UNSAFE_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -593,11 +643,15 @@ def _validate_review_result(
     by_id = {str(f.get("file_id")): f for f in files if f.get("file_id")}
 
     moves: dict[str, str] = {}
+    known = list(categories)
     for fid, folder in (result.get("category_overrides") or {}).items():
         f = by_id.get(str(fid))
-        target = _clean_folder(folder, categories)
+        # Matching against new folders named so far keeps "Bills" and "bills" as one folder.
+        target = _clean_folder(folder, known)
         if f is not None and target and target != f.get("category"):
             moves[str(fid)] = target
+            if target not in known:
+                known.append(target)
 
     renames: dict[str, str] = {}
     for fid, new_name in (result.get("filename_overrides") or {}).items():

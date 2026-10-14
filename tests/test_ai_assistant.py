@@ -316,3 +316,91 @@ def test_review_command_keeps_explanations_when_nothing_changed(monkeypatch):
     _fake_ai(monkeypatch, {"message": "I can't delete files; I can only move or rename them."})
     res = apply_review_command("delete everything", _REVIEW_FILES, ["Images"])
     assert res["message"].startswith("I can't delete files")
+
+
+def _fake_chunked_ai(monkeypatch, answer_for, fail_when=None):
+    """Fake AI that answers each request from the ids in its file table."""
+    import json
+    import threading
+    import src.ai_assistant as aa
+
+    sent: list[str] = []
+    lock = threading.Lock()
+
+    class FakeResponse:
+        def __init__(self, ids):
+            self.ids = ids
+
+        def raise_for_status(self):
+            if fail_when and fail_when(self.ids):
+                raise RuntimeError("boom")
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps(answer_for(self.ids))}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            content = json["messages"][1]["content"]
+            with lock:
+                sent.append(content)
+            table = content.split("FILES (", 1)[1].split("\n\nREQUEST:", 1)[0]
+            ids = [line.split("\t", 1)[0] for line in table.splitlines()[2:]]
+            return FakeResponse(ids)
+
+    monkeypatch.setattr(aa, "load_settings", lambda: ("deepseek", "sk-test", None))
+    monkeypatch.setattr(aa.httpx, "Client", FakeClient)
+    return sent
+
+
+def _many_files(n):
+    return [
+        {"file_id": f"f{i:04d}", "filename": f"invoice_{i}.pdf", "category": "Documents", "extracted_text": "invoice\tdue"}
+        for i in range(n)
+    ]
+
+
+def test_review_command_sees_every_file_in_big_folders(monkeypatch):
+    files = _many_files(470)
+    sent = _fake_chunked_ai(monkeypatch, lambda ids: {"message": "Moved some.", "moves": {i: "bills" for i in ids}})
+
+    res = apply_review_command("put invoices in a new Bills folder", files, ["Documents"])
+
+    assert len(sent) == 4  # 150 + 150 + 150 + 20
+    assert len(res["category_overrides"]) == 470
+    # Chunks may spell the new folder differently; it stays one folder.
+    assert set(res["category_overrides"].values()) == {"bills"}
+    assert res["new_folders"] == ["bills"]
+    assert res["message"] == "Moved 470 files to bills."
+
+
+def test_review_command_fails_whole_request_when_one_chunk_fails(monkeypatch):
+    files = _many_files(200)
+    _fake_chunked_ai(
+        monkeypatch,
+        lambda ids: {"moves": {i: "Bills" for i in ids}},
+        fail_when=lambda ids: "f0199" in ids,
+    )
+    res = apply_review_command("move invoices", files, ["Documents"])
+    assert res["error"] and res["category_overrides"] == {}
+
+
+def test_review_payload_is_compact_with_request_last(monkeypatch):
+    sent = _fake_chunked_ai(monkeypatch, lambda ids: {"message": "Done.", "moves": {"a": "2"}})
+
+    res = apply_review_command("move screenshots", _REVIEW_FILES, ["Images", "Documents"])
+
+    content = sent[0]
+    assert content.startswith("FOLDERS:\n1. Images\n2. Documents")
+    assert content.rstrip().endswith("REQUEST: move screenshots")
+    assert "\tsprint notes" in content and '"id"' not in content
+    # A folder answered by number is mapped back to its name.
+    assert res["category_overrides"] == {"a": "Documents"}
