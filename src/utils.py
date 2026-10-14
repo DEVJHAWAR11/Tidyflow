@@ -19,9 +19,17 @@ def compute_sha256(file_path: Path | str, *, chunk_size: int = 65_536) -> str:
     return h.hexdigest()
 
 
-def make_file_id(sha256_hex: str) -> str:
-    """Generate a stable 12-character file ID from SHA-256."""
-    return sha256_hex[:12] if sha256_hex else "unknown_file"
+def make_file_id(sha256_hex: str, rel_path: str | Path = "") -> str:
+    """Generate a stable 12-character file ID from the content hash and the file's location.
+
+    The path is part of the ID because identical files (duplicates, empty files) must still be
+    told apart: the UI, the AI batches and the applier all look files up by ID.
+    """
+    if not sha256_hex:
+        return "unknown_file"
+    if not rel_path:
+        return sha256_hex[:12]
+    return hashlib.sha256(f"{sha256_hex}:{Path(rel_path).as_posix()}".encode("utf-8")).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------

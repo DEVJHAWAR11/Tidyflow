@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Undo2,
   HardDrive,
+  X,
 } from "lucide-react";
 import { Screen, Card, Button, StepHeader, SectionTitle } from "./ui";
 import { FolderIcon } from "./icons";
@@ -34,6 +35,8 @@ export function HomeScreen({
   outputFolder,
   quickLocations,
   onPickFolder,
+  onSelectLocation,
+  onClearSession,
   onBrowse,
   onChangeOutput,
   canResume,
@@ -101,7 +104,7 @@ export function HomeScreen({
             <div className="flex items-center gap-4 min-w-0">
               <FolderIcon name="" glyph={false} size={40} />
               <div className="min-w-0">
-                <div className="text-[12px] text-tf-faint">Recent</div>
+                <div className="text-[12px] text-tf-faint">{canResume ? "Recent" : "Selected folder"}</div>
                 <div className="text-[14.5px] font-medium text-tf-ink truncate">
                   {folderLabel(inputFolder)}
                 </div>
@@ -116,27 +119,39 @@ export function HomeScreen({
               </div>
             </div>
 
-            {canResume ? (
+            <div className="flex gap-2 shrink-0 w-full sm:w-auto">
               <Button
-                variant="primary"
+                variant="ghost"
                 size="md"
-                iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
-                onClick={onResume}
-                className="shrink-0 w-full sm:w-auto"
+                icon={<X size={15} strokeWidth={1.75} />}
+                onClick={onClearSession}
+                aria-label="Clear this sort"
+                title="Clear this sort"
               >
-                Review
+                Clear
               </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                size="md"
-                iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
-                onClick={() => onPickFolder(inputFolder)}
-                className="shrink-0 w-full sm:w-auto"
-              >
-                Continue
-              </Button>
-            )}
+              {canResume ? (
+                <Button
+                  variant="primary"
+                  size="md"
+                  iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
+                  onClick={onResume}
+                  className="flex-1 sm:flex-none"
+                >
+                  Review
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
+                  onClick={() => onPickFolder(inputFolder)}
+                  className="flex-1 sm:flex-none"
+                >
+                  Continue
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
@@ -167,7 +182,7 @@ export function HomeScreen({
                   <button
                     key={loc.path}
                     type="button"
-                    onClick={() => onPickFolder(loc.path)}
+                    onClick={() => onSelectLocation(loc.path)}
                     className="w-full h-11 px-3.5 flex items-center gap-3 hover:bg-tf-surface-2 transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
                   >
                     <Icon size={17} strokeWidth={1.75} className="text-tf-muted shrink-0" />

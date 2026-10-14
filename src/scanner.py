@@ -176,7 +176,7 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
             records.append(_make_skipped(file_path, rel_path, f"Hash error: {exc}"))
             continue
 
-        file_id = make_file_id(sha)
+        file_id = make_file_id(sha, rel_path)
         category_type = determine_file_category(ext)
 
         records.append(FileRecord(

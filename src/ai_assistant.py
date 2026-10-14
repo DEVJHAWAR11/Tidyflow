@@ -75,6 +75,13 @@ CRITICAL RULES FOR REFINEMENT & CATEGORY MODIFICATIONS:
    - "active": true
 8. Set "is_ready" to true if a concrete category structure is proposed.
 9. In "message", provide a friendly, conversational explanation explicitly detailing what changes were made.
+10. SIZE THE PLAN TO THE FOLDER: every folder should end up holding several files. Do not create a folder or
+    subfolder that only one or two files would land in, unless that file is a clearly different kind of thing
+    (e.g. an installer). For folders with fewer than about 30 files, prefer a flat structure even at the
+    Balanced level. Fewer, well-filled folders beat many near-empty ones.
+11. KEEP CATEGORIES HONEST: a description must only cover things that genuinely belong together. Never stretch a
+    category to absorb an unrelated file (e.g. a rental lease or contract is not "Academic"); give such files a
+    sensible general home like "Documents" instead.
 
 OUTPUT FORMAT — Return ONLY strict JSON:
 {{

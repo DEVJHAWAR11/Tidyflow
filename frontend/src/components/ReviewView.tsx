@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { ClassifiedFile, RunSummary, CategoryItem, ComplexityLevel, CategorySnapshot } from "../types";
-import { API_BASE } from "../config";
+import { API_BASE, currentFolder } from "../config";
 import { getStickerStyle, formatBytes } from "../utils/stickerTheme";
 import {
   loadCategorySnapshots,
@@ -178,7 +178,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       fetch(`${API_BASE}/categories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: proposedCategories }),
+        body: JSON.stringify({ categories: proposedCategories, folder: currentFolder() }),
       }).catch((e) => console.warn("Failed to persist categories:", e));
     }
     if (onReclassifyWithTier) {
@@ -197,7 +197,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     fetch(`${API_BASE}/categories`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categories: snap.categories }),
+      body: JSON.stringify({ categories: snap.categories, folder: currentFolder() }),
     }).catch((e) => console.warn("Failed to persist restored snapshot:", e));
 
     if (onReclassifyWithTier) {
@@ -373,7 +373,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           fetch(`${API_BASE}/categories`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ categories: updated }),
+            body: JSON.stringify({ categories: updated, folder: currentFolder() }),
           }).catch((e) => console.warn("Failed to sync new cluster categories:", e));
         }
         return updated;
@@ -422,7 +422,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         fetch(`${API_BASE}/categories`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ categories: updated }),
+          body: JSON.stringify({ categories: updated, folder: currentFolder() }),
         }).catch((e) => console.warn("Failed to sync new triage category:", e));
         return updated;
       });
@@ -544,7 +544,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         fetch(`${API_BASE}/categories`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ categories: updated }),
+          body: JSON.stringify({ categories: updated, folder: currentFolder() }),
         }).catch((err) => console.warn("Failed to sync category:", err));
         return updated;
       });

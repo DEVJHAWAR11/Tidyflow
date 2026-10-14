@@ -16,6 +16,8 @@ import { PlanScreen } from "./flow/PlanScreen";
 import { SortingScreen } from "./flow/SortingScreen";
 import { PreviewScreen } from "./flow/PreviewScreen";
 import { DoneScreen } from "./flow/DoneScreen";
+import { ConfirmDialog } from "./flow/ConfirmDialog";
+import { folderLabel } from "./utils/folderVisuals";
 import { Screen } from "./flow/ui";
 import { OrganizeView } from "./components/OrganizeView";
 import { ReviewView } from "./components/ReviewView";
@@ -196,7 +198,7 @@ export default function App() {
 
   // --- Settings ---
   const [llmProvider, setLlmProvider] = useState("deepseek");
-  const [selectedModel, setSelectedModel] = useState("deepseek-v4-flash");
+  const [selectedModel, setSelectedModel] = useState("deepseek-chat");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [autoThreshold, setAutoThreshold] = useState(0.85);
   const [maskedKey, setMaskedKey] = useState("");
@@ -212,10 +214,11 @@ export default function App() {
   const resultsAreForThisFolder = hasResults && resultMeta?.inputDir === inputFolder;
   const isStale =
     hasResults && (!resultMeta || !resultsAreForThisFolder || !sameNames(resultMeta.categories, activeFolderNames));
-  const renameSuggestions = useMemo(
-    () => files.filter((f) => f.suggested_filename && f.suggested_filename !== f.filename),
-    [files]
-  );
+  // A suggestion that only changes case or punctuation isn't a clearer name, so it isn't offered.
+  const renameSuggestions = useMemo(() => {
+    const plain = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return files.filter((f) => f.suggested_filename && plain(f.suggested_filename) !== plain(f.filename));
+  }, [files]);
 
   const reachableSteps: FlowStep[] = useMemo(() => {
     const steps: FlowStep[] = ["home"];
@@ -244,13 +247,13 @@ export default function App() {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch(`${API_BASE}/categories`);
+      // Plans are saved per folder, so this is always the plan for the folder now selected.
+      const folder = localStorage.getItem("tidyflow_input_folder") || "";
+      if (!folder) return;
+      const res = await fetch(`${API_BASE}/categories?folder=${encodeURIComponent(folder)}`);
       if (res.ok) {
         const data = await res.json();
-        // The saved plan is global; only use it if it was made for the folder now selected.
-        const planFolder = localStorage.getItem("tidyflow_plan_folder");
-        const currentFolder = localStorage.getItem("tidyflow_input_folder") || "";
-        if (data.categories && Object.keys(data.categories).length > 0 && planFolder === currentFolder) {
+        if (data.categories && Object.keys(data.categories).length > 0) {
           setCategories(toCategoryItems(data.categories));
         }
       }
@@ -364,7 +367,7 @@ export default function App() {
     fetch(`${API_BASE}/categories`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categories: cats }),
+      body: JSON.stringify({ categories: cats, folder: inputFolder }),
     }).catch((e) => console.warn("Failed to save folders:", e));
   };
 
@@ -616,15 +619,20 @@ export default function App() {
     if (selectedFileIds.size === 0) return;
     setIsApplying(true);
 
+    // Same rule as the review screen: a file still waiting in "To review" has no folder yet, so it is
+    // never organized, even if it happens to be checked.
+    const isDecided = (f: ClassifiedFile) =>
+      categoryOverrides[f.file_id] !== undefined ||
+      (f.category !== "Unknown" && f.confidence >= autoThreshold && activeFolderNames.includes(f.category));
     const decisionList: ApplyDecisionItem[] = files.map((f) => ({
       file_id: f.file_id,
-      approved: selectedFileIds.has(f.file_id),
+      approved: selectedFileIds.has(f.file_id) && isDecided(f),
       override_category: categoryOverrides[f.file_id] || undefined,
       target_filename: filenameOverrides[f.file_id] || undefined,
     }));
     const perFolder = new Map<string, number>();
     files
-      .filter((f) => selectedFileIds.has(f.file_id))
+      .filter((f) => selectedFileIds.has(f.file_id) && isDecided(f))
       .forEach((f) => {
         const folder = categoryOverrides[f.file_id] || f.category;
         perFolder.set(folder, (perFolder.get(folder) || 0) + 1);
@@ -644,6 +652,7 @@ export default function App() {
       setUndoState("idle");
       setUndoMessage(null);
       setDoneResult({ count: data.applied_count, action: data.action, outputDir: data.output_dir, folderCount, folders });
+      setMoveMode(false);
       // These results have been used; Home shouldn't offer them again.
       clearResults();
       setStep("done");
@@ -673,6 +682,8 @@ export default function App() {
   };
 
   const handleTidyAnother = () => {
+    // Moving is opt-in for every organize; the next one starts at the safe default again.
+    setMoveMode(false);
     clearResults();
     setDoneResult(null);
     setUndoState("idle");
@@ -767,26 +778,99 @@ export default function App() {
 
   // --- Folder picking ---
 
-  /** Switch the folder being organized; a different folder starts a fresh plan. */
-  const handleSelectFolder = (path: string) => {
-    if (path === inputFolder) return;
-    setInputFolder(path);
-    setOutputFolder(`${path}/Organized`);
+  /** Forget the plan, results and progress of the current sort (files on disk are never touched). */
+  const resetSession = () => {
+    generationId.current++; // ignore a plan request that is still in flight
+    clearResults();
+    setDoneResult(null);
+    setUndoState("idle");
+    setUndoMessage(null);
     setCategories({});
     localStorage.removeItem("tidyflow_plan_folder");
     setCustomInstructions("");
     setPlanError(null);
     setAssistantNote(null);
     setPlanChat([]);
-    clearResults();
     setProgressLogs([]);
     setCurrentStage("");
+    setSortError(null);
+    setIsRunning(false);
+    setIsCancelling(false);
+    setMoveMode(false);
   };
 
-  const handlePickFolder = (path: string) => {
-    handleSelectFolder(path);
-    setStep("plan");
+  /** Forget the backend's sort results; with `folder`, also forget that folder's saved plan. */
+  const clearBackendRun = (folder?: string) =>
+    fetch(`${API_BASE}/pipeline/clear${folder ? `?folder=${encodeURIComponent(folder)}` : ""}`, {
+      method: "POST",
+    }).catch((e) => console.warn("Clear failed:", e));
+
+  /** Switch the folder being organized; a different folder starts a fresh plan. */
+  const switchToFolder = (path: string) => {
+    resetSession();
+    clearBackendRun();
+    setInputFolder(path);
+    setOutputFolder(`${path}/Organized`);
   };
+
+  const [confirm, setConfirm] = useState<
+    null | { kind: "clear" } | { kind: "switch"; path: string; navigate: boolean }
+  >(null);
+
+  /** Select a folder, asking first if that would discard an unfinished sort of another folder. */
+  const handleSelectFolder = (path: string, navigate: boolean) => {
+    if (path !== inputFolder) {
+      // Sorted files waiting for review are the work worth protecting; a plan alone is quick to redo.
+      if (hasResults) {
+        setConfirm({ kind: "switch", path, navigate });
+        return;
+      }
+      switchToFolder(path);
+    }
+    if (navigate) setStep("plan");
+  };
+
+  const handlePickFolder = (path: string) => handleSelectFolder(path, true);
+  // Common locations only select the folder; nothing is read until the user continues.
+  const handleSelectLocation = (path: string) => handleSelectFolder(path, false);
+
+  const handleClearSession = async () => {
+    if (isRunning) await fetch(`${API_BASE}/pipeline/cancel`, { method: "POST" }).catch(() => {});
+    await clearBackendRun(inputFolder);
+    resetSession();
+    setInputFolder("");
+    setOutputFolder("");
+    setView("flow");
+    setStep("home");
+  };
+
+  const confirmDialogProps = (() => {
+    if (confirm?.kind === "clear") {
+      return {
+        title: "Clear this sort?",
+        body: `The folder plan and sorting results for ${folderLabel(inputFolder)} will be discarded. Your files aren't touched.`,
+        confirmLabel: "Clear",
+        onConfirm: () => {
+          setConfirm(null);
+          handleClearSession();
+        },
+      };
+    }
+    if (confirm?.kind === "switch") {
+      const { path, navigate } = confirm;
+      return {
+        title: "Start a new sort?",
+        body: `${folderLabel(resultMeta?.inputDir || inputFolder)} has ${files.length} sorted ${files.length === 1 ? "file" : "files"} waiting for review. Starting ${folderLabel(path)} discards them. Your files aren't touched.`,
+        confirmLabel: "Discard and continue",
+        onConfirm: () => {
+          setConfirm(null);
+          switchToFolder(path);
+          if (navigate) setStep("plan");
+        },
+      };
+    }
+    return null;
+  })();
 
   const handleBrowse = async (target: "source" | "destination") => {
     try {
@@ -919,6 +1003,8 @@ export default function App() {
             outputFolder={outputFolder}
             quickLocations={quickLocations}
             onPickFolder={handlePickFolder}
+            onSelectLocation={handleSelectLocation}
+            onClearSession={() => setConfirm({ kind: "clear" })}
             onBrowse={() => handleBrowse("source")}
             onChangeOutput={() => handleBrowse("destination")}
             canResume={!!resultsAreForThisFolder && !isStale}
@@ -1056,6 +1142,17 @@ export default function App() {
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
         backendStatus={backendStatus}
+        onClearSession={() => setConfirm({ kind: "clear" })}
+      />
+
+      <ConfirmDialog
+        open={confirmDialogProps !== null}
+        title={confirmDialogProps?.title ?? ""}
+        body={confirmDialogProps?.body ?? ""}
+        confirmLabel={confirmDialogProps?.confirmLabel ?? ""}
+        tone="danger"
+        onConfirm={() => confirmDialogProps?.onConfirm()}
+        onCancel={() => setConfirm(null)}
       />
 
       <DirectoryPickerModal

@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Settings2, Moon, Sun, Check, ArrowLeft } from "lucide-react";
+import { Search, Settings2, Moon, Sun, Check, ArrowLeft, RotateCcw } from "lucide-react";
 import { Pill, Dot } from "./ui";
 import type { TopBarProps, FlowStep } from "./contracts";
 import { Wizard } from "../wizard/Wizard";
@@ -20,6 +20,7 @@ export function TopBar({
   darkMode,
   toggleDarkMode,
   backendStatus,
+  onClearSession,
 }: TopBarProps) {
   // When sorting, treat as Plan, highlighting Plan step
   const activeStepId: FlowStep = step === "sorting" ? "plan" : step;
@@ -49,7 +50,16 @@ export function TopBar({
               const isCompleted = idx < activeIndex;
               const isReachable = reachableSteps.includes(s.id);
 
-              const circle = isCurrent ? (
+              // "Done" is where the flow ends, not a fourth step to do, so it shows a check, not a number.
+              const circle = s.id === "done" && isCurrent ? (
+                <div className="w-[18px] h-[18px] rounded-full bg-tf-primary text-tf-on-primary flex items-center justify-center shrink-0">
+                  <Check size={11} strokeWidth={3} />
+                </div>
+              ) : s.id === "done" ? (
+                <div className="w-[18px] h-[18px] rounded-full border border-tf-border-strong flex items-center justify-center shrink-0">
+                  <Check size={11} strokeWidth={2.5} className="text-tf-faint" />
+                </div>
+              ) : isCurrent ? (
                 <div className="w-[18px] h-[18px] rounded-full bg-tf-primary text-tf-on-primary flex items-center justify-center shrink-0">
                   <span className="tf-num text-[11px] font-semibold leading-none">{s.number}</span>
                 </div>
@@ -107,6 +117,19 @@ export function TopBar({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5">
+          {view === "flow" && step !== "home" && onClearSession && (
+            <button
+              type="button"
+              onClick={onClearSession}
+              aria-label="Start over"
+              title="Start over"
+              className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[8px] text-[13px] font-medium text-tf-ink-2 hover:text-tf-ink hover:bg-tf-surface-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
+            >
+              <RotateCcw size={15} strokeWidth={1.75} className="shrink-0" />
+              <span className="hidden sm:inline">Start over</span>
+            </button>
+          )}
+
           {backendStatus === "offline" && (
             <Pill tone="danger">
               <Dot />
