@@ -11,7 +11,7 @@ async def test_api_status():
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "running"
-        assert data["version"] == "2.2.0"
+        assert data["version"] == "2.2.1"
 
 
 @pytest.mark.asyncio

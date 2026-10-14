@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tidyflow"
-version = "2.2.0"
+version = "2.2.1"
 description = "Robust, Universal AI File Organizer with Safe Operations, OCR, and Multi-Provider LLM Batching"
 readme = "README.md"
 requires-python = ">=3.9"
