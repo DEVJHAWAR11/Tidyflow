@@ -152,7 +152,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="TidyFlow Universal File Organizer API",
-    version="2.2.3",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -299,7 +299,7 @@ async def get_status():
     has_key = bool(api_key.strip())
     return {
         "status": "running",
-        "version": "2.2.3",
+        "version": "2.3.0",
         "has_llm_key": has_key,
         "llm_error": get_llm_error() if has_key else None,
         "provider": provider,
