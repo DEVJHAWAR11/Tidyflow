@@ -814,6 +814,12 @@ export default function App() {
     });
   };
 
+  const handleRenameFile = (fileId: string, name: string) => {
+    // Typing the original name back is the same as keeping it.
+    if (files.find((f) => f.file_id === fileId)?.filename === name) return handleClearRename(fileId);
+    setFilenameOverrides((prev) => ({ ...prev, [fileId]: name }));
+  };
+
   const handleClearRename = (fileId: string) => {
     setFilenameOverrides((prev) => {
       const next = { ...prev };
@@ -1170,6 +1176,7 @@ export default function App() {
             onToggleFolderLooks={setFolderLooksEnabled}
             filenameOverrides={filenameOverrides}
             onClearRename={handleClearRename}
+            onRenameFile={handleRenameFile}
             onAskAi={handleAskAi}
             onUndoAi={handleUndoAi}
             onUseSuggestions={handleUseSuggestions}

@@ -138,6 +138,8 @@ export interface PreviewScreenProps {
   /** New name per file (AI suggestions the user turned on, or renames asked for in plain language) */
   filenameOverrides: Record<string, string>;
   onClearRename: (fileId: string) => void;
+  /** Give a file a new name typed by the user */
+  onRenameFile: (fileId: string, name: string) => void;
   /** Apply a plain-language change request to the review; resolves with what changed */
   onAskAi: (command: string) => Promise<ReviewAiOutcome>;
   /** Revert the last plain-language change */
