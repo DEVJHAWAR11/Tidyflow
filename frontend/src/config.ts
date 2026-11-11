@@ -4,8 +4,9 @@ export const API_BASE = (() => {
     return "http://127.0.0.1:8000";
   }
 
-  // If served directly by FastAPI backend on port 8000
-  if (window.location.port === "8000") {
+  // The packaged app serves the page from its own backend, on whatever port was free;
+  // always talk to that server, never a fixed port that another TidyFlow may hold.
+  if (!(import.meta as any).env?.DEV && window.location.protocol.startsWith("http")) {
     return window.location.origin;
   }
 

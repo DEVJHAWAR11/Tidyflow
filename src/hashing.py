@@ -6,6 +6,7 @@ import logging
 from collections import defaultdict
 
 import imagehash
+import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
@@ -47,6 +48,19 @@ def assign_exact_duplicate_groups(records: list[FileRecord]) -> int:
 # Perceptual Hashing (Images)
 # ---------------------------------------------------------------------------
 
+_DCT_SIZE = 32
+_n = np.arange(_DCT_SIZE)
+# DCT-II basis, the same transform as scipy.fftpack.dct (unnormalised).
+_DCT = 2 * np.cos(np.pi * np.outer(_n, 2 * _n + 1) / (2 * _DCT_SIZE))
+
+
+def _phash(img: Image.Image) -> imagehash.ImageHash:
+    """imagehash.phash without scipy, which the packaged app leaves out to stay small."""
+    pixels = np.asarray(img.convert("L").resize((_DCT_SIZE, _DCT_SIZE), Image.Resampling.LANCZOS), dtype=float)
+    low = (_DCT @ pixels @ _DCT.T)[:8, :8]
+    return imagehash.ImageHash(low > np.median(low))
+
+
 def compute_perceptual_hashes(records: list[FileRecord]) -> None:
     """Compute imagehash.phash for every non-skipped image record."""
     image_records = [
@@ -58,7 +72,7 @@ def compute_perceptual_hashes(records: list[FileRecord]) -> None:
             img = Image.open(rec.abs_path)
             if rec.extension == ".gif":
                 img.seek(0)
-            h = imagehash.phash(img)
+            h = _phash(img)
             rec.perceptual_hash = str(h)
             img.close()
         except Exception as exc:

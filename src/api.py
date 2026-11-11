@@ -164,6 +164,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The page must be re-read after an update; its scripts have hashed names and can be cached.
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
 # Mount frontend build if available
 frontend_dist = get_resource_path("frontend/dist")
 if frontend_dist.exists():
@@ -175,7 +178,7 @@ if frontend_dist.exists():
 
     @app.get("/")
     async def serve_frontend():
-        return FileResponse(frontend_dist / "index.html")
+        return FileResponse(frontend_dist / "index.html", headers=_NO_CACHE)
 
 
 @app.get("/events")
@@ -1180,4 +1183,4 @@ if frontend_dist.exists():
         file_path = frontend_dist / full_path
         if file_path.is_file():
             return FileResponse(file_path)
-        return FileResponse(frontend_dist / "index.html")
+        return FileResponse(frontend_dist / "index.html", headers=_NO_CACHE)
