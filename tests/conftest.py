@@ -20,4 +20,9 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     # Don't read a real key from the repo's .env either.
     monkeypatch.setattr(src.llm_provider, "load_dotenv", lambda *a, **k: False)
+    # Never try a key against a real AI service from a test; a test that cares sets its own answer.
+    for module in (src.api, src.llm_provider):
+        monkeypatch.setattr(module, "check_api_key", lambda *a, **k: ("ok", None))
+    monkeypatch.setattr(src.api, "list_provider_models", lambda *a, **k: [])
+    src.llm_provider.set_llm_error(None)
     return app_dir

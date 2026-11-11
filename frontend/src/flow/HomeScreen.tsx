@@ -43,6 +43,7 @@ export function HomeScreen({
   resumeFileCount,
   onResume,
   hasLlmKey,
+  aiEnabled,
   aiError,
   onOpenSettings,
   backendOnline,
@@ -82,16 +83,16 @@ export function HomeScreen({
             Open Settings
           </Button>
         </div>
-      ) : !hasLlmKey ? (
+      ) : !hasLlmKey && aiEnabled ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-[10px] border border-tf-border bg-tf-surface px-4 py-3">
           <div className="flex items-center gap-3 min-w-0">
             <KeyRound size={18} strokeWidth={1.75} className="text-tf-muted shrink-0" />
             <span className="text-[13.5px] text-tf-muted truncate">
-              Add an AI key to sort files by their contents, not just their names.
+              Turn on smart sorting to sort files by what they contain, not just their names.
             </span>
           </div>
           <Button variant="secondary" size="sm" onClick={onOpenSettings} className="shrink-0 ml-auto">
-            Add key
+            Set up
           </Button>
         </div>
       ) : null}

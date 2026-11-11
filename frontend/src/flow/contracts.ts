@@ -44,6 +44,8 @@ export interface HomeScreenProps {
   resumeFileCount: number;
   onResume: () => void;
   hasLlmKey: boolean;
+  /** False when the user chose "No AI"; then there is no prompt to add a key */
+  aiEnabled: boolean;
   /** Friendly message when the AI service is failing (e.g. key rejected), else null */
   aiError: string | null;
   onOpenSettings: () => void;

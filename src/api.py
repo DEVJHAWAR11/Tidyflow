@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from typing import Any, Optional
 import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -31,9 +33,21 @@ from .llm_provider import (
     _resolve_provider_model,
     get_llm_error,
     verify_llm_key,
+    DEFAULT_MODELS,
+    KEY_PAGES,
+    KNOWN_PROVIDERS,
+    _read_settings,
+    ai_enabled,
+    check_api_key,
     get_stored_api_key,
+    list_provider_models,
     load_settings,
+    mask_key,
+    remove_api_key,
     save_settings,
+    set_ai_enabled,
+    set_llm_error,
+    set_provider_model,
 )
 from .main_loop import PipelineCancelledException, Processor, load_records_jsonl, run_pipeline
 from .mcp_server import set_allowed_directories
@@ -156,9 +170,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Only the app's own window may call this API. Without this, any web page open in a browser on
+# this computer could read the file index or change the AI settings.
+_APP_ORIGIN = re.compile(r"^(https?://(localhost|127\.0\.0\.1|\[::1\]|tauri\.localhost)(:\d+)?|tauri://localhost)$")
+
+
+@app.middleware("http")
+async def only_the_app_may_call(request, call_next):
+    origin = request.headers.get("origin")
+    if origin and not _APP_ORIGIN.match(origin):
+        return JSONResponse(status_code=403, content={"detail": "This API only answers the TidyFlow app."})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=_APP_ORIGIN.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -284,11 +311,19 @@ class ApplyDirectRequest(BaseModel):
 
 
 class SettingsPayload(BaseModel):
-    provider: str = "deepseek"
-    api_key: Optional[str] = None
-    model: Optional[str] = None
-    auto_copy_threshold: float = 0.85
-    max_file_size_mb: float = 200.0
+    """A change to the settings. Every field is optional; only the ones sent are changed."""
+    provider: Optional[str] = None
+    api_key: Optional[str] = Field(default=None, max_length=400)
+    model: Optional[str] = Field(default=None, max_length=120)
+    ai_enabled: Optional[bool] = None
+    auto_copy_threshold: Optional[float] = Field(default=None, ge=0.5, le=1.0)
+    max_file_size_mb: Optional[float] = Field(default=None, gt=0, le=100_000)
+
+
+class KeyTestPayload(BaseModel):
+    provider: str
+    # Leave out to test the key already saved for this provider.
+    api_key: Optional[str] = Field(default=None, max_length=400)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +336,7 @@ async def get_status():
     provider, api_key, _ = load_settings()
     has_key = bool(api_key.strip())
     return {
+        "ai_enabled": ai_enabled(),
         "status": "running",
         "version": "2.3.1",
         "has_llm_key": has_key,
@@ -375,75 +411,151 @@ async def save_categories(req: CategoriesUpdateRequest):
     return {"status": "success", "categories": req.categories}
 
 
-@app.get("/settings")
-@app.get("/api/settings")
-async def get_settings():
-    """Get current configuration and masked API key."""
-    cfg = load_config()
-    provider, key, custom_url = load_settings()
-    if not provider:
-        provider = cfg.llm.provider
-    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else ("••••••••" if key else "")
-    model = _resolve_provider_model(provider, cfg.llm.model)
+def _known_provider(provider: Optional[str]) -> str:
+    prov = (provider or "").strip().lower()
+    if prov not in KNOWN_PROVIDERS:
+        raise HTTPException(status_code=422, detail=f"Unknown AI provider: {provider}")
+    return prov
 
+
+def _settings_snapshot() -> dict:
+    """What the Settings page shows. Keys are only ever returned masked."""
+    cfg = load_config()
+    saved = _read_settings()
+    provider, key, _ = load_settings()
     return {
         "provider": provider,
-        "model": model,
+        "model": _resolve_provider_model(provider, cfg.llm.model),
+        "ai_enabled": saved["ai_enabled"],
         "has_key": bool(key),
-        "masked_key": masked_key,
+        "masked_key": mask_key(key),
+        "providers": [
+            {
+                "id": p,
+                "has_key": bool(get_stored_api_key(p)),
+                "masked_key": mask_key(get_stored_api_key(p)),
+                # A key from an environment variable can't be removed in the app.
+                "from_env": p not in saved["keys"] and bool(get_stored_api_key(p)),
+                "model": saved["models"].get(p) or DEFAULT_MODELS[p],
+                "key_url": KEY_PAGES[p],
+            }
+            for p in KNOWN_PROVIDERS
+        ],
         "auto_copy_threshold": cfg.classification.auto_copy_threshold,
         "max_file_size_mb": cfg.max_file_size_mb,
     }
 
 
+def _update_config_yaml(changes: dict[str, Any]) -> None:
+    """Merge ``changes`` (nested like config.yaml) into the user's config file."""
+    try:
+        cfg_file = get_app_data_dir() / "config.yaml"
+        data: dict[str, Any] = {}
+        source = cfg_file if cfg_file.exists() else Path("config.yaml")
+        if source.exists():
+            try:
+                with open(source, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception:
+                data = {}
+        for section, value in changes.items():
+            if isinstance(value, dict):
+                data.setdefault(section, {}).update(value)
+            else:
+                data[section] = value
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False)
+    except Exception as e:
+        logger.warning("Could not persist config.yaml: %s", e)
+
+
+@app.get("/settings")
+@app.get("/api/settings")
+async def get_settings():
+    """Current settings, with every API key masked."""
+    return _settings_snapshot()
+
+
 @app.post("/settings")
 @app.post("/api/settings")
 async def update_settings(payload: SettingsPayload):
-    """Save LLM credentials and configuration settings."""
-    try:
-        clean_key = payload.api_key.strip() if payload.api_key else ""
-        if clean_key:
-            save_settings(payload.provider, clean_key)
-            # Set in current runtime environment immediately
-            os.environ[f"{payload.provider.upper()}_API_KEY"] = clean_key
-            os.environ["TIDYFLOW_API_KEY"] = clean_key
-        elif payload.provider:
-            # User switched provider without changing key
-            _, existing_key, _ = load_settings()
-            save_settings(payload.provider, existing_key)
+    """Change settings. A new key is tried first and is not saved if the provider refuses it."""
+    current, _, _ = load_settings()
+    provider = _known_provider(payload.provider) if payload.provider else current
+    new_key = (payload.api_key or "").strip()
+    checked: Optional[tuple[str, Optional[str]]] = None
 
-        # Update persistent config in app data dir
-        try:
-            cfg_file = get_app_data_dir() / "config.yaml"
-            data = {}
-            if cfg_file.exists():
-                with open(cfg_file, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            elif Path("config.yaml").exists():
-                try:
-                    with open("config.yaml", "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f) or {}
-                except Exception:
-                    data = {}
+    if new_key:
+        _known_provider(provider)
+        checked = await asyncio.to_thread(check_api_key, provider, new_key)
+        if checked[0] == "rejected":
+            raise HTTPException(status_code=400, detail=checked[1])
+        save_settings(provider, new_key)
+    elif payload.provider and provider != current:
+        # Each provider has its own key; one provider's key is never sent to another.
+        if not get_stored_api_key(provider):
+            raise HTTPException(status_code=400, detail="Add a key for this provider first.")
+        save_settings(provider, "")
 
-            data.setdefault("llm", {})["provider"] = payload.provider
-            target_model = _resolve_provider_model(payload.provider, payload.model)
-            data["llm"]["model"] = target_model
-            if payload.auto_copy_threshold is not None:
-                data.setdefault("classification", {})["auto_copy_threshold"] = payload.auto_copy_threshold
-            if payload.max_file_size_mb is not None:
-                data["max_file_size_mb"] = payload.max_file_size_mb
+    if payload.model and payload.model.strip():
+        set_provider_model(provider, payload.model)
+    if payload.ai_enabled is not None:
+        set_ai_enabled(payload.ai_enabled)
 
-            with open(cfg_file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=False)
-        except Exception as e:
-            logger.warning("Could not persist config.yaml: %s", e)
+    changes: dict[str, Any] = {"llm": {"provider": provider, "model": _resolve_provider_model(provider)}}
+    if payload.auto_copy_threshold is not None:
+        changes["classification"] = {"auto_copy_threshold": payload.auto_copy_threshold}
+    if payload.max_file_size_mb is not None:
+        changes["max_file_size_mb"] = payload.max_file_size_mb
+    _update_config_yaml(changes)
 
+    if checked is not None and ai_enabled():
+        ai_error = checked[1]  # the key was tried a moment ago; no need to ask again
+        set_llm_error(ai_error)
+    else:
         ai_error = await asyncio.to_thread(verify_llm_key)
-        return {"status": "success", "message": "Settings updated", "ai_error": ai_error}
-    except Exception as e:
-        logger.error("Error in update_settings: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "success", "message": "Settings updated", "ai_error": ai_error, **_settings_snapshot()}
+
+
+@app.post("/settings/test")
+async def test_api_key(payload: KeyTestPayload):
+    """Try a key against its provider without saving anything."""
+    provider = _known_provider(payload.provider)
+    key = (payload.api_key or "").strip() or get_stored_api_key(provider)
+    if not key:
+        return {"ok": False, "kind": "missing", "error": "There is no key for this provider yet."}
+    kind, message = await asyncio.to_thread(check_api_key, provider, key)
+    active, _, _ = load_settings()
+    if provider == active and not (payload.api_key or "").strip() and ai_enabled():
+        await asyncio.to_thread(verify_llm_key)  # keep the status pill in step with what was just seen
+    return {"ok": kind == "ok", "kind": kind, "error": message}
+
+
+@app.delete("/settings/key")
+async def delete_api_key(provider: str):
+    """Forget the key saved for one provider."""
+    remove_api_key(_known_provider(provider))
+    ai_error = await asyncio.to_thread(verify_llm_key)
+    return {"status": "success", "ai_error": ai_error, **_settings_snapshot()}
+
+
+@app.post("/settings/key-page")
+async def open_key_page(provider: str):
+    """Open the provider's "create an API key" page in the user's web browser."""
+    import webbrowser
+
+    url = KEY_PAGES[_known_provider(provider)]
+    opened = await asyncio.to_thread(webbrowser.open, url)
+    return {"opened": bool(opened), "url": url}
+
+
+@app.get("/settings/models")
+async def provider_models(provider: str):
+    """The models this provider offers to the saved key ([] without a key or when it can't be reached)."""
+    prov = _known_provider(provider)
+    key = get_stored_api_key(prov)
+    models = await asyncio.to_thread(list_provider_models, prov, key) if key else []
+    return {"provider": prov, "models": models}
 
 
 # ---------------------------------------------------------------------------

@@ -1,214 +1,44 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import {
-  KeyRound,
-  ChevronRight,
-  Sun,
-  Moon,
-  Check,
-} from "lucide-react";
+import { ChevronRight, Sun, Moon, Check } from "lucide-react";
 import type { CategoryItem } from "../types";
-import { Screen, Card, Button, Pill, Dot, StepHeader, SectionTitle, ease } from "../flow/ui";
+import { API_BASE } from "../config";
+import { Screen, Card, Button, StepHeader, SectionTitle, ease } from "../flow/ui";
 import { CategoriesView } from "./CategoriesView";
+import { AiSetup, AiStatusPill, providerName, useAiSettings } from "./AiSetup";
 
-export interface ModelOption {
-  id: string;
-  name: string;
-  badge?: string;
-  description?: string;
-}
-
-export const PROVIDER_MODELS: Record<string, ModelOption[]> = {
+/** Models worth suggesting for each service. The full list is loaded from the service itself. */
+const SUGGESTED_MODELS: Record<string, { id: string; note: string }[]> = {
   deepseek: [
-    {
-      id: "deepseek-chat",
-      name: "DeepSeek V4.1 Flash (deepseek-chat)",
-      badge: "Recommended",
-      description: "DeepSeek's current fast model: quick, accurate and very cheap",
-    },
-    {
-      id: "deepseek-v4-pro",
-      name: "DeepSeek-V4 Pro (deepseek-v4-pro)",
-      badge: "Frontier Reasoning",
-      description: "Full-scale V4 frontier model for complex document reasoning and sorting",
-    },
+    { id: "deepseek-chat", note: "Fast and cheap. A good default." },
+    { id: "deepseek-flash", note: "DeepSeek's current fast model." },
+    { id: "deepseek-v4-pro", note: "Slower and dearer, better with hard-to-place documents." },
   ],
   groq: [
-    {
-      id: "llama-3.3-70b-versatile",
-      name: "Llama 3.3 70B (llama-3.3-70b-versatile)",
-      badge: "Recommended Flagship",
-      description: "Meta Llama 3.3 70B running with extreme LPU throughput on Groq",
-    },
-    {
-      id: "llama-3.1-8b-instant",
-      name: "Llama 3.1 8B Instant (llama-3.1-8b-instant)",
-      badge: "Ultra Fast",
-      description: "Ultra-fast low-latency classification for high-volume file sorting",
-    },
-    {
-      id: "openai/gpt-oss-120b",
-      name: "GPT-OSS 120B (openai/gpt-oss-120b)",
-      badge: "120B Flagship",
-      description: "120B open-weights model running with extreme LPU throughput on Groq",
-    },
-    {
-      id: "qwen-2.5-coder-32b",
-      name: "Qwen 2.5 Coder 32B (qwen-2.5-coder-32b)",
-      badge: "Code & Structure",
-      description: "Specialized for source code, configuration files, and tabular data",
-    },
-    {
-      id: "qwen-2.5-32b",
-      name: "Qwen 2.5 32B (qwen-2.5-32b)",
-      badge: "General 128k",
-      description: "General-purpose 32B open model with 128k context window",
-    },
+    { id: "llama-3.3-70b-versatile", note: "Accurate and very fast." },
+    { id: "llama-3.1-8b-instant", note: "Fastest, for very large folders." },
   ],
   gemini: [
-    {
-      id: "gemini-3.7-flash",
-      name: "Gemini 3.7 Flash (gemini-3.7-flash)",
-      badge: "Recommended Next-Gen",
-      description: "Google's newest flagship Flash tier optimized for agentic workflows & high speed",
-    },
-    {
-      id: "gemini-3.6-flash",
-      name: "Gemini 3.6 Flash (gemini-3.6-flash)",
-      badge: "Agentic Fast",
-      description: "High-speed agentic execution model for fast file categorization",
-    },
-    {
-      id: "gemini-3.1-pro",
-      name: "Gemini 3.1 Pro (gemini-3.1-pro)",
-      badge: "Frontier Pro",
-      description: "Flagship high-capability frontier model with deep multi-step reasoning",
-    },
-    {
-      id: "gemini-3.5-flash-lite",
-      name: "Gemini 3.5 Flash-Lite (gemini-3.5-flash-lite)",
-      badge: "Ultra Budget",
-      description: "Highest throughput and cost efficiency for scanning thousands of files",
-    },
-    {
-      id: "gemini-2.5-flash",
-      name: "Gemini 2.5 Flash (gemini-2.5-flash)",
-      badge: "Proven Flash",
-      description: "Stable, low-latency production flash model",
-    },
-    {
-      id: "gemini-2.5-pro",
-      name: "Gemini 2.5 Pro (gemini-2.5-pro)",
-      badge: "Proven Pro",
-      description: "Proven high-capability model with massive context window",
-    },
+    { id: "gemini-2.5-flash", note: "Fast and cheap. A good default." },
+    { id: "gemini-2.5-pro", note: "Slower and dearer, better with hard-to-place documents." },
   ],
   openai: [
-    {
-      id: "gpt-4o-mini",
-      name: "GPT-4o Mini (gpt-4o-mini)",
-      badge: "Recommended Budget",
-      description: "Fast, accurate, cost-effective multimodal model for high-volume sorting",
-    },
-    {
-      id: "gpt-4o",
-      name: "GPT-4o (gpt-4o)",
-      badge: "Flagship",
-      description: "Omni model with industry-leading multimodal comprehension & JSON fidelity",
-    },
-    {
-      id: "o3-mini",
-      name: "o3-mini (o3-mini)",
-      badge: "Fast Reasoning",
-      description: "State-of-the-art fast reasoning model with configurable reasoning effort",
-    },
-    {
-      id: "o1",
-      name: "o1 (o1)",
-      badge: "Deep Reasoning",
-      description: "Frontier multi-step reasoning for ambiguous document categorization",
-    },
-    {
-      id: "o1-mini",
-      name: "o1-mini (o1-mini)",
-      badge: "Logic / Code",
-      description: "Lightweight reasoning model optimized for code and technical documentation",
-    },
-    {
-      id: "chatgpt-4o-latest",
-      name: "ChatGPT-4o Latest (chatgpt-4o-latest)",
-      badge: "Continuous",
-      description: "Continuously updated dynamic GPT-4o snapshot",
-    },
+    { id: "gpt-4o-mini", note: "Fast and cheap. A good default." },
+    { id: "gpt-4o", note: "Slower and dearer, better with hard-to-place documents." },
   ],
   openrouter: [
-    {
-      id: "anthropic/claude-3.7-sonnet",
-      name: "Claude 3.7 Sonnet (anthropic/claude-3.7-sonnet)",
-      badge: "Top Ranked",
-      description: "Hybrid reasoning & precision coding — #1 ranked model on OpenRouter",
-    },
-    {
-      id: "deepseek/deepseek-v4-pro",
-      name: "DeepSeek V4 Pro (deepseek/deepseek-v4-pro)",
-      badge: "DeepSeek V4",
-      description: "Full DeepSeek-V4 frontier model via OpenRouter",
-    },
-    {
-      id: "deepseek/deepseek-v4-flash",
-      name: "DeepSeek V4 Flash (deepseek/deepseek-v4-flash)",
-      badge: "DeepSeek Flash",
-      description: "Ultra-fast DeepSeek-V4 instance for high-throughput classification",
-    },
-    {
-      id: "openai/gpt-4o",
-      name: "OpenAI GPT-4o (openai/gpt-4o)",
-      badge: "OpenAI Flagship",
-      description: "OpenAI GPT-4o flagship accessible through OpenRouter gateway",
-    },
-    {
-      id: "openai/o3-mini",
-      name: "OpenAI o3-mini (openai/o3-mini)",
-      badge: "OpenAI Reasoning",
-      description: "OpenAI o3-mini fast STEM and structured reasoning",
-    },
-    {
-      id: "google/gemini-3.7-flash",
-      name: "Gemini 3.7 Flash (google/gemini-3.7-flash)",
-      badge: "Google Next-Gen",
-      description: "Google Gemini 3.7 Flash via unified OpenRouter endpoint",
-    },
-    {
-      id: "anthropic/claude-3.5-sonnet",
-      name: "Claude 3.5 Sonnet (anthropic/claude-3.5-sonnet)",
-      badge: "Proven Accuracy",
-      description: "Proven industry-standard document analysis and taxonomy generation",
-    },
+    { id: "deepseek/deepseek-chat", note: "Fast and cheap. A good default." },
+    { id: "deepseek/deepseek-v4-flash", note: "DeepSeek's current fast model." },
+    { id: "google/gemini-2.5-flash", note: "Google's fast model." },
+    { id: "openai/gpt-4o", note: "OpenAI's flagship." },
   ],
 };
 
-const PROVIDERS = [
-  { id: "deepseek", name: "DeepSeek", description: "Great value, very capable" },
-  { id: "groq", name: "Groq", description: "Very fast" },
-  { id: "gemini", name: "Google Gemini", description: "Google's AI" },
-  { id: "openai", name: "OpenAI", description: "ChatGPT's maker" },
-  { id: "openrouter", name: "OpenRouter", description: "Many models, one key" },
-];
-
 export interface SettingsViewProps {
-  llmProvider: string;
-  setLlmProvider: (val: string) => void;
-  selectedModel: string;
-  setSelectedModel: (val: string) => void;
-  apiKeyInput: string;
-  setApiKeyInput: (val: string) => void;
-  maskedKey: string;
-  autoThreshold: number;
-  setAutoThreshold: (val: number) => void;
-  saveSuccess: boolean;
-  onSaveSettings: () => Promise<void>;
-  subTab?: "general" | "categories";
-  setSubTab?: (tab: "general" | "categories") => void;
+  /** Runs after any setting is saved, so the rest of the app can pick it up */
+  onSettingsChanged: () => void;
+  /** Show the first-run welcome again */
+  onShowWelcome: () => void;
   categories?: Record<string, CategoryItem>;
   onToggleCategory?: (catName: string) => void;
   onAddCategory?: (cat: {
@@ -221,24 +51,13 @@ export interface SettingsViewProps {
   onLoadPreset?: (cats: Record<string, CategoryItem>) => Promise<void>;
   advancedMode?: boolean;
   setAdvancedMode?: (v: boolean) => void;
-  hasLlmKey?: boolean;
-  aiError?: string | null;
   darkMode?: boolean;
   toggleDarkMode?: () => void;
 }
 
 export function SettingsView({
-  llmProvider,
-  setLlmProvider,
-  selectedModel,
-  setSelectedModel,
-  apiKeyInput,
-  setApiKeyInput,
-  maskedKey,
-  autoThreshold,
-  setAutoThreshold,
-  saveSuccess,
-  onSaveSettings,
+  onSettingsChanged,
+  onShowWelcome,
   categories = {},
   onToggleCategory,
   onAddCategory,
@@ -246,11 +65,12 @@ export function SettingsView({
   onLoadPreset,
   advancedMode,
   setAdvancedMode,
-  hasLlmKey,
-  aiError,
   darkMode,
   toggleDarkMode,
 }: SettingsViewProps) {
+  const ai = useAiSettings(onSettingsChanged);
+  const settings = ai.settings;
+
   const [internalAdvancedMode, setInternalAdvancedMode] = useState(false);
   const isAdvanced = advancedMode !== undefined ? advancedMode : internalAdvancedMode;
 
@@ -262,26 +82,66 @@ export function SettingsView({
   });
   const isDark = darkMode !== undefined ? darkMode : internalDarkMode;
 
-  const [showKeyHelp, setShowKeyHelp] = useState(false);
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  const [liveModels, setLiveModels] = useState<string[]>([]);
+  const [threshold, setThreshold] = useState<number | null>(null);
+  const [saved, setSaved] = useState<"model" | "threshold" | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savedTimer = useRef<number | undefined>(undefined);
 
-  const isLlmActive = hasLlmKey !== undefined ? hasLlmKey : Boolean(maskedKey || apiKeyInput.trim());
+  const provider = settings?.provider ?? "";
+  const usable = !!settings?.ai_enabled && !!settings?.has_key;
 
-  const currentModelList = PROVIDER_MODELS[llmProvider] || PROVIDER_MODELS.deepseek;
-
+  // "Working" should mean it works now: try the key in use once, each time this page is opened.
+  const checkedOnOpen = useRef(false);
   useEffect(() => {
-    const isValid = currentModelList.some((m) => m.id === selectedModel);
-    if (!isValid && currentModelList.length > 0) {
-      setSelectedModel(currentModelList[0].id);
-    }
-  }, [llmProvider, currentModelList, selectedModel, setSelectedModel]);
+    if (checkedOnOpen.current || !usable || !provider) return;
+    checkedOnOpen.current = true;
+    ai.testKey(provider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the settings first arrive
+  }, [usable, provider]);
 
-  const handleProviderChange = (newProvider: string) => {
-    setLlmProvider(newProvider);
-    const models = PROVIDER_MODELS[newProvider] || PROVIDER_MODELS.deepseek;
-    if (models.length > 0) {
-      setSelectedModel(models[0].id);
-    }
+  // What the service really offers to this key, so the list never shows a model that doesn't exist.
+  useEffect(() => {
+    setLiveModels([]);
+    if (!advancedOptionsOpen || !usable || !provider) return;
+    let live = true;
+    fetch(`${API_BASE}/settings/models?provider=${provider}`)
+      .then((r) => (r.ok ? r.json() : { models: [] }))
+      .then((d) => live && setLiveModels(d.models || []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [advancedOptionsOpen, usable, provider, settings?.masked_key]);
+
+  const { suggested, others } = useMemo(() => {
+    const all = SUGGESTED_MODELS[provider] ?? [];
+    const known = liveModels.length ? all.filter((m) => liveModels.includes(m.id)) : all;
+    const ids = new Set(known.map((m) => m.id));
+    const current = settings?.model;
+    const extra = liveModels.filter((id) => !ids.has(id));
+    if (current && !ids.has(current) && !extra.includes(current)) extra.unshift(current);
+    return { suggested: known, others: extra.slice(0, 200) };
+  }, [provider, liveModels, settings?.model]);
+
+  const flashSaved = (what: "model" | "threshold") => {
+    setSaved(what);
+    window.clearTimeout(savedTimer.current);
+    savedTimer.current = window.setTimeout(() => setSaved(null), 1800);
+  };
+
+  const saveModel = async (model: string) => {
+    setSaveError(await ai.change({ model }));
+    flashSaved("model");
+  };
+
+  const saveThreshold = async () => {
+    if (threshold === null || threshold === settings?.auto_copy_threshold) return;
+    const problem = await ai.change({ auto_copy_threshold: threshold });
+    setSaveError(problem);
+    if (!problem) flashSaved("threshold");
+    setThreshold(null);
   };
 
   const handleToggleAdvanced = () => {
@@ -303,142 +163,33 @@ export function SettingsView({
     }
   };
 
-  const selectedModelObj = currentModelList.find((m) => m.id === selectedModel);
-  const currentProvider = PROVIDERS.find((p) => p.id === llmProvider);
-  const providerLabel = currentProvider ? currentProvider.name : llmProvider;
+  const shownThreshold = threshold ?? settings?.auto_copy_threshold ?? 0.85;
+  const modelNote = suggested.find((m) => m.id === settings?.model)?.note;
+  const savedTick = (what: "model" | "threshold") =>
+    saved === what && !saveError ? (
+      <span className="inline-flex items-center gap-1 text-[12px] text-tf-success">
+        <Check size={13} strokeWidth={2} /> Saved
+      </span>
+    ) : null;
 
   return (
     <Screen className="max-w-[720px] mx-auto pt-8 px-4 pb-16">
-      <StepHeader
-        title="Settings"
-        subtitle="Preferences for sorting and appearance."
-      />
+      <StepHeader title="Settings" subtitle="How TidyFlow reads your files, and how it looks." />
 
       <div className="mt-8 flex flex-col gap-8">
         {/* Section 1: Smart sorting */}
         <div>
-          <SectionTitle>Smart sorting</SectionTitle>
+          <SectionTitle aside={<AiStatusPill ai={ai} />}>Smart sorting</SectionTitle>
           <Card className="divide-y divide-tf-border overflow-hidden">
-            {/* Status row */}
-            <div className="px-4 py-3.5 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[13.5px] font-medium text-tf-ink">Status</span>
-                {aiError ? (
-                  <Pill tone="danger">
-                    <Dot />
-                    <span>Not working</span>
-                  </Pill>
-                ) : isLlmActive ? (
-                  <Pill tone="success">
-                    <Dot />
-                    <span>Connected · {providerLabel}</span>
-                  </Pill>
-                ) : (
-                  <Pill tone="neutral">
-                    <Dot />
-                    <span>Off</span>
-                  </Pill>
-                )}
-              </div>
-              {aiError && (
-                <div className="text-[12.5px] text-tf-danger">
-                  {aiError.replace(/\s+in Settings\.?$/i, ".")}
-                </div>
-              )}
+            <div className="p-4">
+              <AiSetup ai={ai} />
             </div>
 
-            {/* Provider row */}
-            <div className="p-4 space-y-2">
-              <div>
-                <div className="text-[13px] font-medium text-tf-ink">Provider</div>
-                <div className="text-[12.5px] text-tf-muted">
-                  TidyFlow sends file names and short text excerpts to this service.
-                </div>
-              </div>
-
-              <div className="rounded-[10px] border border-tf-border divide-y divide-tf-border overflow-hidden">
-                {PROVIDERS.map((p) => {
-                  const isSelected = llmProvider === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleProviderChange(p.id)}
-                      className={`w-full h-12 px-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer hover:bg-tf-surface-2 ${
-                        isSelected ? "bg-tf-surface-2/60" : "bg-tf-surface"
-                      }`}
-                    >
-                      <span
-                        className={`w-4 h-4 rounded-full shrink-0 transition-all ${
-                          isSelected
-                            ? "border-[5px] border-tf-primary bg-tf-surface"
-                            : "border border-tf-border-strong bg-tf-surface"
-                        }`}
-                      />
-                      <span className="text-[13.5px] font-medium text-tf-ink">{p.name}</span>
-                      <span className="text-[12.5px] text-tf-muted ml-auto truncate hidden sm:inline">
-                        {p.description}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* API key row */}
-            <div className="p-4 space-y-2">
-              <label className="block text-[13px] font-medium text-tf-ink">API key</label>
-              <div className="relative">
-                <KeyRound
-                  size={15}
-                  strokeWidth={1.75}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-tf-faint pointer-events-none"
-                />
-                <input
-                  type="password"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="Paste a new key"
-                  className="w-full h-10 rounded-[8px] pl-9 pr-3 text-[13.5px] bg-tf-surface border border-tf-border-strong text-tf-ink placeholder:text-tf-faint focus:outline-none focus:border-tf-ink focus:ring-1 focus:ring-tf-ink transition-colors font-mono"
-                />
-              </div>
-
-              {maskedKey && (
-                <div className="text-[12.5px] text-tf-muted">
-                  Saved key <span className="font-mono text-tf-ink-2">{maskedKey}</span> · saved only on this computer
-                </div>
-              )}
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowKeyHelp(!showKeyHelp)}
-                  className="text-[12.5px] text-tf-link hover:underline cursor-pointer"
-                >
-                  How do I get a key?
-                </button>
-                <AnimatePresence>
-                  {showKeyHelp && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.18, ease }}
-                      className="overflow-hidden mt-1.5"
-                    >
-                      <div className="text-[12.5px] text-tf-muted bg-tf-surface-2 p-3 rounded-[8px] border border-tf-border">
-                        Create an account on {providerLabel}'s website, open its API keys page, generate a key and paste it here.
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            {/* Advanced options disclosure row */}
+            {/* Advanced options: model and how sure TidyFlow must be */}
             <div className="divide-y divide-tf-border">
               <button
                 type="button"
+                aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen(!advancedOptionsOpen)}
                 className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-tf-surface-2/50 transition-colors cursor-pointer"
               >
@@ -446,14 +197,12 @@ export function SettingsView({
                 <ChevronRight
                   size={15}
                   strokeWidth={1.75}
-                  className={`text-tf-muted transition-transform duration-150 ${
-                    advancedOptionsOpen ? "rotate-90" : ""
-                  }`}
+                  className={`text-tf-muted transition-transform duration-150 ${advancedOptionsOpen ? "rotate-90" : ""}`}
                 />
               </button>
 
               <AnimatePresence>
-                {advancedOptionsOpen && (
+                {advancedOptionsOpen && settings && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
@@ -461,74 +210,83 @@ export function SettingsView({
                     transition={{ duration: 0.18, ease }}
                     className="overflow-hidden"
                   >
-                    <div className="p-4 space-y-4 bg-tf-surface-2/20">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[13px] font-medium text-tf-ink">Model</label>
-                          {selectedModelObj?.badge && (
-                            <Pill tone="brand">{selectedModelObj.badge}</Pill>
-                          )}
-                        </div>
-                        <select
-                          value={selectedModel}
-                          onChange={(e) => setSelectedModel(e.target.value)}
-                          className="w-full h-9 rounded-[9px] border border-tf-border-strong bg-tf-surface px-3 text-[13.5px] text-tf-ink focus:outline-none focus:border-tf-ink focus:ring-1 focus:ring-tf-ink transition-colors cursor-pointer"
-                        >
-                          {currentModelList.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name} {m.badge ? `(${m.badge})` : ""}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedModelObj?.description && (
+                    <div className="p-4 space-y-5 bg-tf-surface-2/20">
+                      {usable && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label htmlFor="tf-model" className="text-[13px] font-medium text-tf-ink">
+                              {providerName(provider)} model
+                            </label>
+                            {savedTick("model")}
+                          </div>
+                          <select
+                            id="tf-model"
+                            value={settings.model}
+                            onChange={(e) => saveModel(e.target.value)}
+                            className="w-full h-9 rounded-[9px] border border-tf-border-strong bg-tf-surface px-3 text-[13.5px] text-tf-ink focus:outline-none focus:border-tf-ink focus:ring-1 focus:ring-tf-ink transition-colors cursor-pointer"
+                          >
+                            {suggested.length > 0 && (
+                              <optgroup label="Suggested">
+                                {suggested.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.id}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {others.length > 0 && (
+                              <optgroup label={liveModels.length ? `Everything ${providerName(provider)} offers` : "Current"}>
+                                {others.map((id) => (
+                                  <option key={id} value={id}>
+                                    {id}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
                           <p className="text-[12px] text-tf-muted leading-snug">
-                            {selectedModelObj.description}
+                            {modelNote ??
+                              (liveModels.length > 0 && !liveModels.includes(settings.model)
+                                ? `${providerName(provider)} doesn't list this model for your key, so it may stop working. Consider a suggested one.`
+                                : "Not one of our suggestions. Sorting quality and cost depend on the model.")}
                           </p>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[13px]">
-                          <span className="font-medium text-tf-ink">Confidence threshold</span>
-                          <span className="font-medium text-tf-ink tf-num">
-                            {Math.round(autoThreshold * 100)}%
+                          <label htmlFor="tf-threshold" className="font-medium text-tf-ink">
+                            How sure TidyFlow must be to sort a file on its own
+                          </label>
+                          <span className="flex items-center gap-2">
+                            {savedTick("threshold")}
+                            <span className="font-medium text-tf-ink tf-num">{Math.round(shownThreshold * 100)}%</span>
                           </span>
                         </div>
                         <input
+                          id="tf-threshold"
                           type="range"
                           min="0.5"
                           max="1.0"
                           step="0.05"
-                          value={autoThreshold}
-                          onChange={(e) => setAutoThreshold(parseFloat(e.target.value))}
+                          value={shownThreshold}
+                          onChange={(e) => setThreshold(parseFloat(e.target.value))}
+                          onPointerUp={saveThreshold}
+                          onKeyUp={saveThreshold}
+                          onBlur={saveThreshold}
                           className="w-full accent-[var(--color-tf-brand)] cursor-pointer"
                         />
                         <div className="flex justify-between text-[12px] text-tf-muted">
-                          <span>Sort more on its own</span>
-                          <span>Ask me more often</span>
+                          <span>Sorts more on its own</span>
+                          <span>Asks you more often</span>
                         </div>
                       </div>
+
+                      {saveError && <p className="text-[12.5px] text-tf-danger">{saveError}</p>}
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
-
-            {/* Footer row */}
-            <div className="px-4 py-3 flex justify-end gap-3 items-center bg-tf-surface-2/40">
-              {saveSuccess && (
-                <span className="inline-flex items-center gap-1.5 text-[12.5px] text-tf-success">
-                  <Check size={14} strokeWidth={2} />
-                  <span>Saved</span>
-                </span>
-              )}
-              <Button
-                variant="primary"
-                size="md"
-                onClick={onSaveSettings}
-              >
-                Save
-              </Button>
             </div>
           </Card>
         </div>
@@ -602,6 +360,16 @@ export function SettingsView({
                   }`}
                 />
               </button>
+            </div>
+
+            <div className="px-4 py-3.5 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-medium text-tf-ink">Welcome tour</div>
+                <div className="text-[12.5px] text-tf-muted mt-0.5">See the short introduction from the first launch again.</div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={onShowWelcome} className="shrink-0">
+                Show
+              </Button>
             </div>
 
             {isAdvanced && onToggleCategory && onAddCategory && onDeleteCategory && (
