@@ -22,6 +22,7 @@ import { Screen } from "./flow/ui";
 import { OrganizeView } from "./components/OrganizeView";
 import { ReviewView } from "./components/ReviewView";
 import { SearchView } from "./components/SearchView";
+import { Onboarding } from "./flow/Onboarding";
 import { SettingsView } from "./components/SettingsView";
 import { DirectoryPickerModal } from "./components/DirectoryPickerModal";
 import { API_BASE } from "./config";
@@ -87,6 +88,8 @@ function toCategoryItems(raw: Record<string, any>): Record<string, CategoryItem>
   return out;
 }
 
+const ONBOARDED_KEY = "tidyflow_onboarded";
+
 export default function App() {
   // --- Navigation ---
   const [view, setView] = usePersistentState<AppView>("tidyflow_view", "flow");
@@ -112,6 +115,11 @@ export default function App() {
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [hasLlmKey, setHasLlmKey] = useState(false);
+  // False when the user chose "No AI" in Settings; then nothing nags them to add a key.
+  const [aiEnabled, setAiEnabled] = useState(true);
+  // null until the engine has answered once.
+  const [statusLoaded, setStatusLoaded] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [folderLooksSupported, setFolderLooksSupported] = useState(false);
   const [folderLooksEnabled, setFolderLooksEnabled] = usePersistentState<boolean>("tidyflow_folder_looks", true);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -210,13 +218,7 @@ export default function App() {
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
 
   // --- Settings ---
-  const [llmProvider, setLlmProvider] = useState("deepseek");
-  const [selectedModel, setSelectedModel] = useState("deepseek-chat");
-  const [apiKeyInput, setApiKeyInput] = useState("");
   const [autoThreshold, setAutoThreshold] = useState(0.85);
-  const [maskedKey, setMaskedKey] = useState("");
-  const [saveSettingsSuccess, setSaveSettingsSuccess] = useState(false);
-  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "categories">("general");
 
   // --- Derived ---
   const activeFolderNames = useMemo(
@@ -249,6 +251,8 @@ export default function App() {
         const data = await res.json();
         setBackendStatus("running");
         setHasLlmKey(data.has_llm_key);
+        setAiEnabled(data.ai_enabled !== false);
+        setStatusLoaded(true);
         setFolderLooksSupported(!!data.folder_looks_supported);
         setAiError(data.llm_error || null);
       } else {
@@ -283,9 +287,6 @@ export default function App() {
       const res = await fetch(`${API_BASE}/settings`);
       if (res.ok) {
         const data = await res.json();
-        setLlmProvider(data.provider || "deepseek");
-        setSelectedModel(data.model || "deepseek-chat");
-        setMaskedKey(data.masked_key || "");
         setAutoThreshold(data.auto_copy_threshold || 0.85);
       }
     } catch (e) {
@@ -918,37 +919,6 @@ export default function App() {
     aiUndoSnapshot.current = null;
   };
 
-  // --- Settings ---
-
-  const handleSaveSettings = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: llmProvider,
-          model: selectedModel,
-          api_key: apiKeyInput.trim() || undefined,
-          auto_copy_threshold: autoThreshold,
-        }),
-      });
-      if (res.ok) {
-        const saved = await res.json().catch(() => ({}));
-        setAiError(saved.ai_error || null);
-        setSaveSettingsSuccess(true);
-        setApiKeyInput("");
-        await fetchSettings();
-        await checkStatus();
-        setTimeout(() => setSaveSettingsSuccess(false), 3000);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        alert(`Failed to save settings: ${data.detail || data.message || res.statusText}`);
-      }
-    } catch (e: any) {
-      alert(`Failed to save settings: ${e.message || "Network error"}`);
-    }
-  };
-
   // --- Folder picking ---
 
   /** Forget the plan, results and progress of the current sort (files on disk are never touched). */
@@ -1220,12 +1190,38 @@ export default function App() {
             resumeFileCount={files.length}
             onResume={() => setStep("preview")}
             hasLlmKey={hasLlmKey}
+            aiEnabled={aiEnabled}
             aiError={aiError}
             onOpenSettings={() => setView("settings")}
             backendOnline={backendStatus !== "offline"}
           />
         );
     }
+  };
+
+  // --- Welcome ---
+
+  // Show the welcome once, to someone who has set nothing up yet. Anyone who already has a key,
+  // a folder or results has been here before and is never interrupted.
+  useEffect(() => {
+    if (!statusLoaded) return;
+    try {
+      if (localStorage.getItem(ONBOARDED_KEY)) return;
+      if (hasLlmKey || inputFolder || files.length > 0) localStorage.setItem(ONBOARDED_KEY, "1");
+      else setShowWelcome(true);
+    } catch {
+      /* storage blocked: skip the welcome rather than show it on every launch */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- decided once, when the engine first answers
+  }, [statusLoaded]);
+
+  const closeWelcome = () => {
+    try {
+      localStorage.setItem(ONBOARDED_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setShowWelcome(false);
   };
 
   const renderView = () => {
@@ -1237,19 +1233,11 @@ export default function App() {
       case "settings":
         return (
           <SettingsView
-            llmProvider={llmProvider}
-            setLlmProvider={setLlmProvider}
-            selectedModel={selectedModel}
-            setSelectedModel={setSelectedModel}
-            apiKeyInput={apiKeyInput}
-            setApiKeyInput={setApiKeyInput}
-            maskedKey={maskedKey}
-            autoThreshold={autoThreshold}
-            setAutoThreshold={setAutoThreshold}
-            saveSuccess={saveSettingsSuccess}
-            onSaveSettings={handleSaveSettings}
-            subTab={settingsSubTab}
-            setSubTab={setSettingsSubTab}
+            onSettingsChanged={() => {
+              checkStatus();
+              fetchSettings();
+            }}
+            onShowWelcome={() => setShowWelcome(true)}
             categories={categories}
             onToggleCategory={handleToggleCategory}
             onAddCategory={async (c) => handleAddCategory(c)}
@@ -1257,8 +1245,6 @@ export default function App() {
             onLoadPreset={async (c) => handleLoadPreset(c)}
             advancedMode={advancedMode}
             setAdvancedMode={setAdvancedMode}
-            hasLlmKey={hasLlmKey}
-            aiError={aiError}
             darkMode={darkMode}
             toggleDarkMode={toggleDarkMode}
           />
@@ -1372,6 +1358,21 @@ export default function App() {
             : "TidyFlow will create the new folders here."
         }
       />
+
+      {showWelcome && (
+        <Onboarding
+          onDone={closeWelcome}
+          onChooseFolder={() => {
+            closeWelcome();
+            setStep("home");
+            handleBrowse("source");
+          }}
+          onSettingsChanged={() => {
+            checkStatus();
+            fetchSettings();
+          }}
+        />
+      )}
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-6 pt-8 pb-16">
         <FolderLooksContext.Provider value={folderLooks}>

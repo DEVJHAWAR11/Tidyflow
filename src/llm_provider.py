@@ -32,87 +32,142 @@ load_dotenv()
 # App Settings Storage (File-Based in AppData with 0600 Permissions)
 # ---------------------------------------------------------------------------
 
+# Services a user can bring their own key for. "custom" (any OpenAI-compatible URL) is CLI-only.
+KNOWN_PROVIDERS = ("deepseek", "groq", "gemini", "openai", "openrouter")
+
+# Where a user creates a key for each service. Only these pages can be opened from the app.
+KEY_PAGES = {
+    "deepseek": "https://platform.deepseek.com/api_keys",
+    "groq": "https://console.groq.com/keys",
+    "gemini": "https://aistudio.google.com/apikey",
+    "openai": "https://platform.openai.com/api-keys",
+    "openrouter": "https://openrouter.ai/keys",
+}
+
+_PLACEHOLDER_KEYS = ("", "secret123")
+_PLACEHOLDER_PROVIDERS = ("dummy", "test")
+
+
 def _get_settings_file() -> Path:
     return get_app_data_dir() / "settings.json"
 
 
-def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None):
-    """Save LLM credentials to local user app settings."""
+def _read_settings() -> dict:
+    """The saved AI settings: the service in use, one key and one model per service, and the on/off switch.
+
+    Older files held a single ``api_key`` for whichever provider was selected; it is read as that
+    provider's key.
+    """
+    raw: dict = {}
     settings_file = _get_settings_file()
-    data = {
-        "provider": provider or "",
-        "api_key": api_key or "",
-        "custom_url": custom_url if provider and provider.lower() == "custom" else None,
+    if settings_file.exists():
+        try:
+            raw = json.loads(settings_file.read_text(encoding="utf-8")) or {}
+        except Exception:
+            raw = {}
+    provider = str(raw.get("provider") or "").lower()
+    if provider in _PLACEHOLDER_PROVIDERS:
+        provider = ""
+    keys = {
+        str(k).lower(): v
+        for k, v in (raw.get("keys") or {}).items()
+        if isinstance(v, str) and v not in _PLACEHOLDER_KEYS
     }
+    old_key = raw.get("api_key")
+    if "keys" not in raw and provider and isinstance(old_key, str) and old_key not in _PLACEHOLDER_KEYS:
+        keys[provider] = old_key
+    models = {str(k).lower(): v for k, v in (raw.get("models") or {}).items() if isinstance(v, str) and v.strip()}
+    return {
+        "provider": provider,
+        "keys": keys,
+        "models": models,
+        "ai_enabled": raw.get("ai_enabled", True) is not False,
+        "custom_url": raw.get("custom_url") if provider == "custom" else None,
+    }
+
+
+def _write_settings(data: dict) -> None:
+    settings_file = _get_settings_file()
     try:
         settings_file.parent.mkdir(parents=True, exist_ok=True)
-        settings_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp = settings_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         try:
-            settings_file.chmod(0o600)
+            tmp.chmod(0o600)  # the keys are for this user only
         except Exception:
             pass
+        tmp.replace(settings_file)
     except Exception as e:
         logger.warning("Could not save settings to file: %s", e)
 
 
-def get_stored_api_key(provider: str = "deepseek") -> str:
-    """Retrieve API key for given provider from local settings or environment."""
-    load_dotenv()
-    settings_file = _get_settings_file()
-    if settings_file.exists():
-        try:
-            data = json.loads(settings_file.read_text(encoding="utf-8"))
-            key = data.get("api_key", "")
-            if key and key != "secret123":
-                return key
-        except Exception:
-            pass
+def save_settings(provider: str, api_key: str, custom_url: Optional[str] = None):
+    """Make ``provider`` the service in use and, when a key is given, save it as that provider's key."""
+    data = _read_settings()
+    provider = (provider or "").lower()
+    data["provider"] = provider
+    if api_key and api_key.strip():
+        data["keys"][provider] = api_key.strip()
+    data["custom_url"] = custom_url if provider == "custom" else None
+    _write_settings(data)
+
+
+def remove_api_key(provider: str) -> None:
+    """Forget the key saved for ``provider``."""
+    data = _read_settings()
+    data["keys"].pop((provider or "").lower(), None)
+    _write_settings(data)
+
+
+def set_provider_model(provider: str, model: str) -> None:
+    """Remember which model to use with ``provider``."""
+    data = _read_settings()
+    data["models"][(provider or "").lower()] = model.strip()
+    _write_settings(data)
+
+
+def set_ai_enabled(enabled: bool) -> None:
+    """Turn AI sorting on or off without touching the saved keys."""
+    data = _read_settings()
+    data["ai_enabled"] = bool(enabled)
+    _write_settings(data)
+
+
+def ai_enabled() -> bool:
+    return _read_settings()["ai_enabled"]
+
+
+def _env_key(provider: str) -> str:
     return os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("TIDYFLOW_API_KEY") or ""
 
 
-def load_settings() -> tuple[str, str, Optional[str]]:
-    """Retrieve LLM settings from local settings file or Environment variables."""
+def get_stored_api_key(provider: str = "deepseek") -> str:
+    """The key for ``provider``: the saved one, else its environment variable. Never another provider's key."""
     load_dotenv()
-    provider = ""
-    api_key = ""
-    custom_url = None
+    provider = (provider or "").lower()
+    return _read_settings()["keys"].get(provider) or _env_key(provider)
 
-    settings_file = _get_settings_file()
-    if settings_file.exists():
-        try:
-            data = json.loads(settings_file.read_text(encoding="utf-8"))
-            provider = data.get("provider", "")
-            api_key = data.get("api_key", "")
-            custom_url = data.get("custom_url")
-        except Exception:
-            pass
 
-    # If settings contains dummy test values, ignore them
-    if provider in ("dummy", "test", "") or api_key in ("secret123", ""):
-        provider = ""
-        api_key = ""
-        custom_url = None
+def mask_key(key: str) -> str:
+    if not key:
+        return ""
+    return f"{key[:4]}…{key[-4:]}" if len(key) > 8 else "••••••••"
 
-    # Check environment variables
-    for env_var, prov in [
-        ("DEEPSEEK_API_KEY", "deepseek"),
-        ("TIDYFLOW_API_KEY", provider or "deepseek"),
-        ("OPENAI_API_KEY", "openai"),
-        ("GROQ_API_KEY", "groq"),
-        ("OPENROUTER_API_KEY", "openrouter"),
-        ("GEMINI_API_KEY", "gemini"),
-    ]:
-        val = os.getenv(env_var)
-        if val and not api_key:
-            api_key = val
-            if not provider:
-                provider = prov
 
-    resolved_provider = provider or "deepseek"
-    if resolved_provider.lower() != "custom":
-        custom_url = None
-
-    return resolved_provider, api_key, custom_url
+def load_settings() -> tuple[str, str, Optional[str]]:
+    """The service in use, its key ("" when there is none or AI is switched off) and a custom URL if any."""
+    load_dotenv()
+    data = _read_settings()
+    provider = data["provider"]
+    if not provider:
+        # Nothing chosen in the app: take the first provider that has a key, saved or in the environment.
+        provider = next(iter(data["keys"]), "") or next(
+            (p for p in KNOWN_PROVIDERS if os.getenv(f"{p.upper()}_API_KEY")), "deepseek"
+        )
+    if not data["ai_enabled"]:
+        return provider, "", None
+    api_key = data["keys"].get(provider) or _env_key(provider)
+    return provider, api_key, data["custom_url"] if provider == "custom" else None
 
 
 # ---------------------------------------------------------------------------
@@ -407,22 +462,27 @@ def _resolve_provider_url(provider: str, default_url: str) -> str:
     return urls.get(prov, default_url)
 
 
+DEFAULT_MODELS = {
+    "deepseek": "deepseek-chat",
+    "groq": "llama-3.3-70b-versatile",
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4o-mini",
+    "openrouter": "deepseek/deepseek-chat",
+}
+
+
 def _resolve_provider_model(provider: str, configured_model: Optional[str] = None) -> str:
-    """Resolve the appropriate default model for the chosen provider."""
-    prov = provider.lower()
-    default_models = {
-        "deepseek": "deepseek-chat",
-        "groq": "llama-3.3-70b-versatile",
-        "gemini": "gemini-2.0-flash",
-        "openai": "gpt-4o-mini",
-        "openrouter": "deepseek/deepseek-chat",
-    }
+    """The model to use with ``provider``: the one chosen for it in Settings, else ``configured_model``, else its default."""
+    prov = (provider or "").lower()
+    chosen = _read_settings()["models"].get(prov)
+    if chosen:
+        return chosen
     if configured_model and configured_model.strip():
         # Prevent invalid synthetic model names
         if configured_model in ("deepseek-v4-flash", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
-            return default_models.get(prov, "deepseek-chat")
+            return DEFAULT_MODELS.get(prov, "deepseek-chat")
         return configured_model
-    return default_models.get(prov, "deepseek-chat")
+    return DEFAULT_MODELS.get(prov, "deepseek-chat")
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +495,7 @@ _llm_health: dict[str, Optional[str]] = {"error": None}
 def friendly_llm_error(raw: str) -> str:
     """Turn a provider/HTTP error into one sentence a non-technical user understands."""
     text = raw.lower()
-    if "401" in text or "unauthorized" in text or "invalid api key" in text:
+    if "401" in text or "403" in text or "unauthorized" in text or "invalid api key" in text or "api key not valid" in text:
         return "Your AI key was rejected. Check it or paste a new one."
     if "402" in text or "insufficient" in text or "balance" in text:
         return "Your AI account is out of credit. Top it up or switch provider."
@@ -451,12 +511,53 @@ def record_llm_result(error: Optional[str]) -> None:
     _llm_health["error"] = friendly_llm_error(error) if error else None
 
 
+def set_llm_error(message: Optional[str]) -> None:
+    """Record an already-friendly message (or None for healthy) as the AI's current state."""
+    _llm_health["error"] = message
+
+
 def get_llm_error() -> Optional[str]:
     return _llm_health["error"]
 
 
+def check_api_key(
+    provider: str, api_key: str, custom_url: Optional[str] = None, timeout: float = 10.0
+) -> tuple[str, Optional[str]]:
+    """Try ``api_key`` against ``provider`` with a cheap authenticated request.
+
+    Returns ``("ok", None)``, ``("rejected", message)`` when the service refuses the key, or
+    ``("problem", message)`` when the key could not be judged (no internet, no credit, service down).
+    """
+    base_url = (custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")).rstrip("/")
+    # OpenRouter's model list is public, so check the key endpoint there instead.
+    url = f"{base_url}/key" if provider.lower() == "openrouter" else f"{base_url}/models"
+    try:
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+    except Exception as exc:
+        return "problem", friendly_llm_error(f"connect error: {exc}")
+    if resp.status_code < 400:
+        return "ok", None
+    body = resp.text[:300].lower()
+    refused = resp.status_code in (401, 403) or "api key not valid" in body or "invalid api key" in body
+    message = friendly_llm_error("401 unauthorized" if refused else f"HTTP {resp.status_code} {resp.reason_phrase}")
+    return ("rejected" if refused else "problem"), message
+
+
+def list_provider_models(provider: str, api_key: str, timeout: float = 10.0) -> list[str]:
+    """The model ids ``provider`` offers to this key, or [] when they can't be fetched."""
+    base_url = _resolve_provider_url(provider, "https://api.deepseek.com/v1").rstrip("/")
+    try:
+        resp = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+        resp.raise_for_status()
+        ids = [str(m.get("id", "")).removeprefix("models/") for m in resp.json().get("data", [])]
+        return sorted({i for i in ids if i})
+    except Exception as exc:
+        logger.debug("Could not list %s models: %s", provider, exc)
+        return []
+
+
 def verify_llm_key(timeout: float = 10.0) -> Optional[str]:
-    """Check the saved key with a cheap authenticated request.
+    """Check the key in use with a cheap authenticated request.
 
     Returns None when the key works, otherwise a friendly error. Also updates the health state.
     """
@@ -464,18 +565,9 @@ def verify_llm_key(timeout: float = 10.0) -> Optional[str]:
     if not api_key:
         record_llm_result(None)
         return None
-    base_url = (custom_url or _resolve_provider_url(provider, "https://api.deepseek.com/v1")).rstrip("/")
-    # OpenRouter's model list is public, so check the key endpoint there instead.
-    url = f"{base_url}/key" if provider.lower() == "openrouter" else f"{base_url}/models"
-    try:
-        resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
-        if resp.status_code >= 400:
-            record_llm_result(f"HTTP {resp.status_code} {resp.reason_phrase}")
-        else:
-            record_llm_result(None)
-    except Exception as exc:
-        record_llm_result(f"connect error: {exc}")
-    return get_llm_error()
+    _, message = check_api_key(provider, api_key, custom_url, timeout)
+    set_llm_error(message)
+    return message
 
 
 def _resolve_category(cat_candidate: str, categories: dict[str, CategoryConfig]) -> str:
