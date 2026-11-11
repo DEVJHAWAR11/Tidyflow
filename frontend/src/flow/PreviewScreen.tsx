@@ -14,6 +14,8 @@ import {
   ArrowLeft,
   ArrowRight,
   X,
+  Pencil,
+  Search,
 } from "lucide-react";
 import { ReviewAssistant } from "./ReviewAssistant";
 import type { PreviewScreenProps } from "./contracts";
@@ -214,8 +216,27 @@ export function PreviewScreen(props: PreviewScreenProps) {
     });
   }, [unsureFiles, leftIds]);
 
-  // Show the "Suggested" column heading only while some row offers a suggestion.
-  const firstSuggestionId = sortedUnsureFiles.find(
+  // Filter box: every word must appear in the file's name, new name, reason or folder.
+  const [query, setQuery] = useState("");
+  const queryWords = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filtering = queryWords.length > 0;
+  const matchesQuery = (f: ClassifiedFile) => {
+    if (!filtering) return true;
+    const text = [f.filename, props.filenameOverrides[f.file_id] ?? "", f.reason ?? "", prettyFolderName(effective(f))]
+      .join(" ")
+      .toLowerCase();
+    return queryWords.every((w) => text.includes(w));
+  };
+  // Filtering only changes what is shown; counts, "Use all suggestions" and Organize still cover every file.
+  const visibleUnsureFiles = filtering
+    ? sortedUnsureFiles.filter(matchesQuery)
+    : sortedUnsureFiles.slice(0, reviewLimit);
+  const visibleGroups = folderGroups
+    .map((g) => ({ ...g, shown: filtering ? g.files.filter(matchesQuery) : g.files }))
+    .filter((g) => g.shown.length > 0);
+
+  // Show the "Suggested" column heading only while some visible row offers a suggestion.
+  const firstSuggestionId = visibleUnsureFiles.find(
     (f) => !leftIds.has(f.file_id) && f.category !== "Unknown" && props.folders.includes(f.category)
   )?.file_id;
 
@@ -319,8 +340,39 @@ export function PreviewScreen(props: PreviewScreenProps) {
           onUndo={handleUndoAsk}
         />
 
+        {/* Filter */}
+        <div className="relative">
+          <Search
+            size={14}
+            strokeWidth={1.75}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-tf-faint pointer-events-none"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+            placeholder="Filter files by name, folder or reason"
+            aria-label="Filter files"
+            className="w-full h-9 pl-9 pr-9 rounded-[10px] bg-tf-surface border border-tf-border text-[13.5px] text-tf-ink placeholder:text-tf-faint outline-none focus:border-tf-border-strong focus:ring-1 focus:ring-tf-ink/40"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear filter"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-[6px] flex items-center justify-center text-tf-faint hover:text-tf-ink hover:bg-tf-surface-2 cursor-pointer"
+            >
+              <X size={13} strokeWidth={2} />
+            </button>
+          )}
+        </div>
+
+        {filtering && visibleUnsureFiles.length === 0 && visibleGroups.length === 0 && (
+          <p className="text-[13px] text-tf-muted -mt-4">No files match “{query.trim()}”.</p>
+        )}
+
         {/* To Review Section */}
-        {unsureFiles.length > 0 && (
+        {unsureFiles.length > 0 && (!filtering || visibleUnsureFiles.length > 0) && (
           <section className="space-y-3">
             <SectionTitle
               aside={
@@ -372,7 +424,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
 
             <Card className="divide-y divide-tf-border overflow-visible">
               <AnimatePresence mode="popLayout">
-                {sortedUnsureFiles.slice(0, reviewLimit).map((f) => {
+                {visibleUnsureFiles.map((f) => {
                   const isLeftInPlace = leftIds.has(f.file_id);
                   const reason = f.reason && f.reason !== props.aiError ? f.reason : "";
                   const hasGuess =
@@ -388,7 +440,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                       exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.18, ease } }}
                       transition={{ duration: 0.18, ease }}
                       data-file-id={f.file_id}
-                      className={`min-h-14 px-4 py-2.5 flex items-center gap-3 transition-opacity ${glowClass(f.file_id)} ${
+                      className={`group min-h-14 px-4 py-2.5 flex items-center gap-3 transition-opacity ${glowClass(f.file_id)} ${
                         isLeftInPlace ? "opacity-60" : ""
                       }`}
                     >
@@ -400,16 +452,29 @@ export function PreviewScreen(props: PreviewScreenProps) {
                       />
 
                       <div className="min-w-0 flex-1">
-                        <div
-                          className="text-[13.5px] font-medium text-tf-ink truncate"
-                          title={f.filename}
-                        >
-                          {f.filename}
-                        </div>
+                        <EditableName
+                          file={f}
+                          newName={props.filenameOverrides[f.file_id]}
+                          onRename={props.onRenameFile}
+                          className="text-[13.5px] font-medium text-tf-ink"
+                        />
+                        {props.filenameOverrides[f.file_id] ? (
+                          <div className="text-[12px] text-tf-brand-ink flex items-center gap-1 min-w-0">
+                            <ArrowRight size={11} strokeWidth={2} className="shrink-0" />
+                            <span className="truncate">{props.filenameOverrides[f.file_id]}</span>
+                            <button
+                              type="button"
+                              onClick={() => props.onClearRename(f.file_id)}
+                              aria-label={`Keep the name ${f.filename}`}
+                              title="Keep the original name"
+                              className="shrink-0 w-4 h-4 rounded-[4px] flex items-center justify-center text-tf-faint hover:text-tf-ink hover:bg-tf-surface-2 cursor-pointer"
+                            >
+                              <X size={11} strokeWidth={2} />
+                            </button>
+                          </div>
+                        ) : (
                         <div className="text-[12px] text-tf-muted truncate tf-num">
-                          {props.filenameOverrides[f.file_id]
-                            ? `Will be named ${props.filenameOverrides[f.file_id]} · `
-                            : f.file_size_bytes === 0
+                          {f.file_size_bytes === 0
                             ? "Empty file · "
                             : duplicateOf.has(f.file_id)
                             ? `Same as ${duplicateOf.get(f.file_id)} · `
@@ -418,6 +483,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                             : ""}
                           {formatBytes(f.file_size_bytes)}
                         </div>
+                        )}
                       </div>
 
                       {/* Right side actions */}
@@ -507,7 +573,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                   );
                 })}
               </AnimatePresence>
-              {sortedUnsureFiles.length > reviewLimit && (
+              {!filtering && sortedUnsureFiles.length > reviewLimit && (
                 <div className="px-4 py-2.5 flex items-center justify-between gap-3">
                   <span className="text-[13px] text-tf-muted tf-num">
                     Showing {reviewLimit} of {sortedUnsureFiles.length}
@@ -554,8 +620,8 @@ export function PreviewScreen(props: PreviewScreenProps) {
               never sits as a tall half-width card beside empty space. `dense` lets a later
               collapsed folder fill a hole left before a full-width one. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 lg:grid-flow-row-dense gap-3 items-start">
-            {folderGroups.map((group) => {
-              const expanded = isFolderExpanded(group.folder, group.files.length);
+            {visibleGroups.map((group) => {
+              const expanded = filtering || isFolderExpanded(group.folder, group.files.length);
 
               return (
                 <Card key={group.folder} className={`overflow-visible ${expanded ? "lg:col-span-2" : ""}`}>
@@ -579,6 +645,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                           {prettyFolderName(group.folder)}
                         </div>
                         <div className="text-[12.5px] text-tf-muted tf-num">
+                          {filtering ? `${group.shown.length} of ` : ""}
                           {group.files.length} {group.files.length === 1 ? "file" : "files"}
                         </div>
                       </div>
@@ -587,7 +654,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                     <div className="flex items-center gap-2 shrink-0">
                       {/* Overlapping file preview thumbnails */}
                       <div className="flex items-center">
-                        {group.files.slice(0, 3).map((file, idx) => (
+                        {group.shown.slice(0, 3).map((file, idx) => (
                           <FilePreview
                             key={file.file_id}
                             extension={file.extension}
@@ -624,7 +691,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                         className="overflow-hidden"
                       >
                         <div className="border-t border-tf-border divide-y divide-tf-border">
-                          {group.files.map((f) => {
+                          {group.shown.map((f) => {
                             const isIncluded = props.selectedFileIds.has(f.file_id);
                             const isMoveOpen = activeMoveFileId === f.file_id;
                             const newName = props.filenameOverrides[f.file_id];
@@ -662,16 +729,16 @@ export function PreviewScreen(props: PreviewScreenProps) {
 
                                 {/* Filename & Renamed Hint */}
                                 <div className="flex-1 min-w-0">
-                                  <div
-                                    className={`text-[13px] truncate ${
+                                  <EditableName
+                                    file={f}
+                                    newName={newName}
+                                    onRename={props.onRenameFile}
+                                    className={`text-[13px] ${
                                       isIncluded
                                         ? "text-tf-ink"
                                         : "text-tf-faint line-through decoration-tf-faint"
                                     }`}
-                                    title={f.filename}
-                                  >
-                                    {f.filename}
-                                  </div>
+                                  />
                                   {duplicateOf.has(f.file_id) && (
                                     <div className="text-[12px] text-tf-muted truncate">
                                       Same as {duplicateOf.get(f.file_id)}
@@ -781,7 +848,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
           </div>
 
           {/* Empty Folders Line */}
-          {emptyFolders.length > 0 && (
+          {!filtering && emptyFolders.length > 0 && (
             <div className="text-[12.5px] text-tf-faint pt-1">
               Empty folders: {emptyFolders.map(prettyFolderName).join(", ")}
             </div>
@@ -977,5 +1044,98 @@ export function PreviewScreen(props: PreviewScreenProps) {
         </Card>
       </div>
     </Screen>
+  );
+}
+
+/** A typed file name made safe to save: no folders, control characters or leading dots (which hide a file), and it keeps its extension. */
+function cleanFileName(name: string, extension: string): string | null {
+  const cleaned = name.replace(/[/\\:\x00-\x1f]/g, "").trim().replace(/^\.+/, "").trim();
+  if (!cleaned || cleaned === "." || cleaned === "..") return null;
+  if (extension && !cleaned.toLowerCase().endsWith(extension.toLowerCase())) return cleaned + extension;
+  return cleaned;
+}
+
+/** A file name that turns into a text box on click (or via the pencil) so the user can rename it. */
+function EditableName({
+  file,
+  newName,
+  onRename,
+  className,
+}: {
+  file: ClassifiedFile;
+  newName?: string;
+  onRename: (fileId: string, name: string) => void;
+  className: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Escape and Enter both end editing; the blur that follows must not save a second time.
+  const finished = useRef(false);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!editing || !el) return;
+    el.focus();
+    const dot = el.value.lastIndexOf(".");
+    el.setSelectionRange(0, dot > 0 ? dot : el.value.length);
+  }, [editing]);
+
+  const start = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    finished.current = false;
+    setDraft(newName || file.suggested_filename || file.filename);
+    setEditing(true);
+  };
+
+  const finish = (save: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
+    if (save) {
+      const cleaned = cleanFileName(draft, file.extension);
+      if (cleaned && cleaned !== (newName || file.filename)) onRename(file.file_id, cleaned);
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        aria-label={`New name for ${file.filename}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") finish(true);
+          else if (e.key === "Escape") finish(false);
+        }}
+        onBlur={() => finish(true)}
+        className={`${className} w-full -ml-1.5 px-1.5 rounded-[6px] bg-tf-surface border border-tf-border-strong outline-none focus:ring-1 focus:ring-tf-ink`}
+      />
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <button
+        type="button"
+        onClick={start}
+        title={`${file.filename} (click to rename)`}
+        className={`${className} min-w-0 truncate text-left cursor-text`}
+      >
+        {file.filename}
+      </button>
+      <button
+        type="button"
+        onClick={start}
+        aria-label={`Rename ${file.filename}`}
+        title="Rename"
+        className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center text-tf-faint hover:text-tf-ink hover:bg-tf-surface-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+      >
+        <Pencil size={12} strokeWidth={1.75} />
+      </button>
+    </div>
   );
 }
