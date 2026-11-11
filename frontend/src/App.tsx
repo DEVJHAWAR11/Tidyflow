@@ -5,7 +5,6 @@ import {
   ClassifiedFile,
   RunSummary,
   ApplyDecisionItem,
-  FtsResultItem,
   BackendStatus,
   ComplexityLevel,
 } from "./types";
@@ -97,6 +96,18 @@ export default function App() {
     setView("flow");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  // Cmd/Ctrl+K opens search from anywhere (on the search page it focuses the box instead).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setView("search");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setView only wraps a state setter
+  }, []);
   const [advancedMode, setAdvancedMode] = usePersistentState<boolean>("tidyflow_advanced_mode", false);
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -197,12 +208,6 @@ export default function App() {
   const [doneResult, setDoneResult] = usePersistentState<DoneResult | null>("tidyflow_done_result", null);
   const [undoState, setUndoState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
-
-  // --- Search ---
-  const [ftsQuery, setFtsQuery] = useState("");
-  const [ftsResults, setFtsResults] = useState<FtsResultItem[]>([]);
-  const [isSearchingFts, setIsSearchingFts] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
 
   // --- Settings ---
   const [llmProvider, setLlmProvider] = useState("deepseek");
@@ -944,33 +949,6 @@ export default function App() {
     }
   };
 
-  // --- Search ---
-
-  const handleFtsSearch = async (queryOverride?: string) => {
-    const q = (queryOverride !== undefined ? queryOverride : ftsQuery).trim();
-    if (!q) return;
-    if (queryOverride !== undefined) setFtsQuery(queryOverride);
-    setIsSearchingFts(true);
-    setHasSearched(true);
-    try {
-      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setFtsResults(data.results || []);
-      }
-    } catch (e) {
-      console.error("Search error:", e);
-    } finally {
-      setIsSearchingFts(false);
-    }
-  };
-
-  const handleClearFts = () => {
-    setFtsQuery("");
-    setFtsResults([]);
-    setHasSearched(false);
-  };
-
   // --- Folder picking ---
 
   /** Forget the plan, results and progress of the current sort (files on disk are never touched). */
@@ -1254,15 +1232,7 @@ export default function App() {
     switch (view) {
       case "search":
         return (
-          <SearchView
-            ftsQuery={ftsQuery}
-            setFtsQuery={setFtsQuery}
-            ftsResults={ftsResults}
-            isSearching={isSearchingFts}
-            hasSearched={hasSearched}
-            onSearch={handleFtsSearch}
-            onClear={handleClearFts}
-          />
+          <SearchView />
         );
       case "settings":
         return (

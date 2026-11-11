@@ -166,19 +166,22 @@ def test_search_points_at_current_location_and_drops_missing_files(client, tmp_p
     ]
     deleted = []
 
-    async def fake_search(q):
-        return rows
+    async def fake_search(q, **filters):
+        return {"results": rows, "total": 2, "facets": {}, "corrected": None}
 
     async def fake_write(query, params=()):
         deleted.append(params[0])
 
-    monkeypatch.setattr(api.db, "search", fake_search)
+    monkeypatch.setattr(api.db, "search_page", fake_search)
     monkeypatch.setattr(api.db, "execute_write", fake_write)
 
-    results = client.get("/search", params={"q": "invoice"}).json()["results"]
+    body = client.get("/search", params={"q": "invoice"}).json()
+    results = body["results"]
 
     assert [r["id"] for r in results] == [1]
     assert results[0]["new_path"] is None
+    assert results[0]["current_path"] == str(here) and results[0]["name"] == "invoice.txt"
+    assert body["total"] == 1
     assert deleted == [2]
 
 
