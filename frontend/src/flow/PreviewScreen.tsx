@@ -214,6 +214,16 @@ export function PreviewScreen(props: PreviewScreenProps) {
     });
   }, [unsureFiles, leftIds]);
 
+  // Show the "Suggested" column heading only while some row offers a suggestion.
+  const firstSuggestionId = sortedUnsureFiles.find(
+    (f) => !leftIds.has(f.file_id) && f.category !== "Unknown" && props.folders.includes(f.category)
+  )?.file_id;
+
+  // Undecided files the AI has a folder for: what "Use all suggestions" places.
+  const suggestibleIds = sortedUnsureFiles
+    .filter((f) => !leftIds.has(f.file_id) && f.category !== "Unknown" && props.folders.includes(f.category))
+    .map((f) => f.file_id);
+
   const undecidedIds = useMemo(() => {
     return sortedUnsureFiles
       .filter((f) => !leftIds.has(f.file_id))
@@ -314,19 +324,51 @@ export function PreviewScreen(props: PreviewScreenProps) {
           <section className="space-y-3">
             <SectionTitle
               aside={
-                undecidedIds.length > 1 ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => leaveInPlace(undecidedIds)}
-                  >
-                    Leave the rest
-                  </Button>
-                ) : undefined
+                <div className="flex items-center gap-1">
+                  {props.onUndoSuggestions ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<CornerUpLeft size={14} strokeWidth={1.75} />}
+                      onClick={props.onUndoSuggestions}
+                    >
+                      Undo suggestions
+                    </Button>
+                  ) : suggestibleIds.length > 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<FolderCheck size={14} strokeWidth={1.75} />}
+                      title="Put every file below in its suggested folder"
+                      onClick={() => props.onUseSuggestions(suggestibleIds)}
+                    >
+                      Use all suggestions
+                    </Button>
+                  ) : null}
+                  {undecidedIds.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => leaveInPlace(undecidedIds)}
+                    >
+                      Leave the rest
+                    </Button>
+                  )}
+                </div>
               }
             >
               To review
             </SectionTitle>
+
+            {firstSuggestionId && (
+              // Column heading over the suggested-folder buttons; the hidden "Choose…" keeps it lined up.
+              <div className="-mb-1.5 flex items-center justify-end gap-2 px-4" aria-hidden>
+                <span className="text-[11px] leading-none text-tf-muted">Suggested</span>
+                <Button variant="secondary" size="sm" className="invisible h-0 py-0" tabIndex={-1} iconRight={<ChevronDown size={14} strokeWidth={1.75} />}>
+                  Choose…
+                </Button>
+              </div>
+            )}
 
             <Card className="divide-y divide-tf-border overflow-visible">
               <AnimatePresence mode="popLayout">
@@ -397,7 +439,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                             <Button
                               variant="secondary"
                               size="sm"
-                              title="Put it here"
+                              title="Put it in the suggested folder"
                               icon={<FolderIcon name={f.category} size={18} />}
                               onClick={() => {
                                 props.onMoveFile(f.file_id, f.category);
@@ -480,6 +522,27 @@ export function PreviewScreen(props: PreviewScreenProps) {
                 </div>
               )}
             </Card>
+          </section>
+        )}
+
+        {/* Every review file went to its suggestion: keep the undo reachable */}
+        {unsureFiles.length === 0 && props.onUndoSuggestions && (
+          <section>
+            <SectionTitle
+              aside={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<CornerUpLeft size={14} strokeWidth={1.75} />}
+                  onClick={props.onUndoSuggestions}
+                >
+                  Undo suggestions
+                </Button>
+              }
+            >
+              To review
+            </SectionTitle>
+            <p className="text-[13px] text-tf-muted">Every file is in its suggested folder.</p>
           </section>
         )}
 

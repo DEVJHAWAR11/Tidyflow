@@ -142,6 +142,10 @@ export interface PreviewScreenProps {
   onAskAi: (command: string) => Promise<ReviewAiOutcome>;
   /** Revert the last plain-language change */
   onUndoAi: () => void;
+  /** Put each listed file in the folder the AI suggested for it */
+  onUseSuggestions: (fileIds: string[]) => void;
+  /** Set while "Use all suggestions" can be undone */
+  onUndoSuggestions?: () => void;
 }
 
 /** What a plain-language change request did on the review screen. */
