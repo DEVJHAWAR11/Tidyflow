@@ -305,6 +305,7 @@ export default function App() {
       if (!sameRun) {
         // A different run than the one cached here: reset per-file choices.
         setCategoryOverrides({});
+        setSuggestionsUndo(null);
         setFilenameOverrides({});
         setSelectedFileIds(new Set(latest.filter((f) => f.action === "copy_to_organized").map((f) => f.file_id)));
       }
@@ -558,6 +559,7 @@ export default function App() {
     setResultMeta(null);
     setSelectedFileIds(new Set());
     setCategoryOverrides({});
+    setSuggestionsUndo(null);
     setFilenameOverrides({});
   };
 
@@ -608,6 +610,7 @@ export default function App() {
       setSummary(data.summary || null);
       setResultMeta({ inputDir: data.input_dir || inputFolder.trim(), categories: data.categories || [] });
       setCategoryOverrides({});
+      setSuggestionsUndo(null);
       setFilenameOverrides({});
       if (data.output_dir) setOutputFolder(data.output_dir);
       // Files the AI is sure about start included; the rest wait for the user.
@@ -745,6 +748,53 @@ export default function App() {
 
   const handleMoveFile = (fileId: string, folder: string) => {
     setCategoryOverrides((prev) => ({ ...prev, [fileId]: folder }));
+  };
+
+  // "Use all suggestions": what each file had before, so undo can put back exactly those files.
+  const [suggestionsUndo, setSuggestionsUndo] = useState<{
+    folders: Record<string, string>;
+    before: Record<string, { folder?: string; included: boolean }>;
+  } | null>(null);
+
+  const handleUseSuggestions = (fileIds: string[]) => {
+    const folders: Record<string, string> = {};
+    for (const f of files) {
+      if (fileIds.includes(f.file_id) && f.category !== "Unknown") folders[f.file_id] = f.category;
+    }
+    const ids = Object.keys(folders);
+    if (!ids.length) return;
+    setSuggestionsUndo({
+      folders,
+      before: Object.fromEntries(
+        ids.map((id) => [id, { folder: categoryOverrides[id], included: selectedFileIds.has(id) }])
+      ),
+    });
+    setCategoryOverrides((prev) => ({ ...prev, ...folders }));
+    setSelectedFileIds((prev) => new Set([...prev, ...ids]));
+  };
+
+  const handleUndoSuggestions = () => {
+    const snap = suggestionsUndo;
+    if (!snap) return;
+    // Leave alone any file the user has moved again since; undo only what this button did.
+    const ids = Object.keys(snap.folders).filter((id) => categoryOverrides[id] === snap.folders[id]);
+    setCategoryOverrides((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (snap.before[id].folder === undefined) delete next[id];
+        else next[id] = snap.before[id].folder as string;
+      }
+      return next;
+    });
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (snap.before[id].included) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+    setSuggestionsUndo(null);
   };
 
   // The switch only adds or removes the AI's suggested names; renames asked for in plain language stay.
@@ -1122,6 +1172,8 @@ export default function App() {
             onClearRename={handleClearRename}
             onAskAi={handleAskAi}
             onUndoAi={handleUndoAi}
+            onUseSuggestions={handleUseSuggestions}
+            onUndoSuggestions={suggestionsUndo ? handleUndoSuggestions : undefined}
             moveMode={moveMode}
             setMoveMode={setMoveMode}
             outputFolder={outputFolder}
