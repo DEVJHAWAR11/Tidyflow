@@ -132,6 +132,8 @@ export interface PreviewScreenProps {
   aiError: string | null;
   onOpenSettings: () => void;
   isApplying: boolean;
+  /** Files placed so far while organizing, when the backend has reported any */
+  applyProgress?: { done: number; total: number } | null;
   onApply: () => void;
   onBack: () => void;
   onOpenFile: (absPath: string) => void;

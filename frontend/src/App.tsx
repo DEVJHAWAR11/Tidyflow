@@ -192,6 +192,8 @@ export default function App() {
 
   const [moveMode, setMoveMode] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  // Files placed so far while organizing, from the backend's progress events.
+  const [applyProgress, setApplyProgress] = useState<{ done: number; total: number } | null>(null);
   const [doneResult, setDoneResult] = usePersistentState<DoneResult | null>("tidyflow_done_result", null);
   const [undoState, setUndoState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
@@ -347,6 +349,12 @@ export default function App() {
         try {
           const payload = JSON.parse(e.data);
           if (payload.error) setProgressLogs((prev) => [...prev, `✗ Error: ${payload.error}`]);
+        } catch {}
+      });
+      es.addEventListener("apply_progress", (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (typeof p.done === "number" && typeof p.total === "number") setApplyProgress({ done: p.done, total: p.total });
         } catch {}
       });
       es.addEventListener("pipeline_cancelled", () => {
@@ -661,6 +669,7 @@ export default function App() {
   const handleApplyDecisions = async () => {
     if (selectedFileIds.size === 0) return;
     setIsApplying(true);
+    setApplyProgress(null);
 
     const decisionList: ApplyDecisionItem[] = files.map((f) => ({
       file_id: f.file_id,
@@ -704,6 +713,7 @@ export default function App() {
       alert(`Couldn't organize the files: ${err.message}`);
     } finally {
       setIsApplying(false);
+      setApplyProgress(null);
     }
   };
 
@@ -1198,6 +1208,7 @@ export default function App() {
             aiError={aiError}
             onOpenSettings={() => setView("settings")}
             isApplying={isApplying}
+            applyProgress={applyProgress}
             onApply={handleApplyDecisions}
             onBack={() => setStep("plan")}
             onOpenFile={(path) => handleOpenPath(path, false)}

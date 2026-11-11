@@ -927,13 +927,26 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
             )
         )
 
-    manifest = apply_decisions(
+    # Organize in a worker thread so the server keeps answering, and report progress as it goes.
+    loop = asyncio.get_running_loop()
+    last_sent = [0.0]
+
+    def on_progress(done: int, total: int) -> None:
+        now = loop.time()
+        if done < total and now - last_sent[0] < 0.1:
+            return  # a few updates a second is plenty
+        last_sent[0] = now
+        asyncio.run_coroutine_threadsafe(broadcast_event("apply_progress", {"done": done, "total": total}), loop)
+
+    manifest = await asyncio.to_thread(
+        apply_decisions,
         decisions=decisions,
         records=records,
         output_dir=out_dir,
         dry_run=req.dry_run,
         move_mode=req.move_mode,
         db=db,
+        progress_callback=on_progress,
     )
 
     if not req.dry_run and manifest and req.folder_looks:

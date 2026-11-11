@@ -1062,7 +1062,15 @@ export function PreviewScreen(props: PreviewScreenProps) {
 
       {/* Sticky Bottom Action Bar */}
       <div className="sticky bottom-5 z-30 mt-8">
-        <Card className="px-3 py-2 pl-3 flex items-center justify-between gap-3 bg-tf-surface/90 backdrop-blur-md shadow-[var(--shadow-tf-float)] border-tf-border-strong">
+        <Card className="relative overflow-hidden px-3 py-2 pl-3 flex items-center justify-between gap-3 bg-tf-surface/90 backdrop-blur-md shadow-[var(--shadow-tf-float)] border-tf-border-strong">
+          {props.isApplying && props.applyProgress && props.applyProgress.total > 0 && (
+            <motion.div
+              className="absolute left-0 bottom-0 h-[3px] bg-tf-primary"
+              initial={false}
+              animate={{ width: `${(props.applyProgress.done / props.applyProgress.total) * 100}%` }}
+              transition={{ duration: 0.2, ease }}
+            />
+          )}
           <div>
             <Button
               variant="ghost"
@@ -1099,7 +1107,9 @@ export function PreviewScreen(props: PreviewScreenProps) {
               disabled={includedCount === 0 || props.isApplying || props.isStale}
             >
               {props.isApplying
-                ? "Organizing…"
+                ? props.applyProgress && props.applyProgress.total > 0
+                  ? `Organizing ${props.applyProgress.done} of ${props.applyProgress.total}…`
+                  : "Organizing…"
                 : `Organize ${includedCount} ${includedCount === 1 ? "file" : "files"}`}
             </Button>
           </div>

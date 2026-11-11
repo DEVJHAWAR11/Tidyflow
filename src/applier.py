@@ -6,9 +6,10 @@ import csv
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from tqdm import tqdm
 
@@ -16,6 +17,44 @@ from .models import CopyManifestEntry, FileRecord, ReviewDecision
 from .utils import choose_destination, compute_sha256, is_safe_to_copy, safe_filename
 
 logger = logging.getLogger(__name__)
+
+
+def _clonefile():
+    """macOS clonefile(2), or None where it isn't available."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+
+        fn = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True).clonefile
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+        fn.restype = ctypes.c_int
+        return fn
+    except (OSError, AttributeError):
+        return None
+
+
+_CLONEFILE = _clonefile()
+
+
+def place_file(src: Path, dest: Path, *, move: bool) -> str:
+    """Put a copy of ``src`` (or ``src`` itself, when moving) at ``dest``, the cheapest safe way.
+
+    Returns how: "renamed" (a move on the same disk: instant, nothing copied), "cloned" (an APFS
+    clone: instant, shares storage with the original until either is edited) or "copied" (a full
+    byte copy, which the caller must verify). ``dest`` must not exist.
+    """
+    if move:
+        try:
+            if os.stat(src).st_dev == os.stat(dest.parent).st_dev:
+                os.rename(src, dest)
+                return "renamed"
+        except OSError as exc:
+            logger.debug("Rename failed for %s, copying instead: %s", src.name, exc)
+    if _CLONEFILE is not None and _CLONEFILE(os.fsencode(src), os.fsencode(dest), 0) == 0:
+        return "cloned"
+    shutil.copy2(src, dest)
+    return "copied"
 
 
 def build_auto_approval_decisions(
@@ -73,6 +112,7 @@ def apply_decisions(
     dry_run: bool = True,
     move_mode: bool = False,
     db: Any = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> list[CopyManifestEntry]:
     """
     Copy (or move if explicitly confirmed) approved files into categorized folders.
@@ -90,7 +130,9 @@ def apply_decisions(
     manifest: list[CopyManifestEntry] = []
     skipped_count = 0
 
-    for dec in tqdm(approved, desc="Applying" if not dry_run else "Previewing", unit="file"):
+    for done, dec in enumerate(tqdm(approved, desc="Applying" if not dry_run else "Previewing", unit="file")):
+        if progress_callback:
+            progress_callback(done, len(approved))
         rec = id_map.get(dec.file_id)
         if rec is None:
             logger.warning("File ID %s not found in records — skipping", dec.file_id)
@@ -130,26 +172,32 @@ def apply_decisions(
         else:
             dest_dir.mkdir(parents=True, exist_ok=True)
 
-            # Perform copy
-            shutil.copy2(str(rec.abs_path), str(dest_path))
-
-            # Post-copy integrity verification
-            copied_hash = compute_sha256(dest_path)
-            if copied_hash != rec.sha256:
-                logger.error("HASH MISMATCH: %s (expected %s, got %s) - rolling back", dest_path, rec.sha256, copied_hash)
-                if dest_path.exists():
-                    dest_path.unlink()
+            try:
+                how = place_file(Path(rec.abs_path), dest_path, move=move_mode)
+            except OSError as exc:
+                logger.error("Could not place %s: %s", rec.filename, exc)
+                skipped_count += 1
                 continue
 
-            # If move_mode is enabled, delete original
-            if move_mode:
+            # Only a byte copy can come out different; a clone or a rename is the same data on disk.
+            if how == "copied":
+                copied_hash = compute_sha256(dest_path)
+                if copied_hash != rec.sha256:
+                    logger.error("HASH MISMATCH: %s (expected %s, got %s) - rolling back", dest_path, rec.sha256, copied_hash)
+                    dest_path.unlink(missing_ok=True)
+                    continue
+            elif how == "cloned" and dest_path.stat().st_size != rec.file_size_bytes:
+                logger.error("Clone of %s has the wrong size - rolling back", rec.filename)
+                dest_path.unlink(missing_ok=True)
+                continue
+
+            # A move that couldn't rename was copied: remove the original now that the copy is verified.
+            if move_mode and how != "renamed":
                 try:
                     os.remove(rec.abs_path)
-                    logger.info("Moved %s -> %s [OK]", rec.filename, dest_path)
                 except OSError as exc:
                     logger.error("Failed to remove original file during move: %s", exc)
-            else:
-                logger.info("Copied %s -> %s [OK]", rec.filename, dest_path)
+            logger.info("%s %s -> %s [OK]", how.capitalize(), rec.filename, dest_path)
 
             if db is not None:
                 try:
@@ -178,6 +226,8 @@ def apply_decisions(
         )
         manifest.append(manifest_entry)
 
+    if progress_callback:
+        progress_callback(len(approved), len(approved))
     logger.info(
         "Organize complete: %d %s, %d skipped",
         len(manifest), "previewed" if dry_run else "processed", skipped_count
