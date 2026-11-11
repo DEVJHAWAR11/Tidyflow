@@ -110,6 +110,8 @@ export interface PreviewScreenProps {
   /** User-chosen folder per file; effective folder = overrides[id] ?? file.category */
   categoryOverrides: Record<string, string>;
   onMoveFile: (fileId: string, folder: string) => void;
+  /** Drop the user's folder choice for a file, so it goes back to the AI's */
+  onClearMove: (fileId: string) => void;
   /** Files at/above this confidence (0-1) count as "sure" */
   autoThreshold: number;
   /** Clearer-name suggestions from the AI */

@@ -16,8 +16,10 @@ import {
   X,
   Pencil,
   Search,
+  Layers,
 } from "lucide-react";
 import { ReviewAssistant } from "./ReviewAssistant";
+import { SwipeReview } from "./SwipeReview";
 import type { PreviewScreenProps } from "./contracts";
 import type { ClassifiedFile } from "../types";
 import { Screen, Button, Card, StepHeader, SectionTitle, ease } from "./ui";
@@ -48,6 +50,30 @@ export function PreviewScreen(props: PreviewScreenProps) {
       next.delete(id);
       return next;
     });
+  };
+
+  // Swipe review: the files it goes through, and each file's state before it was swiped so undo can restore it.
+  const [swipeFiles, setSwipeFiles] = useState<ClassifiedFile[] | null>(null);
+  const beforeSwipe = useRef<Record<string, { folder?: string; included: boolean }>>({});
+  const remember = (id: string) => {
+    beforeSwipe.current[id] = { folder: props.categoryOverrides[id], included: props.selectedFileIds.has(id) };
+  };
+  const swipePlace = (id: string, folder: string) => {
+    remember(id);
+    props.onMoveFile(id, folder);
+    props.onSetIncluded(id, true);
+  };
+  const swipeLeave = (id: string) => {
+    remember(id);
+    leaveInPlace([id]);
+  };
+  const swipeUndo = (d: { fileId: string; kind: "place" | "leave" }) => {
+    const before = beforeSwipe.current[d.fileId];
+    if (!before) return;
+    if (d.kind === "leave") undoLeave(d.fileId);
+    else if (before.folder === undefined) props.onClearMove(d.fileId);
+    else props.onMoveFile(d.fileId, before.folder);
+    props.onSetIncluded(d.fileId, before.included);
   };
 
   // Rows changed by the last plain-language request glow briefly so the user can see what happened.
@@ -265,6 +291,17 @@ export function PreviewScreen(props: PreviewScreenProps) {
 
   return (
     <Screen className="max-w-[960px] mx-auto pt-8 pb-16 px-4 space-y-8">
+      {swipeFiles && (
+        <SwipeReview
+          files={swipeFiles}
+          folders={props.folders}
+          newNames={props.filenameOverrides}
+          onPlace={swipePlace}
+          onLeave={swipeLeave}
+          onUndo={swipeUndo}
+          onClose={() => setSwipeFiles(null)}
+        />
+      )}
       {/* Notices */}
       {props.aiError && unsureFiles.length > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-[10px] border border-tf-border bg-tf-surface px-4 py-3 text-[13.5px]">
@@ -377,6 +414,17 @@ export function PreviewScreen(props: PreviewScreenProps) {
             <SectionTitle
               aside={
                 <div className="flex items-center gap-1">
+                  {undecidedIds.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Layers size={14} strokeWidth={1.75} />}
+                      title="Go through these files one card at a time"
+                      onClick={() => setSwipeFiles(sortedUnsureFiles.filter((f) => !leftIds.has(f.file_id)))}
+                    >
+                      Swipe through
+                    </Button>
+                  )}
                   {props.onUndoSuggestions ? (
                     <Button
                       variant="ghost"
