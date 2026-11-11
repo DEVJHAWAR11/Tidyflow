@@ -115,6 +115,38 @@ def test_password_exports_are_secret_files(tmp_path):
     assert not is_secret_file(write("passport_scan.pdf"))
 
 
+def test_recovery_codes_are_secret(tmp_path):
+    def write(name, text="x"):
+        p = tmp_path / name
+        p.write_text(text)
+        return p
+
+    codes = "\n".join(["a1b2c-3d4e5", "f6g7h-8i9j0", "k1l2m-3n4o5", "p6q7r-8s9t0", "u1v2w-3x4y5"]) + "\n"
+    # By name, whatever the contents
+    assert is_secret_file(write("recovery-codes.txt"))
+    assert is_secret_file(write("github-recovery-codes.txt"))
+    assert is_secret_file(write("Backup-codes-me.txt"))
+    assert is_secret_file(write("2FA backup keys.pdf"))
+    # By contents: a bare list of codes, or codes under a heading, in a neutrally named file
+    assert is_secret_file(write("stuff.txt", codes))
+    assert is_secret_file(write("save.txt", "Google backup codes\n1234 5678\n2345 6789\n"))
+    # Ordinary text, lists and dates stay organizable
+    assert not is_secret_file(write("todo.txt", "buy milk\ncall mom\nfix bike\npay rent\n"))
+    assert not is_secret_file(write("dates.txt", "2026-10-01\n2026-10-02\n2026-10-03\n2026-10-04\n"))
+    assert not is_secret_file(write("notes.txt", "Enter the verification code we texted you to sign in.\n"))
+    assert not is_secret_file(write("recovery_plan.pdf"))
+
+
+def test_recovery_codes_are_redacted_from_extracted_text():
+    text = "GitHub recovery codes\nabcd1-23efg\nhij45-67klm\nKeep these somewhere safe. Invoice 2026-10-01"
+    assert text_contains_secrets(text)
+    redacted = redact_secrets(text)
+    assert "abcd1-23efg" not in redacted and "hij45-67klm" not in redacted
+    assert "Keep these somewhere safe" in redacted and "2026-10-01" in redacted
+    # Without any mention of codes, ordinary IDs in prose are left alone
+    assert redact_secrets("Order AB12CD34EF shipped") == "Order AB12CD34EF shipped"
+
+
 def test_rename_suggestions_must_add_meaning():
     from src.utils import rename_adds_meaning
 
