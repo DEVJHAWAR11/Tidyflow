@@ -93,23 +93,51 @@ UNSAFE_COPY_EXTENSIONS: set[str] = {
 }
 
 
+# Account recovery / 2FA backup codes ("github-recovery-codes.txt", "Backup-codes-me.txt", "2FA backup keys.pdf").
+_RECOVERY_NAME_RE = re.compile(
+    r"(recovery|backup|2fa|mfa|two[ _-]?factor|otp)[ _-]*(codes?|keys?)|seed[ _-]?phrase|mnemonic",
+    re.IGNORECASE,
+)
+_RECOVERY_PHRASE_RE = re.compile(
+    r"(recovery|backup|verification|2fa|two[ -]?factor|security)[ -]*codes?|seed phrase", re.IGNORECASE
+)
+# One code: "abcde-12345", "1234 5678", "a1b2c3d4e5". Each must hold a digit, so ordinary words don't match.
+_CODE_TOKEN_RE = re.compile(
+    r"(?<![\w-])(?=[\w -]*\d)(?:[A-Za-z0-9]{4,10}(?:[ -][A-Za-z0-9]{4,10}){1,3}"
+    r"|(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{8,16})(?![\w-])"
+)
+_CODE_LINE_RE = re.compile(r"^\s*(?:\d{1,2}[.)]\s*)?" + _CODE_TOKEN_RE.pattern + r"\s*$")
+
+
+def _has_recovery_codes(text: str) -> bool:
+    """True when text names recovery/backup codes next to code-shaped tokens, or is just a list of codes."""
+    if not text:
+        return False
+    if _RECOVERY_PHRASE_RE.search(text) and len(_CODE_TOKEN_RE.findall(text)) >= 2:
+        return True
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= 4 and sum(bool(_CODE_LINE_RE.match(ln)) for ln in lines) >= 0.8 * len(lines)
+
+
 def text_contains_secrets(text: str) -> bool:
-    """Return True if text appears to contain API keys, passwords, or credentials."""
+    """Return True if text appears to contain API keys, passwords, credentials, or recovery codes."""
     if not text:
         return False
     for pat in _SECRET_PATTERNS:
         if pat.search(text):
             return True
-    return False
+    return _has_recovery_codes(text)
 
 
 def redact_secrets(text: str) -> str:
-    """Scrub sensitive credentials, passwords, and tokens with [REDACTED]."""
+    """Scrub sensitive credentials, passwords, tokens and recovery codes with [REDACTED]."""
     if not text:
         return ""
     result = text
     for pat in _SECRET_PATTERNS:
         result = pat.sub("[REDACTED]", result)
+    if _has_recovery_codes(result):
+        result = _CODE_TOKEN_RE.sub("[REDACTED]", result)
     return result
 
 
@@ -139,13 +167,15 @@ def is_secret_file(path: Path) -> bool:
         return True
     if ext in _CREDENTIAL_DATA_EXTS and _CREDENTIAL_NAME_RE.search(path.stem):
         return True
+    if _RECOVERY_NAME_RE.search(path.stem):
+        return True
     if ext in {".csv", ".tsv", ".txt"}:
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                header = f.readline(2048)
+                head = f.read(4096)
         except OSError:
             return False
-        return looks_like_credential_table(header)
+        return looks_like_credential_table(head) or _has_recovery_codes(head)
     return False
 
 
