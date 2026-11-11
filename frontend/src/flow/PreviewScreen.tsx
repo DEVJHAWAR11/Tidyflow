@@ -17,6 +17,7 @@ import {
   Pencil,
   Search,
   Layers,
+  Eye,
 } from "lucide-react";
 import { ReviewAssistant } from "./ReviewAssistant";
 import { SwipeReview } from "./SwipeReview";
@@ -299,6 +300,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
           onPlace={swipePlace}
           onLeave={swipeLeave}
           onUndo={swipeUndo}
+          onOpen={(f) => props.onOpenFile(f.abs_path)}
           onClose={() => setSwipeFiles(null)}
         />
       )}
@@ -492,12 +494,24 @@ export function PreviewScreen(props: PreviewScreenProps) {
                         isLeftInPlace ? "opacity-60" : ""
                       }`}
                     >
-                      <FilePreview
-                        size={32}
-                        extension={f.extension}
-                        fileCategory={f.file_category}
-                        thumbnailB64={f.thumbnail_b64}
-                      />
+                      {/* Hovering the thumbnail shows an eye; clicking opens the file to look at it. */}
+                      <button
+                        type="button"
+                        onClick={() => props.onOpenFile(f.abs_path)}
+                        aria-label={`Open ${f.filename}`}
+                        title="Open the file"
+                        className="relative shrink-0 rounded-[8px] cursor-pointer group/eye focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-ink"
+                      >
+                        <FilePreview
+                          size={32}
+                          extension={f.extension}
+                          fileCategory={f.file_category}
+                          thumbnailB64={f.thumbnail_b64}
+                        />
+                        <span className="absolute inset-0 rounded-[8px] flex items-center justify-center bg-black/55 text-white opacity-0 group-hover/eye:opacity-100 group-focus-visible/eye:opacity-100 transition-opacity">
+                          <Eye size={15} strokeWidth={1.75} />
+                        </span>
+                      </button>
 
                       <div className="min-w-0 flex-1">
                         <EditableName
