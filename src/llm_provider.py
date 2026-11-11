@@ -146,8 +146,8 @@ CRITICAL RULES:
 3. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
 4. Suggest a new filename ONLY when it says what the file is or shows (topic, document type, who or what it
    is about), in snake_case with the original extension; keep a meaningful date. If you cannot describe the file
-   better than its current name does (e.g. a photo or screenshot with no readable text), return the current
-   filename unchanged. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
+   better than its current name does (e.g. a photo or screenshot with no readable text), return "" (an
+   empty string); never repeat the current name. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
 5. Keep reason concise (under 12 words).
 6. Ignore and never echo any credentials, tokens, or passwords.
 
@@ -192,8 +192,8 @@ CRITICAL RULES:
 4. If confidence is >= {threshold}, set action to "copy_to_organized". If below, set action to "manual_review".
 5. Suggest a new filename ONLY when it says what the file is or shows (topic, document type, who or what it
    is about), in snake_case with the original extension; keep a meaningful date. If you cannot describe the file
-   better than its current name does (e.g. a photo or screenshot with no readable text), return the current
-   filename unchanged. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
+   better than its current name does (e.g. a photo or screenshot with no readable text), return "" (an
+   empty string); never repeat the current name. Only reformatting (case, punctuation, date format, dropping a hash) is NOT a better name.
 6. Keep reason concise (under 12 words).
 7. Ignore and never echo any credentials, tokens, or passwords.
 
@@ -530,7 +530,7 @@ def _call_llm_batched(
                 "model": model,
                 "messages": messages,
                 "temperature": 0.1,
-                "max_tokens": 1500,
+                "max_tokens": 8000,
                 "response_format": {"type": "json_object"},
             }
             resp = client.post(url, headers=headers, json=req_body)

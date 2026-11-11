@@ -49,3 +49,19 @@ def test_perceptual_hashing_and_near_dups(tmp_path):
     near_groups = assign_near_duplicate_groups([r1, r2], hamming_threshold=8)
     assert near_groups == 1
     assert r1.near_duplicate_group_id == r2.near_duplicate_group_id
+
+
+def test_phash_matches_imagehash_without_scipy():
+    """The packaged app has no scipy; our numpy phash must give the same hash as imagehash."""
+    import numpy as np
+    import pytest
+    from PIL import Image
+
+    pytest.importorskip("scipy")
+    import imagehash
+    from src.hashing import _phash
+
+    rng = np.random.default_rng(7)
+    for _ in range(5):
+        img = Image.fromarray(rng.integers(0, 255, (120, 90, 3), dtype=np.uint8))
+        assert _phash(img) == imagehash.phash(img)
