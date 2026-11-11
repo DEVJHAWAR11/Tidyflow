@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from src.applier import apply_decisions, build_auto_approval_decisions
 from src.models import ClassificationResult, FileRecord, ReviewDecision
@@ -147,3 +148,41 @@ def test_new_names_cannot_leave_the_organized_folder(tmp_path):
     apply_decisions(decisions, records, out_dir, dry_run=False)
     assert (out_dir / "Docs" / "escaped.txt").exists()
     assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_organize_clones_or_renames_when_it_can_and_copies_and_verifies_otherwise(tmp_path, monkeypatch):
+    import src.applier as applier
+    from src.config import TidyConfig
+    from src.scanner import scan_directory
+
+    src_dir = tmp_path / "in"
+    src_dir.mkdir()
+    (src_dir / "a.txt").write_text("alpha")
+    (src_dir / "b.txt").write_text("bravo")
+    records = scan_directory(TidyConfig(input_dir=src_dir))
+    decisions = [ReviewDecision(file_id=r.file_id, approved=True, override_category="Docs") for r in records]
+    seen = []
+
+    # No clone support (another disk, Windows): a full copy, checked by hash, with progress reported.
+    monkeypatch.setattr(applier, "_CLONEFILE", None)
+    hashed = []
+    real_hash = applier.compute_sha256
+    monkeypatch.setattr(applier, "compute_sha256", lambda p: hashed.append(p) or real_hash(p))
+    out = tmp_path / "copied"
+    manifest = apply_decisions(decisions, records, out, dry_run=False, progress_callback=lambda d, t: seen.append((d, t)))
+    assert len(manifest) == 2 and len(hashed) == 2
+    assert (src_dir / "a.txt").exists()  # copying never touches the originals
+    assert seen[0] == (0, 2) and seen[-1] == (2, 2)
+
+    # A clone is trusted without reading the file back.
+    hashed.clear()
+    monkeypatch.setattr(applier, "_CLONEFILE", lambda s, d, f: (shutil.copyfile(s, d), 0)[1])
+    apply_decisions(decisions, records, tmp_path / "cloned", dry_run=False)
+    assert hashed == []
+    assert (tmp_path / "cloned" / "Docs" / "a.txt").read_text() == "alpha"
+
+    # Moving on the same disk is a rename: nothing copied, nothing hashed, original gone.
+    apply_decisions(decisions, records, tmp_path / "moved", dry_run=False, move_mode=True)
+    assert hashed == []
+    assert (tmp_path / "moved" / "Docs" / "b.txt").read_text() == "bravo"
+    assert not (src_dir / "b.txt").exists()
