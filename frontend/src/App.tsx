@@ -750,6 +750,14 @@ export default function App() {
     setCategoryOverrides((prev) => ({ ...prev, [fileId]: folder }));
   };
 
+  const handleClearMove = (fileId: string) => {
+    setCategoryOverrides((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+  };
+
   // "Use all suggestions": what each file had before, so undo can put back exactly those files.
   const [suggestionsUndo, setSuggestionsUndo] = useState<{
     folders: Record<string, string>;
@@ -1167,6 +1175,7 @@ export default function App() {
             onSetIncluded={handleSetIncluded}
             categoryOverrides={categoryOverrides}
             onMoveFile={handleMoveFile}
+            onClearMove={handleClearMove}
             autoThreshold={autoThreshold}
             renameSuggestionCount={renameSuggestions.length}
             renamesEnabled={renamesEnabled}
