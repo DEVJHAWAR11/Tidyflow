@@ -122,3 +122,28 @@ def test_top_level_clash_gets_a_number(tmp_path):
     (dest / "photo.jpg").write_text("one")
     path, already = choose_destination(dest, "photo.jpg", "not-the-same-hash")
     assert path.name == "photo (2).jpg" and not already
+
+
+def test_new_names_cannot_leave_the_organized_folder(tmp_path):
+    from src.config import TidyConfig
+    from src.scanner import scan_directory
+    from src.utils import safe_filename
+
+    assert safe_filename("../../evil.txt", "a.txt") == "evil.txt"
+    assert safe_filename("..\\x\\evil.txt", "a.txt") == "evil.txt"
+    assert safe_filename("C:report.pdf", "a.pdf") == "Creport.pdf"
+    assert safe_filename("  ..  ", "a.txt") == "a.txt"
+    assert safe_filename(".hidden.txt", "a.txt") == "hidden.txt"
+    assert safe_filename("", "a.txt") == "a.txt"
+
+    src_dir = tmp_path / "in"
+    src_dir.mkdir()
+    (src_dir / "notes.txt").write_text("hello")
+    records = scan_directory(TidyConfig(input_dir=src_dir))
+    out_dir = tmp_path / "out"
+    decisions = [ReviewDecision(file_id=records[0].file_id, approved=True, override_category="Docs",
+                                override_filename="../../escaped.txt")]
+
+    apply_decisions(decisions, records, out_dir, dry_run=False)
+    assert (out_dir / "Docs" / "escaped.txt").exists()
+    assert not (tmp_path / "escaped.txt").exists()
