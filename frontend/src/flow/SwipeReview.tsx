@@ -8,7 +8,7 @@ import {
   useReducedMotion,
   useTransform,
 } from "motion/react";
-import { ArrowLeft, ArrowRight, ArrowUp, Check, CornerUpLeft, FolderOpen, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, Check, CornerUpLeft, Eye, FolderOpen, X } from "lucide-react";
 import type { ClassifiedFile } from "../types";
 import { FilePreview, FolderIcon } from "./icons";
 import { ease } from "./ui";
@@ -26,6 +26,8 @@ export interface SwipeReviewProps {
   onLeave: (fileId: string) => void;
   /** Reverse one earlier decision. */
   onUndo: (decision: Decision) => void;
+  /** Open the file in its default app, to look at it before deciding. */
+  onOpen: (file: ClassifiedFile) => void;
   onClose: () => void;
 }
 
@@ -37,7 +39,7 @@ function suggestionFor(f: ClassifiedFile, folders: string[]) {
 }
 
 /** Go through the files to review one card at a time: right puts a file in its suggested folder, left leaves it. */
-export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo, onClose }: SwipeReviewProps) {
+export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo, onOpen, onClose }: SwipeReviewProps) {
   const [index, setIndex] = useState(0);
   const [history, setHistory] = useState<Decision[]>([]);
   // A keyboard or button decision flings the top card the same way a swipe would.
@@ -99,7 +101,10 @@ export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo
         return;
       }
       if (done || fling || choosing) return;
-      if (e.key === "ArrowRight") {
+      if (e.key === " " && current) {
+        e.preventDefault();
+        onOpen(current);
+      } else if (e.key === "ArrowRight") {
         e.preventDefault();
         accept();
       } else if (e.key === "ArrowLeft") {
@@ -112,7 +117,7 @@ export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [accept, undo, onClose, choosing, done, fling]);
+  }, [accept, undo, onClose, onOpen, current, choosing, done, fling]);
 
   const placed = history.filter((d) => d.kind === "place").length;
   const left = history.length - placed;
@@ -204,6 +209,7 @@ export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo
                 newName={newNames[current.file_id]}
                 suggestion={suggestion}
                 fling={fling}
+                onOpen={() => onOpen(current)}
                 onSwipe={(dir) => (dir === "right" && !suggestion ? setChoosing(true) : setFling({ dir }))}
                 onFlung={() => fling && decide(fling.dir, fling.folder)}
               />
@@ -260,6 +266,7 @@ export function SwipeReview({ files, folders, newNames, onPlace, onLeave, onUndo
           <span className="flex items-center gap-1"><ArrowLeft size={12} /> leave</span>
           <span className="flex items-center gap-1"><ArrowRight size={12} /> suggested folder</span>
           <span className="flex items-center gap-1"><ArrowUp size={12} /> other folder</span>
+          <span>Space open</span>
           <span>Z undo</span>
         </div>
       </div>
@@ -275,6 +282,7 @@ function TopCard({
   newName,
   suggestion,
   fling,
+  onOpen,
   onSwipe,
   onFlung,
 }: {
@@ -283,6 +291,7 @@ function TopCard({
   newName?: string;
   suggestion: string | null;
   fling: { dir: "left" | "right" | "up" } | null;
+  onOpen: () => void;
   onSwipe: (dir: "left" | "right") => void;
   onFlung: () => void;
 }) {
@@ -322,7 +331,7 @@ function TopCard({
         if (!right || !suggestion) animate(x, 0, { type: "spring", stiffness: 520, damping: 34 });
       }}
     >
-      <CardFace file={file} folders={folders} newName={newName} lifted />
+      <CardFace file={file} folders={folders} newName={newName} onOpen={onOpen} lifted />
       {/* Labels that fade in while dragging */}
       <motion.div
         style={{ opacity: acceptOpacity }}
@@ -345,11 +354,14 @@ function CardFace({
   file,
   folders,
   newName,
+  onOpen,
   lifted = false,
 }: {
   file: ClassifiedFile;
   folders: string[];
   newName?: string;
+  /** Only the top card can be opened. */
+  onOpen?: () => void;
   lifted?: boolean;
 }) {
   const suggestion = suggestionFor(file, folders);
@@ -360,7 +372,7 @@ function CardFace({
         lifted ? "shadow-[0_24px_60px_-12px_rgba(0,0,0,0.45)]" : ""
       }`}
     >
-      <CardPreview file={file} />
+      <CardPreview file={file} onOpen={onOpen} />
       <div className="flex-1 min-h-0 p-5 flex flex-col gap-2">
         <div className="shrink-0 text-[16px] font-semibold text-tf-ink leading-snug line-clamp-2 break-words">
           {file.filename}
@@ -401,7 +413,7 @@ function CardFace({
  * made by the backend only for the cards in the stack, fades in over it. Cards waiting behind load
  * theirs early, so the next card is usually sharp before it reaches the top.
  */
-function CardPreview({ file }: { file: ClassifiedFile }) {
+function CardPreview({ file, onOpen }: { file: ClassifiedFile; onOpen?: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
@@ -430,6 +442,22 @@ function CardPreview({ file }: { file: ClassifiedFile }) {
             loaded ? "opacity-100" : "opacity-0"
           }`}
         />
+      )}
+      {onOpen && (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+          aria-label={`Open ${file.filename}`}
+          title="Open the file (Space)"
+          className="absolute top-3 right-3 h-8 pl-2.5 pr-3 rounded-full flex items-center gap-1.5 bg-black/55 text-white text-[12px] font-medium backdrop-blur-sm hover:bg-black/70 transition-colors cursor-pointer"
+        >
+          <Eye size={14} strokeWidth={1.75} />
+          Open
+        </button>
       )}
     </div>
   );
