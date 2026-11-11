@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+import html
 import logging
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -12,6 +15,27 @@ from typing import Any, List, Tuple
 from .utils import get_app_data_dir
 
 logger = logging.getLogger(__name__)
+
+# Columns of the full-text index, in order. Changing this list rebuilds the index on next start.
+_FTS_COLUMNS = ("path", "new_path", "suggested_filename", "extracted_text", "category")
+# How much a match in each of those columns counts: a file's name beats the text inside it.
+_FTS_WEIGHTS = (4.0, 6.0, 6.0, 1.0, 3.0)
+_MARK_OPEN, _MARK_CLOSE = "\x02", "\x03"
+
+# File kinds offered as a filter on the search page.
+SEARCH_KINDS: dict[str, frozenset[str]] = {
+    "documents": frozenset({".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".pages", ".odt", ".epub", ".tex"}),
+    "images": frozenset({".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif", ".svg"}),
+    "sheets": frozenset({".xls", ".xlsx", ".csv", ".tsv", ".numbers", ".ods"}),
+    "slides": frozenset({".ppt", ".pptx", ".key", ".odp"}),
+    "media": frozenset({".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}),
+    "archives": frozenset({".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".dmg", ".iso"}),
+}
+
+
+def file_kind(extension: str | None) -> str:
+    ext = (extension or "").lower()
+    return next((kind for kind, exts in SEARCH_KINDS.items() if ext in exts), "other")
 
 
 class DatabaseManager:
@@ -82,35 +106,48 @@ class DatabaseManager:
                 )
             """)
 
-            # FTS5 Virtual Table
-            conn.execute("""
+            # FTS5 Virtual Table. It covers the original path, where the file is now, the name
+            # TidyFlow gave it, the text inside and its folder.
+            fts_cols = [r[1] for r in conn.execute("PRAGMA table_info(files_fts)").fetchall()]
+            rebuild_fts = False
+            if fts_cols and fts_cols != list(_FTS_COLUMNS):
+                # An older index (it lacked the new name and place): drop it and build it again.
+                for trig in ("files_ai", "files_ad", "files_au"):
+                    conn.execute(f"DROP TRIGGER IF EXISTS {trig}")
+                conn.execute("DROP TABLE IF EXISTS files_fts_vocab")
+                conn.execute("DROP TABLE files_fts")
+                rebuild_fts = True
+            cols = ", ".join(_FTS_COLUMNS)
+            new_vals = ", ".join(f"new.{c}" for c in _FTS_COLUMNS)
+            old_vals = ", ".join(f"old.{c}" for c in _FTS_COLUMNS)
+            conn.execute(f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-                    path, extracted_text, category,
+                    {cols},
                     content='files', content_rowid='id'
                 )
             """)
+            # The words in the index, used to suggest a spelling when a search finds nothing.
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS files_fts_vocab USING fts5vocab(files_fts, 'row')")
 
             # Triggers for FTS sync
-            conn.execute("""
+            conn.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
-                    INSERT INTO files_fts(rowid, path, extracted_text, category)
-                    VALUES (new.id, new.path, new.extracted_text, new.category);
+                    INSERT INTO files_fts(rowid, {cols}) VALUES (new.id, {new_vals});
                 END;
             """)
-            conn.execute("""
+            conn.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
-                    INSERT INTO files_fts(files_fts, rowid, path, extracted_text, category)
-                    VALUES('delete', old.id, old.path, old.extracted_text, old.category);
+                    INSERT INTO files_fts(files_fts, rowid, {cols}) VALUES('delete', old.id, {old_vals});
                 END;
             """)
-            conn.execute("""
+            conn.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON files BEGIN
-                    INSERT INTO files_fts(files_fts, rowid, path, extracted_text, category)
-                    VALUES('delete', old.id, old.path, old.extracted_text, old.category);
-                    INSERT INTO files_fts(rowid, path, extracted_text, category)
-                    VALUES (new.id, new.path, new.extracted_text, new.category);
+                    INSERT INTO files_fts(files_fts, rowid, {cols}) VALUES('delete', old.id, {old_vals});
+                    INSERT INTO files_fts(rowid, {cols}) VALUES (new.id, {new_vals});
                 END;
             """)
+            if rebuild_fts:
+                conn.execute("INSERT INTO files_fts(files_fts) VALUES('rebuild')")
 
             # Indexes
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fingerprint ON files(fingerprint)")
@@ -304,72 +341,166 @@ class DatabaseManager:
         return await asyncio.to_thread(_read)
 
     async def search(self, query: str) -> List[dict]:
-        """Full-text search across indexed files with FTS5 and LIKE fallback."""
-        clean_query = query.strip()
-        if not clean_query:
-            return []
+        """The first page of matches for ``query`` (see ``search_page``)."""
+        return (await self.search_page(query))["results"]
 
-        def _search():
-            import re
+    async def search_page(
+        self,
+        query: str,
+        *,
+        limit: int = 30,
+        offset: int = 0,
+        category: str | None = None,
+        kind: str | None = None,
+        organized: bool | None = None,
+    ) -> dict:
+        """One page of files matching ``query``, best first, with counts for the filters.
+
+        Whole words and word beginnings are matched through the full-text index, with names ranked
+        above the text inside a file. Names are also matched anywhere inside a word, and a search
+        that finds nothing is tried again with the closest spelling found in the index.
+
+        Returns ``{"results", "total", "facets", "corrected"}``. ``facets`` counts every match
+        before the filters; ``corrected`` is the query that was searched instead, if any.
+        Snippets are HTML-escaped and wrap matches in ``<mark>``.
+        """
+        clean_query = query.strip()
+        empty = {"results": [], "total": 0, "facets": {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0}, "corrected": None}
+        if not clean_query:
+            return empty
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(offset))
+
+        def _search() -> dict:
             conn = sqlite3.connect(self.db_path)
             try:
                 conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
+                tokens = re.findall(r"\w+", clean_query)
+                matches: dict[int, sqlite3.Row] = {}  # insertion order is the ranking
+                light = "files.id, files.category, files.extension, files.new_path, files.status"
 
-                # 1. Sanitize query into FTS5 tokens
-                tokens = re.findall(r'[A-Za-z0-9_]+', clean_query)
-                results = []
+                def fts_expr(toks: list[str]) -> str:
+                    return " AND ".join(f'"{t}"*' for t in toks)
 
-                if tokens:
-                    fts_syntax = " AND ".join(f'"{tok}"*' for tok in tokens)
+                def run_fts(toks: list[str]) -> None:
+                    weights = ", ".join(str(w) for w in _FTS_WEIGHTS)
                     try:
-                        sql_fts = """
-                            SELECT files.id, files.file_id, files.path, files.new_path, files.status, files.category,
-                                   files.confidence_score, files.extracted_text,
-                                   files.thumbnail_b64, files.file_size_bytes, files.extension,
-                                   files.suggested_filename, files.reason,
-                                   snippet(files_fts, -1, '<b>', '</b>', '...', 12) as snippet
-                            FROM files_fts
-                            JOIN files ON files.id = files_fts.rowid
-                            WHERE files_fts MATCH ?
-                            ORDER BY rank
-                            LIMIT 30
-                        """
-                        cursor.execute(sql_fts, (fts_syntax,))
-                        rows = cursor.fetchall()
-                        for row in rows:
-                            d = dict(row)
-                            if not d.get("snippet") and d.get("extracted_text"):
-                                d["snippet"] = _make_like_snippet(d["extracted_text"], clean_query)
-                            results.append(d)
+                        rows = conn.execute(
+                            f"SELECT {light} FROM files_fts JOIN files ON files.id = files_fts.rowid "
+                            f"WHERE files_fts MATCH ? ORDER BY bm25(files_fts, {weights}) LIMIT 2000",
+                            (fts_expr(toks),),
+                        ).fetchall()
                     except sqlite3.OperationalError as e:
-                        logger.warning("FTS MATCH error for '%s': %s", fts_syntax, e)
-
-                # 2. Fallback to LIKE search if FTS returned 0 results
-                if not results:
-                    like_param = f"%{clean_query}%"
-                    sql_like = """
-                        SELECT id, file_id, path, new_path, status, category, confidence_score, extracted_text,
-                               thumbnail_b64, file_size_bytes, extension, suggested_filename, reason,
-                               '' as snippet
-                        FROM files
-                        WHERE path LIKE ? OR new_path LIKE ? OR category LIKE ? OR suggested_filename LIKE ? OR extracted_text LIKE ?
-                        ORDER BY id DESC
-                        LIMIT 30
-                    """
-                    cursor.execute(sql_like, (like_param, like_param, like_param, like_param, like_param))
-                    rows = cursor.fetchall()
+                        logger.warning("FTS MATCH error for %r: %s", toks, e)
+                        return
                     for row in rows:
-                        d = dict(row)
-                        src_text = d.get("extracted_text") or d.get("category") or d.get("new_path") or d.get("path") or ""
-                        d["snippet"] = _make_like_snippet(src_text, clean_query)
-                        results.append(d)
+                        matches.setdefault(row["id"], row)
 
-                return results
+                def run_like(columns: tuple[str, ...]) -> None:
+                    like = "%" + clean_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                    where = " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in columns)
+                    rows = conn.execute(
+                        f"SELECT {light} FROM files WHERE {where} ORDER BY id DESC LIMIT 500",
+                        (like,) * len(columns),
+                    ).fetchall()
+                    for row in rows:
+                        matches.setdefault(row["id"], row)
+
+                used_tokens = tokens
+                corrected = None
+                if tokens:
+                    run_fts(tokens)
+                # Names also match in the middle of a word ("voice" finds "invoice.pdf").
+                run_like(("path", "new_path", "suggested_filename"))
+                if not matches:
+                    run_like(("extracted_text", "category"))
+                if not matches and tokens:
+                    fixed = [_closest_word(conn, t) or t for t in tokens]
+                    if fixed != [t.lower() for t in tokens]:
+                        run_fts(fixed)
+                        if matches:
+                            used_tokens, corrected = fixed, " ".join(fixed)
+
+                # Counts for the filter chips, over every match.
+                facets = {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0}
+                kept: list[int] = []
+                for row_id, row in matches.items():
+                    cat = row["category"] or "Unknown"
+                    row_kind = file_kind(row["extension"])
+                    is_organized = bool(row["new_path"]) and row["status"] in ("copied", "moved")
+                    facets["categories"][cat] = facets["categories"].get(cat, 0) + 1
+                    facets["kinds"][row_kind] = facets["kinds"].get(row_kind, 0) + 1
+                    facets["organized" if is_organized else "unorganized"] += 1
+                    if category and cat != category:
+                        continue
+                    if kind and row_kind != kind:
+                        continue
+                    if organized is not None and is_organized != organized:
+                        continue
+                    kept.append(row_id)
+
+                page_ids = kept[offset:offset + limit]
+                if not page_ids:
+                    return {"results": [], "total": len(kept), "facets": facets, "corrected": corrected}
+
+                marks = ",".join("?" * len(page_ids))
+                rows = {
+                    r["id"]: dict(r)
+                    for r in conn.execute(
+                        "SELECT id, file_id, path, new_path, status, category, confidence_score, fingerprint, "
+                        "thumbnail_b64, file_size_bytes, extension, suggested_filename, reason, "
+                        f"substr(extracted_text, 1, 20000) AS extracted_text FROM files WHERE id IN ({marks})",
+                        page_ids,
+                    )
+                }
+                snippets: dict[int, str] = {}
+                if used_tokens:
+                    try:
+                        text_col = _FTS_COLUMNS.index("extracted_text")
+                        for r in conn.execute(
+                            f"SELECT rowid, snippet(files_fts, {text_col}, '{_MARK_OPEN}', '{_MARK_CLOSE}', '…', 16) AS s "
+                            f"FROM files_fts WHERE files_fts MATCH ? AND rowid IN ({marks})",
+                            (fts_expr(used_tokens), *page_ids),
+                        ):
+                            snippets[r["rowid"]] = r["s"] or ""
+                    except sqlite3.OperationalError as e:
+                        logger.warning("FTS snippet error: %s", e)
+
+                results = []
+                for row_id in page_ids:
+                    d = rows.get(row_id)
+                    if d is None:
+                        continue
+                    text = d.pop("extracted_text") or ""
+                    raw = snippets.get(row_id)
+                    if raw is not None and _MARK_OPEN in raw:
+                        d["snippet"] = _marked_html(raw)
+                    else:
+                        d["snippet"] = _make_like_snippet(text, " ".join(used_tokens) or clean_query)
+                    d["has_text"] = bool(text.strip())
+                    results.append(d)
+                return {"results": results, "total": len(kept), "facets": facets, "corrected": corrected}
             finally:
                 conn.close()
 
         return await asyncio.to_thread(_search)
+
+    async def search_stats(self) -> dict:
+        """How much the search covers: file counts and the folders with the most files."""
+        def _stats() -> dict:
+            conn = sqlite3.connect(self.db_path)
+            try:
+                files, with_text = conn.execute(
+                    "SELECT count(*), coalesce(sum(extracted_text IS NOT NULL AND trim(extracted_text) != ''), 0) FROM files"
+                ).fetchone()
+                cats = conn.execute(
+                    "SELECT category, count(*) FROM files WHERE category IS NOT NULL AND category NOT IN ('', 'Unknown') "
+                    "GROUP BY category ORDER BY count(*) DESC LIMIT 8"
+                ).fetchall()
+                return {"files": files, "with_text": with_text, "categories": [{"name": c, "count": n} for c, n in cats]}
+            finally:
+                conn.close()
+        return await asyncio.to_thread(_stats)
 
     async def log_tokens(self, provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float):
         """Record LLM token usage and estimated cost."""
@@ -379,25 +510,53 @@ class DatabaseManager:
         )
 
 
-def _make_like_snippet(text: str, query: str, max_len: int = 160) -> str:
-    """Generate snippet with <b> highlighting for LIKE search fallback."""
-    import re
-    if not text or not query:
-        return ""
-    tokens = [re.escape(t) for t in re.findall(r'[A-Za-z0-9_]+', query) if t]
-    if not tokens:
-        return text[:max_len] + ("..." if len(text) > max_len else "")
+def _marked_html(text: str) -> str:
+    """Escape ``text`` for HTML and turn the match markers into ``<mark>`` tags."""
+    return html.escape(text, quote=False).replace(_MARK_OPEN, "<mark>").replace(_MARK_CLOSE, "</mark>")
 
-    pattern = re.compile(f"({'|'.join(tokens)})", re.IGNORECASE)
-    match = pattern.search(text)
+
+def _make_like_snippet(text: str, query: str, max_len: int = 160) -> str:
+    """A short, HTML-escaped piece of ``text`` around the first match, with matches in ``<mark>``."""
+    if not text:
+        return ""
+    text = text.replace(_MARK_OPEN, "").replace(_MARK_CLOSE, "")
+    tokens = [re.escape(t) for t in re.findall(r"\w+", query or "") if t]
+    pattern = re.compile(f"({'|'.join(tokens)})", re.IGNORECASE) if tokens else None
+    match = pattern.search(text) if pattern else None
     if not match:
-        return text[:max_len] + ("..." if len(text) > max_len else "")
+        return html.escape(text[:max_len], quote=False) + ("…" if len(text) > max_len else "")
 
     start = max(0, match.start() - 40)
     end = min(len(text), match.end() + 80)
-    snippet = text[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet = snippet + "..."
-    return pattern.sub(r"<b>\1</b>", snippet)
+    snippet = pattern.sub(f"{_MARK_OPEN}\\1{_MARK_CLOSE}", text[start:end])
+    return ("…" if start > 0 else "") + _marked_html(snippet) + ("…" if end < len(text) else "")
+
+
+def _closest_word(conn: sqlite3.Connection, token: str) -> str | None:
+    """The indexed word nearest to a misspelt ``token``; None if it is already a word or nothing is close."""
+    tok = token.lower()
+    if len(tok) < 4 or tok.isdigit():
+        return None
+    try:
+        # Already a word, or the beginning of one: nothing to fix.
+        if conn.execute(
+            "SELECT 1 FROM files_fts_vocab WHERE term >= ? AND term < ? LIMIT 1", (tok, tok + "￿")
+        ).fetchone():
+            return None
+        # Typos rarely hit the first letter, which keeps the list to compare against short.
+        candidates = dict(
+            conn.execute(
+                "SELECT term, doc FROM files_fts_vocab WHERE term >= ? AND term < ? AND length(term) BETWEEN ? AND ?",
+                (tok[0], tok[0] + "￿", len(tok) - 2, len(tok) + 2),
+            ).fetchall()
+        )
+    except sqlite3.OperationalError as e:
+        logger.debug("Spelling lookup failed: %s", e)
+        return None
+    close = difflib.get_close_matches(tok, candidates.keys(), n=5, cutoff=0.75)
+    if not close:
+        return None
+    # Among near-equal spellings prefer the word found in more files.
+    best = difflib.SequenceMatcher(None, tok, close[0]).ratio()
+    near = [w for w in close if difflib.SequenceMatcher(None, tok, w).ratio() >= best - 0.05]
+    return max(near, key=lambda w: candidates[w])

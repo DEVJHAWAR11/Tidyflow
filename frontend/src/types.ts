@@ -56,6 +56,11 @@ export interface FtsResultItem {
   file_id?: string;
   path: string;
   new_path?: string;
+  /** Where the file is now, its name there, and when it was last changed (seconds). Set by /search. */
+  current_path?: string;
+  name?: string;
+  modified?: number | null;
+  has_text?: boolean;
   status?: string;
   category?: string;
   confidence_score?: number;

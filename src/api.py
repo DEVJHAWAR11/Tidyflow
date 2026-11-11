@@ -1069,25 +1069,102 @@ async def undo_last_apply():
     return {"status": "success", "restored": restored, "skipped": skipped}
 
 
+def _current_path(row: dict) -> Path | None:
+    """Where an indexed file is now: its organized place, or its original one; None if it is gone."""
+    for key in ("new_path", "path"):
+        value = row.get(key)
+        if value and Path(value).is_file():
+            return Path(value)
+    return None
+
+
 @app.get("/search")
-async def search_files(q: str):
+async def search_files(
+    q: str,
+    limit: int = 30,
+    offset: int = 0,
+    category: Optional[str] = None,
+    kind: Optional[str] = None,
+    organized: Optional[bool] = None,
+):
+    """One page of files matching ``q``, with counts for the filters and a corrected spelling if one was used."""
     if not q or not q.strip():
-        return {"results": []}
-    results = await db.search(q.strip())
+        return {"results": [], "total": 0, "facets": None, "corrected": None}
+    page = await db.search_page(
+        q.strip(), limit=limit, offset=offset, category=category or None, kind=kind or None, organized=organized
+    )
     live, gone = [], []
-    for r in results:
+    for r in page["results"]:
         # Point at wherever the file is now (organized copy, or back at its original place after an
         # undo) and drop rows whose file is gone everywhere.
         row = dict(r)
+        row.pop("fingerprint", None)
         if row.get("new_path") and not Path(row["new_path"]).exists():
             row["new_path"] = None
-        if row.get("new_path") or (row.get("path") and Path(row["path"]).exists()):
-            live.append(row)
-        else:
+        current = _current_path(row)
+        if current is None:
             gone.append(row["id"])
+            continue
+        row["current_path"] = str(current)
+        row["name"] = current.name
+        try:
+            row["modified"] = current.stat().st_mtime
+        except OSError:
+            row["modified"] = None
+        live.append(row)
     for row_id in gone:
         await db.execute_write("DELETE FROM files WHERE id = ?", (row_id,))
-    return {"results": live}
+    return {
+        "results": live,
+        "total": max(page.get("total", len(live)) - len(gone), len(live)),
+        "facets": page.get("facets"),
+        "corrected": page.get("corrected"),
+    }
+
+
+@app.get("/search/stats")
+async def search_stats():
+    """How many files the search covers, and the folders holding the most of them."""
+    return await db.search_stats()
+
+
+async def _indexed_file(row_id: int) -> dict:
+    rows = await db.execute_read(
+        "SELECT id, path, new_path, fingerprint, reason, substr(extracted_text, 1, 20000) AS extracted_text "
+        "FROM files WHERE id = ?",
+        (row_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No such file")
+    return dict(rows[0])
+
+
+@app.get("/search/file/{row_id}")
+async def search_file_details(row_id: int):
+    """The text found inside one indexed file and why it was filed where it is."""
+    row = await _indexed_file(row_id)
+    return {"id": row["id"], "extracted_text": row.get("extracted_text") or "", "reason": row.get("reason") or ""}
+
+
+@app.get("/search/preview/{row_id}")
+async def search_file_preview(row_id: int, size: int = 640):
+    """A sharp preview of one indexed file, made on first request and then cached."""
+    from fastapi.responses import FileResponse
+    from .previews import get_preview
+
+    # Only files in the index can be previewed, never an arbitrary path.
+    row = await _indexed_file(row_id)
+    current = _current_path(row)
+    if current is None:
+        raise HTTPException(status_code=404, detail="No such file")
+    key = row.get("fingerprint")
+    if not key:
+        stat = current.stat()
+        key = hashlib.sha256(f"{current}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
+    out = await asyncio.to_thread(get_preview, current, key, size)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No preview for this file")
+    return FileResponse(out, media_type="image/webp", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/costs")
