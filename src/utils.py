@@ -185,6 +185,16 @@ def looks_like_credential_table(text: str) -> bool:
     return bool(_CREDENTIAL_HEADER_RE.search(first_line) and _CREDENTIAL_PARTNER_RE.search(first_line))
 
 
+_UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f:]")
+
+
+def safe_filename(name: str, fallback: str) -> str:
+    """Reduce a new file name to a plain, visible name with no folders in it; ``fallback`` when nothing usable is left."""
+    cleaned = _UNSAFE_NAME_CHARS_RE.sub("", (name or "").replace("\\", "/").rsplit("/", 1)[-1]).strip()
+    cleaned = cleaned.lstrip(".").strip()  # a leading dot would hide the file
+    return cleaned or fallback
+
+
 def is_safe_to_copy(path: Path) -> bool:
     """Return True if the file is safe to copy (not an executable binary or private key)."""
     return path.suffix.lower() not in UNSAFE_COPY_EXTENSIONS

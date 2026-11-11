@@ -13,7 +13,7 @@ from typing import Optional
 from tqdm import tqdm
 
 from .models import CopyManifestEntry, FileRecord, ReviewDecision
-from .utils import choose_destination, compute_sha256, is_safe_to_copy
+from .utils import choose_destination, compute_sha256, is_safe_to_copy, safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,8 @@ def apply_decisions(
             skipped_count += 1
             continue
 
-        filename = dec.override_filename or getattr(dec, "target_filename", None) or rec.filename
+        # A new name (typed by the user or suggested by the AI) must stay a plain name inside dest_dir.
+        filename = safe_filename(dec.override_filename or getattr(dec, "target_filename", None) or "", rec.filename)
 
         # Security check: do not copy unverified unsafe files (e.g. raw shell scripts or executables)
         if not is_safe_to_copy(rec.abs_path):
