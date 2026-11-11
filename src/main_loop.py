@@ -35,6 +35,57 @@ class PipelineCancelledException(Exception):
     pass
 
 
+def promote_by_folder_agreement(
+    records: list[FileRecord],
+    threshold: float,
+    *,
+    margin: float = 0.10,
+    min_votes: int = 3,
+    agreement: float = 0.8,
+) -> int:
+    """Auto-sort a file the AI was nearly sure about when it agrees with its folder-mates.
+
+    "Nearly sure" means within ``margin`` of the threshold. The AI scores each file on its own, and
+    the same kind of file can land just under the threshold in one batch and over it in the next.
+    When the AI picked the same folder for a file as it did,
+    confidently, for most AI-sorted files under the same source folder (the nearest one with at
+    least ``min_votes`` of them), that's enough to sort it too. Files sorted by extension don't vote:
+    a course's videos all going to Video says nothing about where its notes belong.
+    Returns the number of files promoted.
+    """
+    def ai_sorted(rec: FileRecord) -> bool:
+        c = rec.classification
+        return bool(not rec.skipped and c and c.source == "llm" and c.category != "Unknown")
+
+    votes: dict[Path, dict[str, int]] = {}
+    for rec in records:
+        if ai_sorted(rec) and rec.classification.confidence >= threshold:
+            for folder in Path(rec.rel_path).parents:
+                if folder != Path("."):
+                    counts = votes.setdefault(folder, {})
+                    counts[rec.classification.category] = counts.get(rec.classification.category, 0) + 1
+
+    promoted = 0
+    for rec in records:
+        c = rec.classification
+        if not ai_sorted(rec) or c.confidence >= threshold or c.confidence < threshold - margin:
+            continue
+        for folder in Path(rec.rel_path).parents:
+            counts = votes.get(folder)
+            if folder == Path(".") or not counts or sum(counts.values()) < min_votes:
+                continue
+            total = sum(counts.values())
+            if counts.get(c.category, 0) >= agreement * total:
+                c.confidence = threshold
+                c.action = "copy_to_organized"
+                c.reason = f"{c.reason} (same folder as the rest of {folder.as_posix()})".strip()
+                promoted += 1
+            break  # only the nearest folder with enough votes decides
+    if promoted:
+        logger.info("Folder agreement: auto-sorted %d files the AI was nearly sure about", promoted)
+    return promoted
+
+
 def run_pipeline(
     config: TidyConfig,
     *,
@@ -164,6 +215,7 @@ def run_pipeline(
             cancellation_token=cancellation_token,
         )
         summary.llm_classified = llm_count
+        promote_by_folder_agreement(records, config.classification.auto_copy_threshold)
     else:
         logger.info("=== STEP 7: LLM classification skipped ===")
     check_cancelled()
