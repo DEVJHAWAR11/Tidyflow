@@ -1085,6 +1085,23 @@ async def get_costs():
     return {"costs": [dict(r) for r in rows]}
 
 
+@app.get("/preview/{file_id}")
+async def file_preview(file_id: str, size: int = 640):
+    """A sharp preview of one file from the current scan, made on first request and then cached."""
+    from fastapi.responses import FileResponse
+    from .previews import get_preview
+
+    # Only files from the current results can be previewed, never an arbitrary path.
+    rec = next((r for r in latest_pipeline_data.get("records") or [] if r.file_id == file_id), None)
+    if rec is None or rec.skipped or not rec.sha256 or not Path(rec.abs_path).is_file():
+        raise HTTPException(status_code=404, detail="No such file")
+    out = await asyncio.to_thread(get_preview, Path(rec.abs_path), rec.sha256, size)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No preview for this file")
+    # The id changes when the file's contents do, so the browser can keep the image.
+    return FileResponse(out, media_type="image/webp", headers={"Cache-Control": "private, max-age=604800"})
+
+
 @app.get("/files")
 async def get_files(limit: int = 50, offset: int = 0):
     rows = await db.execute_read(

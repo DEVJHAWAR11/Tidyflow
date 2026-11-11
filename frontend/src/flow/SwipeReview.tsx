@@ -13,6 +13,7 @@ import type { ClassifiedFile } from "../types";
 import { FilePreview, FolderIcon } from "./icons";
 import { ease } from "./ui";
 import { formatBytes, prettyFolderName } from "../utils/folderVisuals";
+import { API_BASE } from "../config";
 
 type Decision = { fileId: string; kind: "place"; folder: string } | { fileId: string; kind: "leave" };
 
@@ -359,29 +360,25 @@ function CardFace({
         lifted ? "shadow-[0_24px_60px_-12px_rgba(0,0,0,0.45)]" : ""
       }`}
     >
-      <div className="h-[170px] shrink-0 bg-tf-surface-2 border-b border-tf-border flex items-center justify-center">
-        <FilePreview
-          size={file.thumbnail_b64 ? 132 : 88}
-          extension={file.extension}
-          fileCategory={file.file_category}
-          thumbnailB64={file.thumbnail_b64}
-        />
-      </div>
+      <CardPreview file={file} />
       <div className="flex-1 min-h-0 p-5 flex flex-col gap-2">
-        <div className="text-[16px] font-semibold text-tf-ink leading-snug line-clamp-2 break-words">
+        <div className="shrink-0 text-[16px] font-semibold text-tf-ink leading-snug line-clamp-2 break-words">
           {file.filename}
         </div>
         {newName && (
-          <div className="text-[12.5px] text-tf-brand-ink truncate">→ {newName}</div>
+          <div className="shrink-0 text-[12.5px] text-tf-brand-ink truncate">→ {newName}</div>
         )}
-        <div className="text-[12.5px] text-tf-muted tf-num">
+        <div className="shrink-0 text-[12.5px] text-tf-muted tf-num line-clamp-2">
           {formatBytes(file.file_size_bytes)}
           {file.reason ? ` · ${file.reason}` : ""}
         </div>
+        {/* The excerpt takes whatever room is left and fades out rather than cutting a line in half. */}
         {excerpt && (
-          <p className="text-[12.5px] leading-relaxed text-tf-faint line-clamp-3">{excerpt}</p>
+          <p className="flex-1 min-h-0 overflow-hidden text-[12.5px] leading-relaxed text-tf-faint [mask-image:linear-gradient(to_bottom,black_55%,transparent)]">
+            {excerpt}
+          </p>
         )}
-        <div className="mt-auto pt-2 flex items-center gap-2.5">
+        <div className="shrink-0 mt-auto pt-2 flex items-center gap-2.5">
           {suggestion ? (
             <>
               <FolderIcon name={suggestion} size={28} />
@@ -395,6 +392,45 @@ function CardFace({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The picture at the top of a card. The small scan thumbnail (or icon) shows at once; a sharp preview,
+ * made by the backend only for the cards in the stack, fades in over it. Cards waiting behind load
+ * theirs early, so the next card is usually sharp before it reaches the top.
+ */
+function CardPreview({ file }: { file: ClassifiedFile }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="relative h-[210px] shrink-0 bg-tf-surface-2 border-b border-tf-border overflow-hidden">
+      <div
+        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
+          loaded ? "opacity-0" : "opacity-100"
+        }`}
+      >
+        <FilePreview
+          size={file.thumbnail_b64 ? 132 : 88}
+          extension={file.extension}
+          fileCategory={file.file_category}
+          thumbnailB64={file.thumbnail_b64}
+        />
+      </div>
+      {!failed && (
+        <img
+          src={`${API_BASE}/preview/${encodeURIComponent(file.file_id)}?size=960`}
+          alt=""
+          decoding="async"
+          draggable={false}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          className={`pointer-events-none absolute inset-0 m-auto max-w-[calc(100%-32px)] max-h-[calc(100%-28px)] object-contain rounded-[8px] shadow-[0_6px_20px_-6px_rgba(0,0,0,0.35)] transition-opacity duration-300 ${
+            loaded ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      )}
     </div>
   );
 }
