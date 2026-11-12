@@ -8,7 +8,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -289,6 +289,7 @@ def classify_files_batched(
     *,
     strict_mode: bool = False,
     cancellation_token: Optional[Any] = None,
+    on_batch_done: Optional[Callable[[int, int], None]] = None,
 ) -> int:
     """
     Send batches of 30-40 compact FileRecord payloads to LLM.
@@ -298,6 +299,8 @@ def classify_files_batched(
         strict_mode: When True (custom narrow categories), the LLM is instructed
             to aggressively assign "Unknown" to non-matching files. When False
             (full default taxonomy), the LLM tries to find the best match.
+        on_batch_done: Called with (files done, files in total) once before the first batch
+            and after each batch, so a screen can show how far the AI has got.
     """
     if not llm_config.enabled:
         logger.info("LLM classification is disabled in configuration")
@@ -350,6 +353,10 @@ def classify_files_batched(
     model = _resolve_provider_model(provider, llm_config.model)
 
     client = httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0, read=180.0))
+
+    files_done = 0
+    if on_batch_done:
+        on_batch_done(0, len(processable))
 
     for batch_idx, batch in enumerate(tqdm(batches, desc="LLM batches", unit="batch")):
         if cancellation_token and hasattr(cancellation_token, "is_set") and cancellation_token.is_set():
@@ -422,6 +429,10 @@ def classify_files_batched(
                     action="manual_review",
                     source="llm",
                 )
+
+        files_done += len(batch)
+        if on_batch_done:
+            on_batch_done(files_done, len(processable))
 
     client.close()
     logger.info("LLM classified %d files across %d batches", classified_count, len(batches))

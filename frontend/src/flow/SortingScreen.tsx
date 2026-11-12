@@ -6,20 +6,20 @@ import { folderLabel } from "../utils/folderVisuals";
 import type { SortingScreenProps } from "./contracts";
 
 const CHECKLIST_STAGES = [
-  { id: "scan", label: "Find files" },
-  { id: "extract", label: "Read contents" },
-  { id: "classify", label: "Choose folders" },
+  { id: "scan", label: "Find the files" },
+  { id: "extract", label: "Read what's inside" },
+  { id: "classify", label: "Put each file in a folder" },
   { id: "finalize", label: "Finish" },
 ];
 
 function getStageTitle(stage: string): string {
   switch (stage) {
     case "scan":
-      return "Finding files";
+      return "Finding your files";
     case "extract":
-      return "Reading contents";
+      return "Reading your files";
     case "classify":
-      return "Choosing folders";
+      return "Putting files in folders";
     case "finalize":
       return "Finishing up";
     default:
@@ -31,6 +31,7 @@ export function SortingScreen({
   inputFolder,
   stage,
   logs,
+  progress,
   isCancelling,
   onCancel,
   error,
@@ -118,7 +119,7 @@ export function SortingScreen({
 
       {/* Subtitle */}
       <p className="mt-1 text-[13.5px] text-tf-muted truncate" title={inputFolder}>
-        Sorting {folderLabel(inputFolder)}
+        Going through {folderLabel(inputFolder)}. Nothing is moved yet.
       </p>
 
       {/* Stage Checklist */}
@@ -139,7 +140,7 @@ export function SortingScreen({
                 <div className="w-4 h-4 rounded-full border-[1.5px] border-tf-border-strong shrink-0" />
               )}
               <span
-                className={`text-[13.5px] ${
+                className={`flex-1 text-[13.5px] ${
                   isDone
                     ? "text-tf-ink-2"
                     : isCurrent
@@ -149,6 +150,11 @@ export function SortingScreen({
               >
                 {s.label}
               </span>
+              {isCurrent && s.id === "classify" && progress && progress.total > 0 && (
+                <span className="text-[12.5px] text-tf-muted tf-num shrink-0">
+                  {progress.done} of {progress.total}
+                </span>
+              )}
             </div>
           );
         })}
@@ -183,9 +189,12 @@ export function SortingScreen({
           disabled={isCancelling}
           onClick={onCancel}
         >
-          {isCancelling ? "Stopping…" : "Cancel"}
+          {isCancelling ? "Stopping…" : "Stop and go back to the plan"}
         </Button>
       </div>
+      <p className="mt-2 text-[12px] text-tf-faint">
+        You'll see where every file goes before anything changes.
+      </p>
     </Screen>
   );
 }

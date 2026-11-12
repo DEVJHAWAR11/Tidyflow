@@ -94,6 +94,8 @@ export interface SortingScreenProps {
   stage: string;
   /** Raw progress lines from the backend, newest last (may start with "> ", "✓ ", "✗ ") */
   logs: string[];
+  /** Files the AI has looked at so far, while it is placing them (null until reported) */
+  progress: { done: number; total: number } | null;
   isCancelling: boolean;
   onCancel: () => void;
   /** Set when the run failed; screen should show it with a retry and back option */
