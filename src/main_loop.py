@@ -213,6 +213,13 @@ def run_pipeline(
             llm_log_dir,
             strict_mode=strict_mode,
             cancellation_token=cancellation_token,
+            on_batch_done=(
+                (lambda done, total: progress_callback(
+                    "classify", "Asking the AI where each file belongs…", done=done, total=total
+                ))
+                if progress_callback
+                else None
+            ),
         )
         summary.llm_classified = llm_count
         promote_by_folder_agreement(records, config.classification.auto_copy_threshold)

@@ -159,6 +159,8 @@ export default function App() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("");
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
+  // Files the AI has looked at so far while sorting, when the backend reports it.
+  const [sortProgress, setSortProgress] = useState<{ done: number; total: number } | null>(null);
   const [sortError, setSortError] = useState<string | null>(null);
 
   // --- Folder plan ---
@@ -359,6 +361,9 @@ export default function App() {
         try {
           const payload = JSON.parse(e.data);
           if (payload.stage) setCurrentStage(payload.stage);
+          if (typeof payload.done === "number" && typeof payload.total === "number") {
+            setSortProgress({ done: payload.done, total: payload.total });
+          }
           if (payload.message) setProgressLogs((prev) => [...prev, `> ${payload.message}`]);
         } catch {}
       });
@@ -598,6 +603,7 @@ export default function App() {
     setIsRunning(true);
     setSortError(null);
     setCurrentStage("scan");
+    setSortProgress(null);
     setProgressLogs([`> Looking in ${inputFolder}`]);
     setStep("sorting");
 
@@ -1170,6 +1176,7 @@ export default function App() {
             inputFolder={inputFolder}
             stage={currentStage}
             logs={progressLogs}
+            progress={sortProgress}
             isCancelling={isCancelling}
             onCancel={handleCancelPipeline}
             error={sortError}

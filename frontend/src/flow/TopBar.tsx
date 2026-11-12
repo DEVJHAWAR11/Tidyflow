@@ -22,8 +22,8 @@ export function TopBar({
   backendStatus,
   onClearSession,
 }: TopBarProps) {
-  // When sorting, treat as Plan, highlighting Plan step
-  const activeStepId: FlowStep = step === "sorting" ? "plan" : step;
+  // Sorting happens after the plan is approved and builds what Review shows, so Review is lit.
+  const activeStepId: FlowStep = step === "sorting" ? "preview" : step;
   const activeIndex = STEPS.findIndex((s) => s.id === activeStepId);
 
   return (

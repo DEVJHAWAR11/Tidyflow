@@ -906,10 +906,13 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
 
     loop = asyncio.get_running_loop()
 
-    def sync_progress_callback(stage: str, message: str):
+    def sync_progress_callback(stage: str, message: str, done: Optional[int] = None, total: Optional[int] = None):
+        payload: dict[str, Any] = {"stage": stage, "message": message}
+        if done is not None and total is not None:
+            payload.update(done=done, total=total)
         try:
             asyncio.run_coroutine_threadsafe(
-                broadcast_event("pipeline_progress", {"stage": stage, "message": message}),
+                broadcast_event("pipeline_progress", payload),
                 loop,
             )
         except Exception:
