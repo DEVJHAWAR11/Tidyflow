@@ -91,6 +91,10 @@ export function PreviewScreen(props: PreviewScreenProps) {
     glowTimer.current = window.setTimeout(() => setGlowIds(new Set()), 2600);
   };
 
+  // The latest props, for work that runs after a request finishes (a folder may have been renamed meanwhile).
+  const latestProps = useRef(props);
+  latestProps.current = props;
+
   const handleAsk = async (command: string) => {
     const outcome = await props.onAskAi(command);
     if (outcome.error) return outcome;
@@ -101,9 +105,10 @@ export function PreviewScreen(props: PreviewScreenProps) {
     // Open the folders that just received files, after the wizard has finished casting.
     const touched = [...outcome.changedIds, ...outcome.excludedIds];
     window.setTimeout(() => {
+      const now = latestProps.current;
       const opened: Record<string, boolean> = {};
-      for (const f of props.files) {
-        if (touched.includes(f.file_id)) opened[effective(f)] = false;
+      for (const f of now.files) {
+        if (touched.includes(f.file_id)) opened[now.categoryOverrides[f.file_id] ?? f.category] = false;
       }
       setCollapsedMap((prev) => ({ ...prev, ...opened }));
       flash(touched);

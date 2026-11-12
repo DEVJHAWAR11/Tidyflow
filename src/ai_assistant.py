@@ -112,7 +112,8 @@ _REVIEW_COMMAND_SYSTEM_PROMPT = """\
 You are TidyFlow's review assistant. The user is looking at a list of their files and the folder each one
 is about to be filed into, and asks for a change in plain language, for example:
   "move the course screenshots to Academic", "put all invoices in a new folder called Bills",
-  "give the resumes clearer names", "don't organize the empty files", "put the files to review where they fit best".
+  "give the resumes clearer names", "don't organize the empty files", "put the files to review where they fit best",
+  "rename the Misc folder to Extras".
 
 The existing folders are listed with numbers. The files are a tab-separated table with columns:
 id, name, folder (the number of the folder it is going into now, or "-" when undecided), organize ("n" = the
@@ -136,7 +137,11 @@ RULES
    "keep out"). Never exclude a file just because you are unsure about it. "include" is for files the user
    asks to organize after all.
 6. Never invent file ids. Only use ids from the list. In "moves", write folder NAMES, not numbers.
-7. "message" is ONE short sentence, at most 14 words, saying what you did in the user's terms
+7. "folder_renames" renames whole folders: use it whenever the user asks to rename (or call differently) a
+   folder rather than files. The key is the folder's current name exactly as listed, the value its new short,
+   clean name. Renaming a folder carries all its files along, so do NOT also list those files in "moves".
+   In "moves", always write folder names as they are listed now, never a new name from "folder_renames".
+8. "message" is ONE short sentence, at most 14 words, saying what you did in the user's terms
    (e.g. "Moved 6 course screenshots to Academic."). If nothing matched, say so and suggest a rewording.
 
 OUTPUT: only this JSON object:
@@ -145,7 +150,8 @@ OUTPUT: only this JSON object:
   "moves": {"<id>": "<folder>"},
   "renames": {"<id>": "<new name with extension>"},
   "exclude": ["<id>"],
-  "include": ["<id>"]
+  "include": ["<id>"],
+  "folder_renames": {"<current folder name>": "<new folder name>"}
 }
 """
 
@@ -479,6 +485,10 @@ def apply_review_command(
     cat_list = list(categories.keys()) if isinstance(categories, dict) else list(categories or [])
 
     if not api_key:
+        # "rename the Misc folder to Extras" is clear enough to do without the AI.
+        folder_rename = _parse_folder_rename(command, cat_list)
+        if folder_rename:
+            return _validate_review_result({"folder_renames": folder_rename}, files, cat_list)
         result = _fallback_heuristic_review_command(command, files, cat_list)
         return _validate_review_result(result, files, cat_list, note="Matched by file name (no AI key is set).")
 
@@ -525,10 +535,13 @@ def apply_review_command(
             "exclude": [],
             "include": [],
             "new_folders": [],
+            "folder_renames": {},
             "error": "The AI didn't answer, so nothing was changed. Please try again.",
         }
 
-    result: dict[str, Any] = {"category_overrides": {}, "filename_overrides": {}, "exclude": [], "include": []}
+    result: dict[str, Any] = {
+        "category_overrides": {}, "filename_overrides": {}, "exclude": [], "include": [], "folder_renames": {},
+    }
     for parsed in answers:
         if not isinstance(parsed, dict):
             continue
@@ -544,12 +557,15 @@ def apply_review_command(
         for key in ("exclude", "include"):
             if isinstance(parsed.get(key), list):
                 result[key].extend(parsed[key])
+        # Every chunk sees the same folders, so a folder rename usually comes back once per chunk.
+        if isinstance(parsed.get("folder_renames"), dict):
+            result["folder_renames"].update(parsed["folder_renames"])
     # Each chunk only describes its own part, so with several chunks the summary is rebuilt from the changes;
     # an explanation is still kept when nothing changed (e.g. "I can't delete files").
     messages = [str(a.get("message") or "").strip() for a in answers if isinstance(a, dict)]
     if len(answers) == 1:
         result["message"] = messages[0] if messages else ""
-    elif not any(result[k] for k in ("category_overrides", "filename_overrides", "exclude", "include")):
+    elif not any(result[k] for k in ("category_overrides", "filename_overrides", "exclude", "include", "folder_renames")):
         result["message"] = next((m for m in messages if m), "")
     return _validate_review_result(result, files, cat_list)
 
@@ -606,6 +622,54 @@ def _clean_folder(name: str, existing: list[str]) -> str | None:
     return cleaned[:60] or None
 
 
+def _folder_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+def _clean_folder_renames(raw: Any, categories: list[str]) -> dict[str, str]:
+    """Keep renames of existing folders to safe names that no other folder already has."""
+    renames: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return renames
+    for old, new in raw.items():
+        old = _folder_from_number(old, categories)
+        source = next((c for c in categories if _folder_key(c) == _folder_key(old)), None)
+        if source is None:
+            # "Payments" for "Finance/Payments", as long as only one folder ends that way.
+            short = [c for c in categories if _folder_key(c.rsplit("/", 1)[-1]) == _folder_key(old)]
+            source = short[0] if len(short) == 1 else None
+        target = _clean_folder(new, [])
+        if not source or not target or source in renames:
+            continue
+        if target == target.lower():
+            target = target[0].upper() + target[1:]  # "extras" -> "Extras", like the other folders
+        # A nested folder ("Finance/Payments") keeps its parent unless a full path was given.
+        if "/" in source and "/" not in target:
+            target = f"{source.rsplit('/', 1)[0]}/{target}"
+        if target == source:
+            continue
+        others = [c for c in categories if c != source] + list(renames.values())
+        if any(_folder_key(c) == _folder_key(target) for c in others):
+            continue
+        renames[source] = target
+    return renames
+
+
+_FOLDER_RENAME_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:rename|call)\s+(?:the\s+)?(?:folder\s+)?[\"'“]?(.+?)[\"'”]?\s+(?:folder\s+)?"
+    r"(?:to|as|into)\s+[\"'“]?(.+?)[\"'”]?\s*[.!]?\s*$",
+    re.I,
+)
+
+
+def _parse_folder_rename(command: str, categories: list[str]) -> dict[str, str]:
+    """Read "rename the Misc folder to Extras" without the AI; empty when it doesn't name a folder."""
+    m = _FOLDER_RENAME_RE.match(command or "")
+    if not m:
+        return {}
+    return _clean_folder_renames({m.group(1): m.group(2)}, categories)
+
+
 def _clean_filename(new_name: str, original: str) -> str | None:
     """Make a suggested name safe and keep the original extension."""
     name = _UNSAFE_NAME_CHARS.sub("", str(new_name or "")).strip().strip(".")
@@ -622,13 +686,19 @@ def _clean_filename(new_name: str, original: str) -> str | None:
 
 
 def _describe_review_changes(
-    moves: dict[str, str], renames: dict[str, str], exclude: list[str], include: list[str]
+    moves: dict[str, str],
+    renames: dict[str, str],
+    exclude: list[str],
+    include: list[str],
+    folder_renames: dict[str, str] | None = None,
 ) -> str:
     """Plain summary of the changes that will actually be applied."""
     def files(n: int) -> str:
         return f"{n} file{'s' if n != 1 else ''}"
 
     parts = []
+    for old, new in (folder_renames or {}).items():
+        parts.append(f"renamed the {old.rsplit('/', 1)[-1]} folder to {new.rsplit('/', 1)[-1]}")
     if moves:
         targets = sorted(set(moves.values()))
         parts.append(f"moved {files(len(moves))} to {targets[0] if len(targets) == 1 else f'{len(targets)} folders'}")
@@ -650,10 +720,14 @@ def _validate_review_result(
 ) -> dict[str, Any]:
     """Keep only real, safe, non-empty changes and describe what will actually happen."""
     by_id = {str(f.get("file_id")): f for f in files if f.get("file_id")}
+    folder_renames = _clean_folder_renames(result.get("folder_renames"), categories)
+    # The app renames the folder after applying moves, so a move written with the new name means the old one.
+    renamed_from = {_folder_key(new): old for old, new in folder_renames.items()}
 
     moves: dict[str, str] = {}
     known = list(categories)
     for fid, folder in (result.get("category_overrides") or {}).items():
+        folder = renamed_from.get(_folder_key(folder), folder)
         f = by_id.get(str(fid))
         # Matching against new folders named so far keeps "Bills" and "bills" as one folder.
         target = _clean_folder(folder, known)
@@ -680,8 +754,11 @@ def _validate_review_result(
     ]
     new_folders = sorted({t for t in moves.values() if t not in categories})
 
-    asked = sum(len(result.get(k) or []) for k in ("category_overrides", "filename_overrides", "exclude", "include"))
-    changed = len(moves) + len(renames) + len(exclude) + len(include)
+    asked = sum(
+        len(result.get(k) or [])
+        for k in ("category_overrides", "filename_overrides", "exclude", "include", "folder_renames")
+    )
+    changed = len(moves) + len(renames) + len(exclude) + len(include) + len(folder_renames)
     message = str(result.get("message") or "").strip()
     if not changed:
         # With nothing applied, only keep a message that explains why (e.g. "I can't delete files");
@@ -690,7 +767,7 @@ def _validate_review_result(
         message = message if explains else "I couldn't find files matching that. Try describing them differently."
     elif not message or asked != changed:
         # The model's sentence described changes that were partly dropped; describe what really happens.
-        message = _describe_review_changes(moves, renames, exclude, include)
+        message = _describe_review_changes(moves, renames, exclude, include, folder_renames)
     if note:
         message = f"{message} {note}"
 
@@ -701,6 +778,7 @@ def _validate_review_result(
         "exclude": exclude,
         "include": include,
         "new_folders": new_folders,
+        "folder_renames": folder_renames,
         "error": None,
     }
 
