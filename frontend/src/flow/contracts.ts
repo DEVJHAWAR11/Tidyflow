@@ -114,6 +114,8 @@ export interface PreviewScreenProps {
   onMoveFile: (fileId: string, folder: string) => void;
   /** Drop the user's folder choice for a file, so it goes back to the AI's */
   onClearMove: (fileId: string) => void;
+  /** Rename a folder in place; returns false when another folder already has that name */
+  onRenameFolder: (oldName: string, newName: string) => boolean;
   /** Files at/above this confidence (0-1) count as "sure" */
   autoThreshold: number;
   /** Clearer-name suggestions from the AI */

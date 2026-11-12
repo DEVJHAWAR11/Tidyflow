@@ -5,6 +5,7 @@ import {
   RefreshCw,
   ChevronDown,
   Check,
+  Minus,
   FolderInput,
   SquareArrowOutUpRight,
   CornerUpLeft,
@@ -29,6 +30,7 @@ import {
   prettyFolderName,
   formatBytes,
   folderLabel,
+  toFolderName,
 } from "../utils/folderVisuals";
 
 export function PreviewScreen(props: PreviewScreenProps) {
@@ -463,11 +465,14 @@ export function PreviewScreen(props: PreviewScreenProps) {
             </SectionTitle>
 
             {firstSuggestionId && (
-              // Column heading over the suggested-folder buttons; the hidden "Choose…" keeps it lined up.
+              // Column heading over the suggested-folder buttons; the hidden buttons keep it lined up.
               <div className="-mb-1.5 flex items-center justify-end gap-2 px-4" aria-hidden>
                 <span className="text-[11px] leading-none text-tf-muted">Suggested</span>
                 <Button variant="secondary" size="sm" className="invisible h-0 py-0" tabIndex={-1} iconRight={<ChevronDown size={14} strokeWidth={1.75} />}>
                   Choose…
+                </Button>
+                <Button variant="ghost" size="sm" className="invisible h-0 py-0" tabIndex={-1} icon={<CornerUpLeft size={14} strokeWidth={1.75} />}>
+                  Leave
                 </Button>
               </div>
             )}
@@ -610,25 +615,20 @@ export function PreviewScreen(props: PreviewScreenProps) {
                                     <span className="truncate">{prettyFolderName(folder)}</span>
                                   </button>
                                 ))}
-                                <div className="h-px bg-tf-border my-1" />
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    leaveInPlace([f.file_id]);
-                                    setActiveMoveFileId(null);
-                                  }}
-                                  className="w-full h-8 px-2 rounded-[7px] hover:bg-tf-surface-2 flex items-center gap-2 text-[13px] text-tf-muted text-left transition-colors cursor-pointer"
-                                >
-                                  <CornerUpLeft
-                                    size={14}
-                                    strokeWidth={1.75}
-                                    className="text-tf-muted shrink-0"
-                                  />
-                                  <span>Leave in place</span>
-                                </button>
                               </Card>
                             )}
                           </div>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Skip this file and leave it where it is"
+                            aria-label={`Leave ${f.filename} where it is`}
+                            icon={<CornerUpLeft size={14} strokeWidth={1.75} />}
+                            onClick={() => leaveInPlace([f.file_id])}
+                          >
+                            Leave
+                          </Button>
                         </div>
                       )}
                     </motion.div>
@@ -684,6 +684,11 @@ export function PreviewScreen(props: PreviewScreenProps) {
           <div className="grid grid-cols-1 lg:grid-cols-2 lg:grid-flow-row-dense gap-3 items-start">
             {visibleGroups.map((group) => {
               const expanded = filtering || isFolderExpanded(group.folder, group.files.length);
+              // The folder's checkbox covers the files shown, so a filter narrows what it switches.
+              const includedShown = group.shown.filter((f) => props.selectedFileIds.has(f.file_id)).length;
+              const allIncluded = includedShown === group.shown.length;
+              const noneIncluded = includedShown === 0;
+              const skipped = group.files.filter((f) => !props.selectedFileIds.has(f.file_id)).length;
 
               return (
                 <Card key={group.folder} className={`overflow-visible ${expanded ? "lg:col-span-2" : ""}`}>
@@ -693,22 +698,57 @@ export function PreviewScreen(props: PreviewScreenProps) {
                     tabIndex={0}
                     onClick={() => toggleFolderExpanded(group.folder, group.files.length)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         toggleFolderExpanded(group.folder, group.files.length);
                       }
                     }}
-                    className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-tf-surface-2/40 transition-colors"
+                    className="group/hdr px-4 py-3 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-tf-surface-2/40 transition-colors"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <FolderIcon name={group.folder} size={34} />
+                      {/* Folder checkbox: unchecking leaves every file in this folder where it is. */}
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={allIncluded ? true : noneIncluded ? false : "mixed"}
+                        aria-label={`Organize the files in ${prettyFolderName(group.folder)}`}
+                        title={allIncluded ? "Skip this whole folder" : "Organize every file in this folder"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          group.shown.forEach((f) => props.onSetIncluded(f.file_id, !allIncluded));
+                        }}
+                        className={`w-4 h-4 rounded-[4px] flex items-center justify-center shrink-0 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-tf-ink ${
+                          noneIncluded
+                            ? "border border-tf-border-strong bg-tf-surface"
+                            : "bg-tf-primary text-tf-on-primary"
+                        }`}
+                      >
+                        {allIncluded ? (
+                          <Check size={11} strokeWidth={3} />
+                        ) : !noneIncluded ? (
+                          <Minus size={11} strokeWidth={3} />
+                        ) : null}
+                      </button>
+                      <div className={`shrink-0 transition-opacity ${noneIncluded ? "opacity-40" : ""}`}>
+                        <FolderIcon name={group.folder} size={34} />
+                      </div>
                       <div className="min-w-0">
-                        <div className="text-[14px] font-medium text-tf-ink truncate">
-                          {prettyFolderName(group.folder)}
-                        </div>
+                        <EditableFolderName
+                          folder={group.folder}
+                          onRename={props.onRenameFolder}
+                          className={`text-[14px] font-medium ${
+                            noneIncluded ? "text-tf-faint line-through decoration-tf-faint" : "text-tf-ink"
+                          }`}
+                        />
                         <div className="text-[12.5px] text-tf-muted tf-num">
                           {filtering ? `${group.shown.length} of ` : ""}
                           {group.files.length} {group.files.length === 1 ? "file" : "files"}
+                          {skipped === group.files.length
+                            ? " · skipped"
+                            : skipped > 0
+                            ? ` · ${skipped} skipped`
+                            : ""}
                         </div>
                       </div>
                     </div>
@@ -1125,6 +1165,104 @@ function cleanFileName(name: string, extension: string): string | null {
   if (!cleaned || cleaned === "." || cleaned === "..") return null;
   if (extension && !cleaned.toLowerCase().endsWith(extension.toLowerCase())) return cleaned + extension;
   return cleaned;
+}
+
+/** A folder name with a pencil that turns it into a text box, so the user can rename the folder in place. */
+function EditableFolderName({
+  folder,
+  onRename,
+  className,
+}: {
+  folder: string;
+  onRename: (oldName: string, newName: string) => boolean;
+  className: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [taken, setTaken] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const finished = useRef(false);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const start = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    finished.current = false;
+    setTaken(false);
+    setDraft(prettyFolderName(folder));
+    setEditing(true);
+  };
+
+  // Enter keeps the box open when the name is taken; leaving the box gives up instead.
+  const finish = (save: boolean, fromBlur = false) => {
+    if (finished.current) return;
+    if (save) {
+      const clean = toFolderName(draft.replace(/\//g, " "));
+      if (clean && clean !== prettyFolderName(folder)) {
+        // A nested folder ("Finance/Payments") keeps its parent; only the last part is renamed.
+        const slash = folder.lastIndexOf("/");
+        const next = slash >= 0 ? `${folder.slice(0, slash)}/${clean}` : clean;
+        if (!onRename(folder, next)) {
+          if (!fromBlur) {
+            setTaken(true);
+            return;
+          }
+        }
+      }
+    }
+    finished.current = true;
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div>
+        <input
+          ref={inputRef}
+          value={draft}
+          aria-label={`New name for the ${prettyFolderName(folder)} folder`}
+          aria-invalid={taken}
+          aria-describedby={taken ? `taken-${folder}` : undefined}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setTaken(false);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") finish(true);
+            else if (e.key === "Escape") finish(false);
+          }}
+          onBlur={() => finish(true, true)}
+          className={`${className} w-full -ml-1.5 px-1.5 rounded-[6px] bg-tf-surface border outline-none focus:ring-1 ${
+            taken ? "border-tf-warn focus:ring-tf-warn" : "border-tf-border-strong focus:ring-tf-ink"
+          }`}
+        />
+        {taken && (
+          <div id={`taken-${folder}`} className="text-[12px] text-tf-warn mt-0.5">
+            Another folder already has this name
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <span className={`${className} truncate`}>{prettyFolderName(folder)}</span>
+      <button
+        type="button"
+        onClick={start}
+        aria-label={`Rename the ${prettyFolderName(folder)} folder`}
+        title="Rename folder"
+        className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center text-tf-faint hover:text-tf-ink hover:bg-tf-surface-2 opacity-0 group-hover/hdr:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+      >
+        <Pencil size={12} strokeWidth={1.75} />
+      </button>
+    </div>
+  );
 }
 
 /** A file name that turns into a text box on click (or via the pencil) so the user can rename it. */
