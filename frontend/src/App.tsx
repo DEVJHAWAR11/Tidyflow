@@ -189,7 +189,17 @@ export default function App() {
   const [planChat, setPlanChat] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
 
   // --- Results ---
-  const [files, setFiles] = usePersistentState<ClassifiedFile[]>("tidyflow_cached_files", []);
+  const [rawFiles, setFiles] = usePersistentState<ClassifiedFile[]>("tidyflow_cached_files", []);
+  // Folders renamed on the review screen, as sorted name -> current name. The backend keeps the
+  // sorted names, so they are mapped here and the new name is sent with each file when organizing.
+  const [folderRenames, setFolderRenames] = usePersistentState<Record<string, string>>(
+    "tidyflow_folder_renames",
+    {}
+  );
+  const files = useMemo(() => {
+    if (Object.keys(folderRenames).length === 0) return rawFiles;
+    return rawFiles.map((f) => (folderRenames[f.category] ? { ...f, category: folderRenames[f.category] } : f));
+  }, [rawFiles, folderRenames]);
   const [summary, setSummary] = usePersistentState<RunSummary | null>("tidyflow_cached_summary", null);
   const [resultMeta, setResultMeta] = usePersistentState<ResultMeta | null>("tidyflow_result_meta", null);
   const [selectedIdList, setSelectedIdList] = usePersistentState<string[]>("tidyflow_selected_files", []);
@@ -228,7 +238,7 @@ export default function App() {
   const hasResults = files.length > 0;
   const resultsAreForThisFolder = hasResults && resultMeta?.inputDir === inputFolder;
   const isStale =
-    hasResults && (!resultMeta || !resultsAreForThisFolder || !sameNames(resultMeta.categories, activeFolderNames));
+    hasResults && (!resultMeta || !resultsAreForThisFolder || !sameNames(resultMeta.categories.map((c) => folderRenames[c] ?? c), activeFolderNames));
   // A suggestion that only changes case or punctuation isn't a clearer name, so it isn't offered.
   const renameSuggestions = useMemo(() => {
     const plain = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -313,6 +323,7 @@ export default function App() {
       if (!sameRun) {
         // A different run than the one cached here: reset per-file choices.
         setCategoryOverrides({});
+        setFolderRenames({});
         setSuggestionsUndo(null);
         setFilenameOverrides({});
         setSelectedFileIds(new Set(latest.filter((f) => f.action === "copy_to_organized").map((f) => f.file_id)));
@@ -573,6 +584,7 @@ export default function App() {
     setResultMeta(null);
     setSelectedFileIds(new Set());
     setCategoryOverrides({});
+    setFolderRenames({});
     setSuggestionsUndo(null);
     setFilenameOverrides({});
   };
@@ -624,6 +636,7 @@ export default function App() {
       setSummary(data.summary || null);
       setResultMeta({ inputDir: data.input_dir || inputFolder.trim(), categories: data.categories || [] });
       setCategoryOverrides({});
+      setFolderRenames({});
       setSuggestionsUndo(null);
       setFilenameOverrides({});
       if (data.output_dir) setOutputFolder(data.output_dir);
@@ -677,10 +690,12 @@ export default function App() {
     setIsApplying(true);
     setApplyProgress(null);
 
+    const renamedTo = new Set(Object.values(folderRenames));
     const decisionList: ApplyDecisionItem[] = files.map((f) => ({
       file_id: f.file_id,
       approved: selectedFileIds.has(f.file_id) && isDecided(f),
-      override_category: categoryOverrides[f.file_id] || undefined,
+      // A folder renamed on the review screen is only known here, so its files carry the new name.
+      override_category: categoryOverrides[f.file_id] || (renamedTo.has(f.category) ? f.category : undefined),
       target_filename: filenameOverrides[f.file_id] || undefined,
     }));
     const perFolder = new Map<string, number>();
@@ -919,6 +934,44 @@ export default function App() {
     aiUndoSnapshot.current = null;
   };
 
+  /** Rename a folder on the review screen without sorting again. False when the name is taken. */
+  const handleRenameSortedFolder = (oldName: string, newName: string): boolean => {
+    if (!newName || newName === oldName) return true;
+    const taken = [
+      ...Object.keys(categories),
+      ...Object.values(categoryOverrides),
+      ...files.map((f) => f.category),
+    ];
+    if (taken.some((n) => n !== oldName && n.toLowerCase() === newName.toLowerCase())) return false;
+
+    const swap = (n: string) => (n === oldName ? newName : n);
+    const swapAll = (m: Record<string, string>) =>
+      Object.fromEntries(Object.entries(m).map(([k, v]) => [k, swap(v)]));
+
+    if (categories[oldName]) handleRenameFolder(oldName, newName);
+    setFolderRenames((prev) => {
+      const next = swapAll(prev);
+      // Also covers a plan folder that only holds files the user moved there, so the plan still matches.
+      if (!Object.values(prev).includes(oldName) && !(oldName in prev)) next[oldName] = newName;
+      // A folder renamed back to its sorted name needs no mapping.
+      for (const [k, v] of Object.entries(next)) if (k === v) delete next[k];
+      return next;
+    });
+    setCategoryOverrides((prev) => swapAll(prev));
+    setSuggestionsUndo((prev) =>
+      prev && {
+        folders: swapAll(prev.folders),
+        before: Object.fromEntries(
+          Object.entries(prev.before).map(([id, b]) => [id, b.folder ? { ...b, folder: swap(b.folder) } : b])
+        ),
+      }
+    );
+    if (aiUndoSnapshot.current) {
+      aiUndoSnapshot.current = { ...aiUndoSnapshot.current, categories: swapAll(aiUndoSnapshot.current.categories) };
+    }
+    return true;
+  };
+
   // --- Folder picking ---
 
   /** Forget the plan, results and progress of the current sort (files on disk are never touched). */
@@ -1134,6 +1187,7 @@ export default function App() {
             categoryOverrides={categoryOverrides}
             onMoveFile={handleMoveFile}
             onClearMove={handleClearMove}
+            onRenameFolder={handleRenameSortedFolder}
             autoThreshold={autoThreshold}
             renameSuggestionCount={renameSuggestions.length}
             renamesEnabled={renamesEnabled}
