@@ -5,6 +5,7 @@ import { Card, ease } from "./ui";
 import { WizardStatus } from "../wizard/scenes";
 import type { ClassifiedFile } from "../types";
 import type { ReviewAiOutcome } from "./contracts";
+import { prettyFolderName } from "../utils/folderVisuals";
 
 const EXAMPLES = [
   "Move the course screenshots to Academic",
@@ -70,7 +71,7 @@ export function ReviewAssistant({ files, undecidedCount, hasDuplicates, onAsk, o
     try {
       const result = await onAsk(cmd);
       setOutcome(result);
-      if (!result.error && result.changedIds.length > 0) setText("");
+      if (!result.error && result.changedIds.length + result.renamedFolders.length > 0) setText("");
     } catch {
       setOutcome({
         message: "",
@@ -82,19 +83,25 @@ export function ReviewAssistant({ files, undecidedCount, hasDuplicates, onAsk, o
         left: 0,
         included: 0,
         newFolders: [],
+        renamedFolders: [],
       });
     } finally {
       setWorking(false);
     }
   };
 
-  const changed = outcome && !outcome.error && outcome.changedIds.length + outcome.excludedIds.length > 0;
+  const changed =
+    outcome &&
+    !outcome.error &&
+    outcome.changedIds.length + outcome.excludedIds.length + outcome.renamedFolders.length > 0;
   const details = outcome
     ? [
         outcome.moved && `${outcome.moved} moved`,
         outcome.renamed && `${outcome.renamed} renamed`,
         outcome.left && `${outcome.left} left in place`,
         outcome.included && `${outcome.included} added back`,
+        outcome.renamedFolders.length > 0 &&
+          `${outcome.renamedFolders.length === 1 ? "folder" : "folders"} renamed to ${outcome.renamedFolders.map(prettyFolderName).join(", ")}`,
         outcome.newFolders.length > 0 &&
           `new ${outcome.newFolders.length === 1 ? "folder" : "folders"}: ${outcome.newFolders.join(", ")}`,
       ].filter(Boolean)

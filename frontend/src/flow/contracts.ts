@@ -173,6 +173,8 @@ export interface ReviewAiOutcome {
   left: number;
   included: number;
   newFolders: string[];
+  /** New names of folders the request renamed */
+  renamedFolders: string[];
 }
 
 export interface DoneResult {

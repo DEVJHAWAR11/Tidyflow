@@ -879,6 +879,8 @@ export default function App() {
     categories: Record<string, string>;
     filenames: Record<string, string>;
     selected: string[];
+    /** Folders the request renamed, as [old, new], so undo can name them back */
+    folderRenames: [string, string][];
   } | null>(null);
 
   const handleAskAi = async (command: string): Promise<ReviewAiOutcome> => {
@@ -905,20 +907,32 @@ export default function App() {
     const renames: Record<string, string> = data.filename_overrides || {};
     const exclude: string[] = data.exclude || [];
     const include: string[] = data.include || [];
+    const askedFolderRenames = Object.entries((data.folder_renames || {}) as Record<string, string>);
+    // Files that end up in a renamed folder count as changed, so they glow and their folder opens.
+    const renamedFrom = new Set(askedFolderRenames.map(([old]) => old));
+    const inRenamedFolder = files
+      .filter((f) => renamedFrom.has(moves[f.file_id] ?? (isDecided(f) ? categoryOverrides[f.file_id] ?? f.category : "")))
+      .map((f) => f.file_id);
     const outcome: ReviewAiOutcome = {
       message: data.message || "",
       error: !res.ok ? "Something went wrong. Nothing was changed." : data.error || null,
-      changedIds: Array.from(new Set([...Object.keys(moves), ...Object.keys(renames), ...include])),
+      changedIds: Array.from(new Set([...Object.keys(moves), ...Object.keys(renames), ...include, ...inRenamedFolder])),
       excludedIds: exclude,
       moved: Object.keys(moves).length,
       renamed: Object.keys(renames).length,
       left: exclude.length,
       included: include.length,
       newFolders: data.new_folders || [],
+      renamedFolders: [],
     };
-    if (outcome.error || outcome.changedIds.length + exclude.length === 0) return outcome;
+    if (outcome.error || outcome.changedIds.length + exclude.length + askedFolderRenames.length === 0) return outcome;
 
-    aiUndoSnapshot.current = { categories: categoryOverrides, filenames: filenameOverrides, selected: selectedIdList };
+    aiUndoSnapshot.current = {
+      categories: categoryOverrides,
+      filenames: filenameOverrides,
+      selected: selectedIdList,
+      folderRenames: [],
+    };
     setCategoryOverrides((prev) => ({ ...prev, ...moves }));
     setFilenameOverrides((prev) => ({ ...prev, ...renames }));
     setSelectedFileIds((prev) => {
@@ -928,6 +942,10 @@ export default function App() {
       exclude.forEach((id) => next.delete(id));
       return next;
     });
+    // After the moves, so files the request moved into a folder go along when it is renamed.
+    const appliedFolderRenames = renameSortedFolders(askedFolderRenames);
+    aiUndoSnapshot.current.folderRenames = appliedFolderRenames;
+    outcome.renamedFolders = appliedFolderRenames.map(([, to]) => to);
     return outcome;
   };
 
@@ -937,28 +955,50 @@ export default function App() {
     setCategoryOverrides(snap.categories);
     setFilenameOverrides(snap.filenames);
     setSelectedIdList(snap.selected);
+    // Name the folders back, newest rename first, after restoring the files' folders above.
+    if (snap.folderRenames.length) {
+      renameSortedFolders([...snap.folderRenames].reverse().map(([from, to]) => [to, from]));
+    }
     aiUndoSnapshot.current = null;
   };
 
-  /** Rename a folder on the review screen without sorting again. False when the name is taken. */
-  const handleRenameSortedFolder = (oldName: string, newName: string): boolean => {
-    if (!newName || newName === oldName) return true;
-    const taken = [
-      ...Object.keys(categories),
-      ...Object.values(categoryOverrides),
-      ...files.map((f) => f.category),
-    ];
-    if (taken.some((n) => n !== oldName && n.toLowerCase() === newName.toLowerCase())) return false;
+  /**
+   * Rename folders on the review screen without sorting again, in order. A rename whose new name another
+   * folder already has is skipped. Returns the renames that were applied.
+   */
+  const renameSortedFolders = (pairs: [string, string][]): [string, string][] => {
+    const names = new Set([...Object.keys(categories), ...Object.values(categoryOverrides), ...files.map((f) => f.category)]);
+    let nextCategories = categories;
+    const applied: [string, string][] = [];
+    for (const [oldName, newName] of pairs) {
+      if (!newName || newName === oldName) continue;
+      if ([...names].some((n) => n !== oldName && n.toLowerCase() === newName.toLowerCase())) continue;
+      names.delete(oldName);
+      names.add(newName);
+      if (nextCategories[oldName]) {
+        // Rebuilt in order so the folder keeps its place (and its look) in the plan.
+        nextCategories = Object.fromEntries(
+          Object.entries(nextCategories).map(([k, v]) => (k === oldName ? [newName, { ...v, name: newName }] : [k, v]))
+        );
+      }
+      applied.push([oldName, newName]);
+    }
+    if (applied.length === 0) return applied;
 
-    const swap = (n: string) => (n === oldName ? newName : n);
+    // Applied one after another, so A -> B then B -> C ends at C.
+    const swap = (n: string) => applied.reduce((name, [from, to]) => (name === from ? to : name), n);
     const swapAll = (m: Record<string, string>) =>
       Object.fromEntries(Object.entries(m).map(([k, v]) => [k, swap(v)]));
 
-    if (categories[oldName]) handleRenameFolder(oldName, newName);
+    if (nextCategories !== categories) updateCategories(nextCategories);
     setFolderRenames((prev) => {
-      const next = swapAll(prev);
-      // Also covers a plan folder that only holds files the user moved there, so the plan still matches.
-      if (!Object.values(prev).includes(oldName) && !(oldName in prev)) next[oldName] = newName;
+      let next = { ...prev };
+      for (const [oldName, newName] of applied) {
+        const hadOld = Object.values(next).includes(oldName) || oldName in next;
+        next = Object.fromEntries(Object.entries(next).map(([k, v]) => [k, v === oldName ? newName : v]));
+        // Also covers a plan folder that only holds files the user moved there, so the plan still matches.
+        if (!hadOld) next[oldName] = newName;
+      }
       // A folder renamed back to its sorted name needs no mapping.
       for (const [k, v] of Object.entries(next)) if (k === v) delete next[k];
       return next;
@@ -975,8 +1015,12 @@ export default function App() {
     if (aiUndoSnapshot.current) {
       aiUndoSnapshot.current = { ...aiUndoSnapshot.current, categories: swapAll(aiUndoSnapshot.current.categories) };
     }
-    return true;
+    return applied;
   };
+
+  /** Rename one folder from its header. False when another folder already has the name. */
+  const handleRenameSortedFolder = (oldName: string, newName: string): boolean =>
+    !newName || newName === oldName || renameSortedFolders([[oldName, newName]]).length > 0;
 
   // --- Folder picking ---
 

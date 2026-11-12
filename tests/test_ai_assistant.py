@@ -404,3 +404,25 @@ def test_review_payload_is_compact_with_request_last(monkeypatch):
     assert "\tsprint notes" in content and '"id"' not in content
     # A folder answered by number is mapped back to its name.
     assert res["category_overrides"] == {"a": "Documents"}
+
+
+def test_review_command_renames_folders(monkeypatch):
+    _fake_ai(monkeypatch, {
+        "message": "Renamed Miscellaneous to Extras.",
+        "folder_renames": {"miscellaneous": "extras", "Images": "documents", "Nope": "Whatever"},
+        # A move written with the new name means the folder as it is now.
+        "moves": {"c": "Extras"},
+    })
+    res = apply_review_command("rename miscellaneous folder to extras", _REVIEW_FILES, ["Miscellaneous", "Images", "Documents"])
+    # Unknown folders and names another folder already has are dropped; a lowercase name is capitalised.
+    assert res["folder_renames"] == {"Miscellaneous": "Extras"}
+    assert res["category_overrides"] == {"c": "Miscellaneous"}
+    assert res["new_folders"] == []
+
+
+def test_review_command_renames_a_folder_without_ai(monkeypatch):
+    import src.ai_assistant as aa
+    monkeypatch.setattr(aa, "load_settings", lambda: ("deepseek", "", None))
+    res = apply_review_command("Rename the payments folder to \"Bills\".", _REVIEW_FILES, ["Finance/Payments", "Images"])
+    assert res["folder_renames"] == {"Finance/Payments": "Finance/Bills"}
+    assert res["category_overrides"] == {} and res["message"] == "Renamed the Payments folder to Bills."
