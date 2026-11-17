@@ -202,8 +202,8 @@ if sys.platform == "darwin":
             "LSBackgroundOnly": "False",
             "CFBundleDisplayName": "TidyFlow",
             "CFBundleName": "TidyFlow",
-            "CFBundleVersion": "2.6.0",
-            "CFBundleShortVersionString": "2.6.0",
+            "CFBundleVersion": "2.6.1",
+            "CFBundleShortVersionString": "2.6.1",
             "NSHumanReadableCopyright": "Copyright © 2026 TidyFlow. All rights reserved.",
         },
     )
