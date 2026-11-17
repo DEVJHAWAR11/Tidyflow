@@ -77,7 +77,7 @@ SECRET_FILENAMES: set[str] = {
 }
 
 SECRET_EXTENSIONS: set[str] = {
-    ".keystore", ".jks", ".pem", ".p12", ".pfx", ".key", ".crt",
+    ".keystore", ".jks", ".pem", ".p12", ".pfx", ".crt",
     # Password manager vaults and exports
     ".kdbx", ".kdb", ".1pux", ".1pif", ".psafe3",
 }
@@ -158,6 +158,15 @@ def rename_adds_meaning(original: str, suggested: str) -> bool:
     return bool(_name_words(suggested) - _name_words(original) - _FILLER_NAME_WORDS)
 
 
+def _is_zip_file(path: Path) -> bool:
+    """True when the file starts with the zip signature, as a single-file Keynote deck (.key) does."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"PK\x03\x04"
+    except OSError:
+        return False
+
+
 def is_secret_file(path: Path) -> bool:
     """Return True if the file holds credentials or secrets: by name, extension, or a password-table header."""
     if path.name.lower() in {n.lower() for n in SECRET_FILENAMES}:
@@ -165,6 +174,8 @@ def is_secret_file(path: Path) -> bool:
     ext = path.suffix.lower()
     if ext in SECRET_EXTENSIONS:
         return True
+    if ext == ".key":
+        return not _is_zip_file(path)
     if ext in _CREDENTIAL_DATA_EXTS and _CREDENTIAL_NAME_RE.search(path.stem):
         return True
     if _RECOVERY_NAME_RE.search(path.stem):
