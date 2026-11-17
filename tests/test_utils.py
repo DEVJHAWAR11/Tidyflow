@@ -115,6 +115,18 @@ def test_password_exports_are_secret_files(tmp_path):
     assert not is_secret_file(write("passport_scan.pdf"))
 
 
+def test_key_files_keynote_vs_private_key(tmp_path):
+    # A single-file Keynote deck is a zip archive, so it gets organized like any presentation.
+    deck = tmp_path / "PolicyLens.key"
+    deck.write_bytes(b"PK\x03\x04" + b"\x00" * 64)
+    assert not is_secret_file(deck)
+    # A private key (PEM text), or anything else named .key, stays excluded.
+    pem = tmp_path / "server.key"
+    pem.write_text("-----BEGIN PRIVATE KEY-----\nMIIEv...\n-----END PRIVATE KEY-----\n")
+    assert is_secret_file(pem)
+    assert is_secret_file(tmp_path / "missing.key")
+
+
 def test_recovery_codes_are_secret(tmp_path):
     def write(name, text="x"):
         p = tmp_path / name
