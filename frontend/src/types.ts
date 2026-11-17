@@ -60,6 +60,10 @@ export interface FtsResultItem {
   current_path?: string;
   name?: string;
   modified?: number | null;
+  /** The folder the file really lives in on disk, home shown as "~". Set by /search. */
+  lives_in?: string;
+  /** The TidyFlow folders the file is in. Set by /search. */
+  folders?: { id: number; name: string; is_real: boolean; label: string }[];
   has_text?: boolean;
   status?: string;
   category?: string;

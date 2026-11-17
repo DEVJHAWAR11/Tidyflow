@@ -6,7 +6,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator, Any
+from typing import Any, Generator, Iterable, Optional
 
 from tqdm import tqdm
 
@@ -117,9 +117,12 @@ def iter_candidate_files(input_dir: Path, ignore_patterns: set[str] | None = Non
             yield Path(root) / fname
 
 
-def scan_directory(config: TidyConfig) -> list[FileRecord]:
+def scan_directory(config: TidyConfig, only_paths: Optional[Iterable[Path]] = None) -> list[FileRecord]:
     """
     Recursively walk config.input_dir and generate validated FileRecords.
+
+    With ``only_paths`` (files already picked by ``iter_candidate_files``, e.g. the new files a
+    Library check found), just those files are scanned instead of the whole folder.
     """
     input_dir = config.input_dir
     if not input_dir.exists():
@@ -132,8 +135,10 @@ def scan_directory(config: TidyConfig) -> list[FileRecord]:
     if hasattr(config, "staging_dir") and config.staging_dir:
         ignore_patterns.add(config.staging_dir.name)
 
-    all_candidate_paths = list(iter_candidate_files(input_dir, ignore_patterns))
-    all_candidate_paths.sort()
+    if only_paths is not None:
+        all_candidate_paths = sorted({Path(p) for p in only_paths if Path(p).is_file()})
+    else:
+        all_candidate_paths = sorted(iter_candidate_files(input_dir, ignore_patterns))
     logger.info("Found %d candidate files in %s", len(all_candidate_paths), input_dir)
 
     records: list[FileRecord] = []

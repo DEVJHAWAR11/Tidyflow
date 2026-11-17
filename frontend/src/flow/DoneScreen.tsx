@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { FolderOpen, Undo2, ArrowRight, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { FolderOpen, Library, Undo2, ArrowRight, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { Screen, Button, Card, ease } from "./ui";
 import { FolderIcon } from "./icons";
 import { folderLabel, prettyFolderName } from "../utils/folderVisuals";
@@ -11,6 +11,7 @@ import type { DoneScreenProps } from "./contracts";
 export function DoneScreen({
   result,
   onOpenFolder,
+  onOpenLibrary,
   onUndo,
   undoState,
   undoMessage,
@@ -36,6 +37,8 @@ export function DoneScreen({
   };
   const folderCountLabel = result.folderCount === 1 ? "1 folder" : `${result.folderCount} folders`;
   const actionPrefix = result.action === "moved" ? "Moved into " : "Copied into ";
+  // "sorted": the files went into TidyFlow folders only, so there is no output folder on disk.
+  const libraryOnly = result.action === "sorted";
 
   return (
     <Screen className="max-w-[460px] mx-auto pt-[10vh] pb-16 px-4 text-center">
@@ -96,16 +99,27 @@ export function DoneScreen({
       {/* Subtitles (hidden when undone) */}
       {!isUndone && (
         <>
-          <p className="mt-1 text-[14px] text-tf-muted">
-            {actionPrefix}
-            {folderCountLabel} in{" "}
-            <span className="font-medium text-tf-ink-2" title={result.outputDir}>
-              {folderLabel(result.outputDir)}
-            </span>
-          </p>
-          <p className="mt-1 text-[13px] text-tf-faint">
-            {result.action === "moved" ? "Originals were moved." : "Your originals are untouched."}
-          </p>
+          {libraryOnly ? (
+            <>
+              <p className="mt-1 text-[14px] text-tf-muted">
+                Sorted into {folderCountLabel} in your TidyFlow folders.
+              </p>
+              <p className="mt-1 text-[13px] text-tf-faint">Nothing changed on disk.</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-[14px] text-tf-muted">
+                {actionPrefix}
+                {folderCountLabel} in{" "}
+                <span className="font-medium text-tf-ink-2" title={result.outputDir}>
+                  {folderLabel(result.outputDir)}
+                </span>
+              </p>
+              <p className="mt-1 text-[13px] text-tf-faint">
+                {result.action === "moved" ? "Originals were moved." : "Your originals are untouched."}
+              </p>
+            </>
+          )}
         </>
       )}
 
@@ -135,14 +149,30 @@ export function DoneScreen({
       {/* Action Buttons */}
       {!isUndone && (
         <div className="mt-6 flex items-center justify-center gap-2">
-          <Button
-            variant="primary"
-            size="md"
-            icon={<FolderOpen size={15} strokeWidth={1.75} />}
-            onClick={onOpenFolder}
-          >
-            Open folder
-          </Button>
+          {libraryOnly ? (
+            <Button
+              variant="primary"
+              size="md"
+              icon={<Library size={15} strokeWidth={1.75} />}
+              onClick={onOpenLibrary}
+            >
+              Open Library
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="primary"
+                size="md"
+                icon={<FolderOpen size={15} strokeWidth={1.75} />}
+                onClick={onOpenFolder}
+              >
+                Open folder
+              </Button>
+              <Button variant="secondary" size="md" onClick={onOpenLibrary}>
+                Library
+              </Button>
+            </>
+          )}
 
           <Button
             variant="secondary"

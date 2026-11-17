@@ -27,6 +27,7 @@ dependencies = [
     "keyring>=24.0.0",
     "tqdm>=4.66.0",
     "pywebview>=5.0.0",
+    "send2trash>=1.8.0; sys_platform != 'darwin'",
     "pyinstaller>=6.0.0",
 ]
 

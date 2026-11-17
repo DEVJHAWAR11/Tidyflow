@@ -5,7 +5,12 @@ import { API_BASE } from "../config";
 import { prettyFolderName, formatBytes } from "../utils/folderVisuals";
 import { Screen, Card, Button, StepHeader, Skeleton } from "../flow/ui";
 import { FilePreview, FolderIcon } from "../flow/icons";
-import { Search, X, Copy, Check, Eye, FolderOpen, ExternalLink, Clock, ChevronUp, ChevronDown } from "lucide-react";
+import { Search, X, Copy, Check, Eye, FolderOpen, ExternalLink, Clock, ChevronUp, ChevronDown, FolderPlus, Inbox } from "lucide-react";
+import { ConfirmDialog } from "../flow/ConfirmDialog";
+import { FolderGlyph } from "./library/FolderGlyph";
+import { indexFolders } from "./library/FolderTree";
+import { FolderPickerDialog } from "./library/FolderPickerDialog";
+import { fetchFolders, libraryActions, type FolderKey, type LibraryFolder } from "./library/libraryApi";
 
 const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
 const FINDER = isMac ? "Finder" : "File Explorer";
@@ -26,17 +31,25 @@ const KIND_LABELS: Record<Kind, string> = {
 };
 
 interface Filters {
-  category: string | null;
   kind: Kind | null;
-  organized: boolean | null;
+  /** A TidyFlow folder (searched with its subfolders), "unsorted" for files in no folder, or null for all. */
+  folder: FolderKey | null;
 }
-const NO_FILTERS: Filters = { category: null, kind: null, organized: null };
+const NO_FILTERS: Filters = { kind: null, folder: null };
 
 interface Facets {
   categories: Record<string, number>;
   kinds: Partial<Record<Kind, number>>;
-  organized: number;
-  unorganized: number;
+  /** Matches per top-level TidyFlow folder. */
+  folders: { id: number; name: string; is_real: boolean; count: number }[];
+  /** Matches in no TidyFlow folder. */
+  unsorted: number;
+}
+
+/** Where a search starts when it is opened from somewhere else, e.g. a Library folder. */
+export interface SearchScope {
+  folder: FolderKey;
+  query?: string;
 }
 
 interface SearchPage {
@@ -143,13 +156,23 @@ const Kbd = ({ children }: { children: React.ReactNode }) => (
   </kbd>
 );
 
-export function SearchView() {
+export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}) {
   const saved = useMemo(
-    () => readJson<{ query: string; filters: Filters }>(globalThis.sessionStorage, STATE_KEY, { query: "", filters: NO_FILTERS }),
+    () => readJson<{ query: string; filters: Partial<Filters> }>(globalThis.sessionStorage, STATE_KEY, { query: "", filters: NO_FILTERS }),
     [],
   );
-  const [query, setQuery] = useState(saved.query);
-  const [filters, setFilters] = useState<Filters>(saved.filters);
+  const [query, setQuery] = useState(scope?.query ?? saved.query);
+  // Older saved searches had other filters; only these two carry over.
+  const [filters, setFilters] = useState<Filters>({
+    kind: (scope ? null : saved.filters?.kind) ?? null,
+    folder: scope ? scope.folder : saved.filters?.folder ?? null,
+  });
+  const [folders, setFolders] = useState<LibraryFolder[]>([]);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [adding, setAdding] = useState<"pick" | "working" | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addNote, setAddNote] = useState<string | null>(null);
+  const [realTarget, setRealTarget] = useState<{ folder: LibraryFolder; ids: number[]; count: number } | null>(null);
   const [page, setPage] = useState<SearchPage | null>(null);
   const [searched, setSearched] = useState(""); // the query the shown results belong to
   const [loading, setLoading] = useState(false);
@@ -167,14 +190,13 @@ export function SearchView() {
 
   const results = page?.results ?? [];
   const facets = page?.facets ?? null;
-  const hasFilters = filters.category !== null || filters.kind !== null || filters.organized !== null;
+  const hasFilters = filters.kind !== null || filters.folder !== null;
   const words = useMemo(() => ((page?.corrected || searched).match(/[\p{L}\p{N}_]+/gu) ?? []), [page?.corrected, searched]);
 
   const fetchPage = useCallback(async (q: string, f: Filters, offset: number): Promise<SearchPage> => {
     const params = new URLSearchParams({ q, limit: String(PAGE_SIZE), offset: String(offset) });
-    if (f.category) params.set("category", f.category);
     if (f.kind) params.set("kind", f.kind);
-    if (f.organized !== null) params.set("organized", String(f.organized));
+    if (f.folder !== null) params.set("folder", String(f.folder));
     const res = await fetch(`${API_BASE}/search?${params}`);
     if (!res.ok) throw new Error(`Search failed (${res.status})`);
     return res.json();
@@ -210,10 +232,17 @@ export function SearchView() {
       }
     }, wait);
     return () => clearTimeout(timer);
-  }, [query, filters, fetchPage]);
+  }, [query, filters, fetchPage, refreshTick]);
+
+  const loadFolders = useCallback(() => {
+    fetchFolders()
+      .then((lib) => setFolders(lib.folders))
+      .catch(() => setFolders([]));
+  }, []);
 
   useEffect(() => {
     inputRef.current?.focus();
+    loadFolders();
     fetch(`${API_BASE}/search/stats`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setStats)
@@ -334,14 +363,70 @@ export function SearchView() {
   const toggle = <K extends keyof Filters>(key: K, value: Filters[K]) =>
     setFilters((f) => ({ ...f, [key]: f[key] === value ? null : value }));
 
-  const categoryChips = useMemo(() => {
-    const entries = Object.entries(facets?.categories ?? {}).sort((a, b) => b[1] - a[1]);
-    const top = entries.slice(0, 6);
-    if (filters.category && !top.some(([name]) => name === filters.category)) {
-      top.push([filters.category, facets?.categories[filters.category] ?? 0]);
+  // The folder list for the "In" menu: the tree flattened, each with its depth.
+  const folderOptions = useMemo(() => {
+    const index = indexFolders(folders);
+    const out: { folder: LibraryFolder; depth: number }[] = [];
+    const walk = (parent: number | null, depth: number) =>
+      (index.children.get(parent) || []).forEach((f) => {
+        out.push({ folder: f, depth });
+        walk(f.id, depth + 1);
+      });
+    walk(null, 0);
+    return out;
+  }, [folders]);
+  const scopeFolder = typeof filters.folder === "number" ? folders.find((f) => f.id === filters.folder) : undefined;
+
+  // Chips for the top-level folders the matches are in, and for the matches in no folder.
+  const folderChips = useMemo(() => {
+    const top = (facets?.folders ?? []).slice(0, 6);
+    const kinds = top.length + ((facets?.unsorted ?? 0) > 0 ? 1 : 0);
+    return kinds > 1 ? top : [];
+  }, [facets]);
+  const showUnsortedChip = folderChips.length > 0 && (facets?.unsorted ?? 0) > 0;
+
+  const addAllToFolder = async (target: LibraryFolder) => {
+    const q = searched.trim();
+    if (!q) return;
+    setAdding("working");
+    setAddError(null);
+    try {
+      const params = new URLSearchParams({ q });
+      if (filters.kind) params.set("kind", filters.kind);
+      if (filters.folder !== null) params.set("folder", String(filters.folder));
+      const res = await fetch(`${API_BASE}/search/ids?${params}`);
+      if (!res.ok) throw new Error("Couldn't list the files to add.");
+      const { ids } = (await res.json()) as { ids: number[] };
+      if (!ids.length) throw new Error("No files to add.");
+      const result = await libraryActions.paste(ids, target.id, "copy", null);
+      if (result.needs_disk_move) {
+        setAdding(null);
+        setRealTarget({ folder: target, ids, count: result.count });
+        return;
+      }
+      setAdding(null);
+      setAddNote(`Added ${ids.length.toLocaleString()} ${ids.length === 1 ? "file" : "files"} to ${target.name}. You can undo it in the Library.`);
+      loadFolders();
+      setRefreshTick((t) => t + 1);
+    } catch (e) {
+      setAddError((e as Error).message);
+      setAdding("pick");
     }
-    return top.length > 1 || filters.category ? top : [];
-  }, [facets, filters.category]);
+  };
+
+  const moveIntoRealFolder = async () => {
+    if (!realTarget?.folder.disk_path) return;
+    const { folder, ids } = realTarget;
+    setRealTarget(null);
+    try {
+      const r = await libraryActions.moveOnDisk(ids, folder.disk_path!, { toFolderId: folder.id, op: "copy" });
+      setAddNote(`Moved ${r.moved.toLocaleString()} ${r.moved === 1 ? "file" : "files"} into ${folder.name} on disk. You can undo it in the Library.`);
+      loadFolders();
+      setRefreshTick((t) => t + 1);
+    } catch (e) {
+      setAddNote((e as Error).message);
+    }
+  };
 
   const kindChips = useMemo(() => {
     const entries = (Object.entries(facets?.kinds ?? {}) as [Kind, number][]).sort((a, b) => b[1] - a[1]);
@@ -349,7 +434,6 @@ export function SearchView() {
     return entries.length > 1 || filters.kind ? entries : [];
   }, [facets, filters.kind]);
 
-  const showPlace = !!facets && ((facets.organized > 0 && facets.unorganized > 0) || filters.organized !== null);
   const showSkeleton = loading && results.length === 0 && !(page && searched);
   const empty = !query.trim();
 
@@ -398,6 +482,37 @@ export function SearchView() {
           )}
         </div>
       </div>
+
+      {/* Where to search: every folder, one TidyFlow folder and its subfolders, or files in none */}
+      {folders.length > 0 && (
+        <div className="mt-2.5 flex items-center gap-2 text-[12.5px] text-tf-muted">
+          <label htmlFor="tf-search-scope">In</label>
+          <div className="relative">
+            <select
+              id="tf-search-scope"
+              value={filters.folder === null ? "" : String(filters.folder)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFilters((f) => ({ ...f, folder: v === "" ? null : v === "unsorted" ? "unsorted" : Number(v) }));
+              }}
+              className="appearance-none h-7 pl-2.5 pr-7 rounded-[7px] border border-tf-border bg-tf-surface text-[12.5px] text-tf-ink-2 hover:bg-tf-surface-2 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-tf-ink"
+            >
+              <option value="">All folders</option>
+              {folderOptions.map(({ folder, depth }) => (
+                <option key={folder.id} value={folder.id}>
+                  {"\u2002".repeat(depth * 2)}
+                  {folder.name}
+                </option>
+              ))}
+              <option value="unsorted">Not sorted yet</option>
+            </select>
+            <ChevronDown size={13} strokeWidth={2} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-tf-faint" />
+          </div>
+          {scopeFolder && folderOptions.some((o) => o.folder.parent_id === scopeFolder.id) && (
+            <span className="text-tf-faint">and its folders</span>
+          )}
+        </div>
+      )}
 
       {/* Before a search: recent searches, the user's folders, and what search covers */}
       {empty && (
@@ -459,37 +574,43 @@ export function SearchView() {
       )}
 
       {/* Filters, built from what the search found */}
-      {!empty && facets && (categoryChips.length > 0 || kindChips.length > 0 || showPlace) && (
+      {!empty && facets && (folderChips.length > 0 || kindChips.length > 0) && (
         <div className="mt-3 space-y-1.5">
-          {categoryChips.length > 0 && (
+          {folderChips.length > 0 && filters.folder === null && (
             <div className="flex flex-wrap gap-1.5">
-              {categoryChips.map(([name, count]) => (
-                <Chip key={name} active={filters.category === name} count={count} onClick={() => toggle("category", name)}>
-                  <FolderIcon name={name} size={14} />
-                  {prettyFolderName(name)}
+              {folderChips.map((f) => (
+                <Chip key={f.id} count={f.count} onClick={() => toggle("folder", f.id)}>
+                  <FolderGlyph real={f.is_real} size={14} />
+                  {f.name}
                 </Chip>
               ))}
+              {showUnsortedChip && (
+                <Chip count={facets.unsorted} onClick={() => toggle("folder", "unsorted")}>
+                  <Inbox size={13} strokeWidth={1.75} className="text-tf-faint" />
+                  Not sorted yet
+                </Chip>
+              )}
             </div>
           )}
-          {(kindChips.length > 0 || showPlace) && (
+          {kindChips.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {kindChips.map(([kind, count]) => (
                 <Chip key={kind} active={filters.kind === kind} count={count} onClick={() => toggle("kind", kind)}>
                   {KIND_LABELS[kind]}
                 </Chip>
               ))}
-              {showPlace && (
-                <>
-                  <Chip active={filters.organized === true} count={facets.organized} onClick={() => toggle("organized", true)}>
-                    Organized
-                  </Chip>
-                  <Chip active={filters.organized === false} count={facets.unorganized} onClick={() => toggle("organized", false)}>
-                    Not organized yet
-                  </Chip>
-                </>
-              )}
             </div>
           )}
+        </div>
+      )}
+
+      {addNote && (
+        <div role="status" className="mt-3 flex items-center gap-2 text-[12.5px] text-tf-muted">
+          <Check size={14} strokeWidth={2} className="text-tf-success shrink-0" />
+          <span className="flex-1">{addNote}</span>
+          <button type="button" onClick={() => setAddNote(null)} aria-label="Dismiss" className="p-1 rounded hover:text-tf-ink cursor-pointer">
+            <X size={13} strokeWidth={1.75} />
+          </button>
         </div>
       )}
 
@@ -554,9 +675,24 @@ export function SearchView() {
                 </>
               )}
             </span>
-            <span className="hidden sm:flex items-center gap-1.5 text-tf-faint">
-              <Kbd>↑</Kbd>
-              <Kbd>↓</Kbd> move <Kbd>↵</Kbd> open <Kbd>Space</Kbd> preview
+            <span className="flex items-center gap-3">
+              <span className="hidden lg:flex items-center gap-1.5 text-tf-faint">
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd> move <Kbd>↵</Kbd> open <Kbd>Space</Kbd> preview
+              </span>
+              {!page!.corrected && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddError(null);
+                    setAdding("pick");
+                  }}
+                  className="inline-flex items-center gap-1.5 h-7 px-2 rounded-[7px] text-tf-ink-2 hover:text-tf-ink hover:bg-tf-surface-2 cursor-pointer whitespace-nowrap"
+                >
+                  <FolderPlus size={14} strokeWidth={1.75} />
+                  {page!.total === 1 ? "Add to a folder…" : `Add all ${page!.total.toLocaleString()} to a folder…`}
+                </button>
+              )}
             </span>
           </div>
 
@@ -565,7 +701,6 @@ export function SearchView() {
               const name = fileName(item);
               const path = currentPath(item);
               const id = String(item.id);
-              const organized = !!item.new_path && path === item.new_path;
               const did = done && done.id === id ? done.what : null;
               const meta = [item.file_size_bytes ? formatBytes(item.file_size_bytes) : "", formatDate(item.modified)].filter(Boolean);
 
@@ -599,23 +734,31 @@ export function SearchView() {
                     </div>
 
                     <div className="flex items-center gap-1.5 text-[12px] text-tf-muted mt-0.5 min-w-0">
-                      {item.category && item.category !== "Unknown" && (
+                      {item.folders && item.folders.length > 0 ? (
                         <>
-                          <FolderIcon name={item.category} size={14} />
-                          <span className="font-medium text-tf-ink-2 whitespace-nowrap shrink-0">
-                            {prettyFolderName(item.category)}
-                          </span>
-                          <span className="text-tf-faint">·</span>
+                          {item.folders.slice(0, 2).map((f) => (
+                            <span
+                              key={f.id}
+                              className="inline-flex items-center gap-1 h-[20px] px-1.5 rounded-[5px] bg-tf-surface-3 font-medium text-tf-ink-2 whitespace-nowrap shrink-0"
+                              title={f.is_real ? `${f.label} (real folder)` : `${f.label} (only in TidyFlow)`}
+                            >
+                              <FolderGlyph real={f.is_real} size={13} />
+                              {f.label}
+                            </span>
+                          ))}
+                          {item.folders.length > 2 && (
+                            <span className="text-tf-faint whitespace-nowrap shrink-0">+{item.folders.length - 2}</span>
+                          )}
                         </>
+                      ) : (
+                        <span className="text-tf-faint whitespace-nowrap shrink-0">Not sorted yet</span>
                       )}
+                      <span className="text-tf-faint">·</span>
                       <span className="text-tf-faint truncate min-w-0" title={path}>
-                        {parentFolder(path)}
+                        {item.lives_in || parentFolder(path)}
                       </span>
                       {meta.length > 0 && (
                         <span className="text-tf-faint whitespace-nowrap shrink-0 tf-num hidden sm:inline">· {meta.join(" · ")}</span>
-                      )}
-                      {!organized && item.status !== "copied" && item.status !== "moved" && (
-                        <span className="shrink-0 text-tf-faint whitespace-nowrap hidden md:inline">· not organized yet</span>
                       )}
                     </div>
 
@@ -659,6 +802,35 @@ export function SearchView() {
           )}
         </div>
       )}
+
+      <FolderPickerDialog
+        open={adding !== null}
+        title={page && page.total === 1 ? "Add this file to a folder" : `Add ${page?.total.toLocaleString() ?? ""} files to a folder`}
+        body={
+          page && page.total === 1
+            ? "It stays where it is on disk and in any folders it's already in."
+            : "They stay where they are on disk and in any folders they're already in."
+        }
+        confirmLabel="Add"
+        busy={adding === "working"}
+        error={addError}
+        onCancel={() => setAdding(null)}
+        onPick={addAllToFolder}
+      />
+      <ConfirmDialog
+        open={realTarget !== null}
+        title={realTarget ? `${realTarget.folder.name} is a real folder` : ""}
+        body={
+          realTarget
+            ? `Adding files here moves ${realTarget.count.toLocaleString()} ${realTarget.count === 1 ? "file" : "files"} into ${
+                realTarget.folder.disk_label || realTarget.folder.disk_path
+              } on disk, so the folder stays real. You can undo it in the Library.`
+            : ""
+        }
+        confirmLabel="Move on disk"
+        onCancel={() => setRealTarget(null)}
+        onConfirm={moveIntoRealFolder}
+      />
 
       {previewIndex !== null && results[previewIndex] && (
         <PreviewDialog

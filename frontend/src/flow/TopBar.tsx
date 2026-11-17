@@ -1,8 +1,14 @@
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Settings2, Moon, Sun, Check, ArrowLeft, RotateCcw } from "lucide-react";
+import { Search, Settings2, Moon, Sun, Check, RotateCcw } from "lucide-react";
 import { Pill, Dot } from "./ui";
 import type { TopBarProps, FlowStep } from "./contracts";
 import { Wizard } from "../wizard/Wizard";
+
+/** The two places in the app: sorting a folder, and the TidyFlow folders it fills. */
+const TABS = [
+  { id: "flow", label: "Tidy up" },
+  { id: "library", label: "Library" },
+] as const;
 
 const STEPS: { id: FlowStep; label: string; number: number }[] = [
   { id: "home", label: "Folder", number: 1 },
@@ -17,6 +23,7 @@ export function TopBar({
   reachableSteps,
   onGoToStep,
   onOpenView,
+  newCount = 0,
   darkMode,
   toggleDarkMode,
   backendStatus,
@@ -29,20 +36,50 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-40 h-[52px] bg-tf-bg/80 backdrop-blur-md border-b border-tf-border select-none">
       <div className="max-w-6xl mx-auto px-5 h-full flex items-center justify-between gap-4">
-        {/* Left: Brand */}
-        <button
-          type="button"
-          onClick={() => onOpenView("flow")}
-          className="flex items-center gap-2.5 rounded-[8px] py-1 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
-          aria-label="TidyFlow home"
-        >
-          <Wizard size={28} className="text-tf-ink shrink-0" />
-          <span className="text-[14px] font-semibold text-tf-ink tracking-tight hidden sm:inline">
-            TidyFlow
-          </span>
-        </button>
+        {/* Left: Brand and the Tidy up / Library tabs */}
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => onOpenView("flow")}
+            className="flex items-center gap-2.5 rounded-[8px] py-1 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
+            aria-label="TidyFlow home"
+          >
+            <Wizard size={28} className="text-tf-ink shrink-0" />
+            <span className="text-[14px] font-semibold text-tf-ink tracking-tight hidden lg:inline">
+              TidyFlow
+            </span>
+          </button>
+          <nav aria-label="Sections" className="flex items-center p-0.5 rounded-[9px] bg-tf-surface-3">
+            {TABS.map((t) => {
+              const current = view === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  aria-current={current ? "page" : undefined}
+                  onClick={() => onOpenView(t.id)}
+                  className={`h-7 px-3 rounded-[7px] text-[13px] font-medium whitespace-nowrap transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40 ${
+                    current
+                      ? "bg-tf-surface text-tf-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                      : "text-tf-muted hover:text-tf-ink"
+                  }`}
+                >
+                  {t.label}
+                  {t.id === "library" && newCount > 0 && (
+                    <span
+                      aria-label={`, ${newCount} new ${newCount === 1 ? "file" : "files"}`}
+                      className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-tf-link text-white text-[10.5px] font-semibold tf-num align-[1px]"
+                    >
+                      {newCount > 99 ? "99+" : newCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
-        {/* Center: Steps or Back button */}
+        {/* Center: where you are in a sort */}
         {view === "flow" && step !== "home" ? (
           <nav aria-label="Progress" className="flex items-center gap-1.5">
             {STEPS.map((s, idx) => {
@@ -102,15 +139,6 @@ export function TopBar({
               );
             })}
           </nav>
-        ) : view !== "flow" ? (
-          <button
-            type="button"
-            onClick={() => onOpenView("flow")}
-            className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[7px] text-[13px] font-medium text-tf-ink-2 hover:text-tf-ink hover:bg-tf-surface-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
-          >
-            <ArrowLeft size={15} strokeWidth={1.75} className="shrink-0" />
-            Back
-          </button>
         ) : (
           <div aria-hidden />
         )}
@@ -126,7 +154,7 @@ export function TopBar({
               className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[8px] text-[13px] font-medium text-tf-ink-2 hover:text-tf-ink hover:bg-tf-surface-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tf-brand/40"
             >
               <RotateCcw size={15} strokeWidth={1.75} className="shrink-0" />
-              <span className="hidden sm:inline">Start over</span>
+              <span className="hidden lg:inline whitespace-nowrap">Start over</span>
             </button>
           )}
 

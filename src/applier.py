@@ -104,6 +104,12 @@ def load_decisions(decisions_path: Path | str) -> list[ReviewDecision]:
     return decisions
 
 
+def decision_category(dec: ReviewDecision, rec: FileRecord) -> str:
+    """The folder a reviewed file goes to: the user's choice, else the classifier's, else the original."""
+    rec_cat = rec.classification.category if rec.classification else "Unknown"
+    return dec.override_category or (rec_cat if rec_cat != "Unknown" else dec.original_category)
+
+
 def apply_decisions(
     decisions: list[ReviewDecision],
     records: list[FileRecord],
@@ -140,8 +146,7 @@ def apply_decisions(
             continue
 
         # Final category & filename
-        rec_cat = rec.classification.category if rec.classification else "Unknown"
-        category = dec.override_category or (rec_cat if rec_cat != "Unknown" else dec.original_category)
+        category = decision_category(dec, rec)
         if category == "Unknown" and dec.override_category is None:
             logger.info("Skipping Unknown file %s", rec.filename)
             skipped_count += 1

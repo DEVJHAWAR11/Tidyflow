@@ -8,7 +8,7 @@ import {
   BackendStatus,
   ComplexityLevel,
 } from "./types";
-import type { AppView, DoneResult, FlowStep, QuickLocation, ReviewAiOutcome } from "./flow/contracts";
+import type { AppView, ApplyMode, DoneResult, FlowStep, QuickLocation, ReviewAiOutcome } from "./flow/contracts";
 import { TopBar } from "./flow/TopBar";
 import { HomeScreen } from "./flow/HomeScreen";
 import { PlanScreen } from "./flow/PlanScreen";
@@ -21,7 +21,9 @@ import { FolderLooksContext } from "./flow/FolderLookPicker";
 import { Screen } from "./flow/ui";
 import { OrganizeView } from "./components/OrganizeView";
 import { ReviewView } from "./components/ReviewView";
-import { SearchView } from "./components/SearchView";
+import { SearchView, type SearchScope } from "./components/SearchView";
+import { LibraryView } from "./components/library/LibraryView";
+import { fetchFolders, newFiles } from "./components/library/libraryApi";
 import { Onboarding } from "./flow/Onboarding";
 import { SettingsView } from "./components/SettingsView";
 import { DirectoryPickerModal } from "./components/DirectoryPickerModal";
@@ -94,6 +96,12 @@ export default function App() {
   // --- Navigation ---
   const [view, setView] = usePersistentState<AppView>("tidyflow_view", "flow");
   const [step, setStepState] = usePersistentState<FlowStep>("tidyflow_step", "home");
+  // Set when the Library opens a search inside one of its folders; otherwise Search picks up where it left off.
+  const [searchScope, setSearchScope] = useState<SearchScope | null>(null);
+  const openView = (v: AppView) => {
+    if (v === "search") setSearchScope(null);
+    setView(v);
+  };
   const setStep = (s: FlowStep) => {
     setStepState(s);
     setView("flow");
@@ -104,6 +112,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
         e.preventDefault();
+        setSearchScope(null);
         setView("search");
       }
     };
@@ -114,6 +123,30 @@ export default function App() {
   const [advancedMode, setAdvancedMode] = usePersistentState<boolean>("tidyflow_advanced_mode", false);
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
+  // New files in the scanned folders, for the Library tab. Checked once when the app opens.
+  const [newCount, setNewCount] = useState(0);
+  const launchChecked = useRef(false);
+  const launchPlace = useRef({ view, step });
+  launchPlace.current = { view, step };
+  useEffect(() => {
+    if (backendStatus !== "running" || launchChecked.current) return;
+    launchChecked.current = true;
+    const opened = { ...launchPlace.current };
+    // Someone who has a Library and wasn't partway through a sort starts there.
+    if (opened.view === "flow" && opened.step === "home") {
+      fetchFolders()
+        .then((lib) => {
+          const still = launchPlace.current;
+          if (lib.folders.length > 0 && still.view === "flow" && still.step === "home") setView("library");
+        })
+        .catch(() => undefined);
+    }
+    newFiles
+      .status()
+      .then((check) => setNewCount(check.total_new))
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the backend first answers
+  }, [backendStatus]);
   const [hasLlmKey, setHasLlmKey] = useState(false);
   // False when the user chose "No AI" in Settings; then nothing nags them to add a key.
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -221,7 +254,11 @@ export default function App() {
     {}
   );
 
-  const [moveMode, setMoveMode] = useState(false);
+  // Default: sort into TidyFlow folders only. Copying or moving into real folders is opt-in each time.
+  const [applyMode, setApplyMode] = useState<ApplyMode>("library");
+  // The advanced review screen still thinks in copy / move.
+  const moveMode = applyMode === "move";
+  const setMoveMode = (move: boolean) => setApplyMode(move ? "move" : "copy");
   const [isApplying, setIsApplying] = useState(false);
   // Files placed so far while organizing, from the backend's progress events.
   const [applyProgress, setApplyProgress] = useState<{ done: number; total: number } | null>(null);
@@ -722,7 +759,8 @@ export default function App() {
         output_dir: outputFolder,
         decisions: decisionList,
         dry_run: false,
-        move_mode: moveMode,
+        mode: applyMode,
+        move_mode: applyMode === "move",
         folder_looks: folderLooksSupported && folderLooksEnabled ? looksForFolders(folders.map((f) => f.name)) : {},
       }),
       });
@@ -732,7 +770,7 @@ export default function App() {
       setUndoState("idle");
       setUndoMessage(null);
       setDoneResult({ count: data.applied_count, action: data.action, outputDir: data.output_dir, folderCount, folders });
-      setMoveMode(false);
+      setApplyMode("library");
       // These results have been used; Home shouldn't offer them again.
       clearResults();
       setStep("done");
@@ -763,8 +801,8 @@ export default function App() {
   };
 
   const handleTidyAnother = () => {
-    // Moving is opt-in for every organize; the next one starts at the safe default again.
-    setMoveMode(false);
+    // Copying or moving is opt-in for every organize; the next one starts at the safe default again.
+    setApplyMode("library");
     clearResults();
     setDoneResult(null);
     setUndoState("idle");
@@ -1042,7 +1080,7 @@ export default function App() {
     setSortError(null);
     setIsRunning(false);
     setIsCancelling(false);
-    setMoveMode(false);
+    setApplyMode("library");
   };
 
   /** Forget the backend's sort results; with `folder`, also forget that folder's saved plan. */
@@ -1253,8 +1291,8 @@ export default function App() {
             onUndoAi={handleUndoAi}
             onUseSuggestions={handleUseSuggestions}
             onUndoSuggestions={suggestionsUndo ? handleUndoSuggestions : undefined}
-            moveMode={moveMode}
-            setMoveMode={setMoveMode}
+            applyMode={applyMode}
+            onApplyModeChange={setApplyMode}
             outputFolder={outputFolder}
             isStale={isStale}
             onResort={() => handleStartPipeline()}
@@ -1274,6 +1312,7 @@ export default function App() {
           <DoneScreen
             result={doneResult}
             onOpenFolder={() => handleOpenPath(doneResult.outputDir)}
+            onOpenLibrary={() => setView("library")}
             onUndo={handleUndo}
             undoState={undoState}
             undoMessage={undoMessage}
@@ -1333,7 +1372,19 @@ export default function App() {
     switch (view) {
       case "search":
         return (
-          <SearchView />
+          <SearchView scope={searchScope} />
+        );
+      case "library":
+        return (
+          <LibraryView
+            onOpenTidyUp={() => setStep("home")}
+            onOpenPath={handleOpenPath}
+            onSearch={(scope) => {
+              setSearchScope(scope);
+              setView("search");
+            }}
+            onNewCount={setNewCount}
+          />
         );
       case "settings":
         return (
@@ -1430,7 +1481,8 @@ export default function App() {
         step={step}
         reachableSteps={reachableSteps}
         onGoToStep={goToStep}
-        onOpenView={(v) => setView(v)}
+        onOpenView={openView}
+        newCount={newCount}
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
         backendStatus={backendStatus}
