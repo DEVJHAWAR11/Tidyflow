@@ -886,16 +886,9 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
     if req.custom_instructions:
         cfg.llm.custom_instructions = req.custom_instructions
 
-    # Tune auto_copy_threshold based on complexity_level
-    lvl = (req.complexity_level or "medium").lower()
-    if lvl == "low":
-        cfg.classification.auto_copy_threshold = 0.70
-    elif lvl == "high":
-        cfg.classification.auto_copy_threshold = 0.90
-    elif lvl == "complex":
-        cfg.classification.auto_copy_threshold = 0.92
-    else:
-        cfg.classification.auto_copy_threshold = 0.85
+    # The plan's detail level only shapes the folders. How sure the AI must be to sort a file
+    # on its own is the person's setting (Settings → AI), which the review screen uses too;
+    # changing it here per level made the two disagree about which files still need review.
 
     # Determine if user passed custom narrow categories (strict LLM mode)
     is_custom_categories = bool(req.custom_categories)
