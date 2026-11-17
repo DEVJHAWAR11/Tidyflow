@@ -4,7 +4,9 @@ import type { CategoryItem, ClassifiedFile, ComplexityLevel, BackendStatus } fro
 import type { FolderColor } from "../utils/folderVisuals";
 
 export type FlowStep = "home" | "plan" | "sorting" | "preview" | "done";
-export type AppView = "flow" | "search" | "settings" | "advanced_plan" | "advanced_review";
+export type AppView = "flow" | "library" | "search" | "settings" | "advanced_plan" | "advanced_review";
+/** How approved files are applied: only into TidyFlow folders (nothing on disk changes), or also copied / moved into real folders. */
+export type ApplyMode = "library" | "copy" | "move";
 
 export interface TopBarProps {
   view: AppView;
@@ -12,7 +14,9 @@ export interface TopBarProps {
   /** Furthest step the user may jump back to via the progress indicator */
   reachableSteps: FlowStep[];
   onGoToStep: (step: FlowStep) => void;
-  onOpenView: (view: "flow" | "search" | "settings") => void;
+  onOpenView: (view: "flow" | "library" | "search" | "settings") => void;
+  /** New files waiting to be sorted, shown on the Library tab. */
+  newCount?: number;
   darkMode: boolean;
   toggleDarkMode: () => void;
   backendStatus: BackendStatus;
@@ -127,9 +131,9 @@ export interface PreviewScreenProps {
   folderLooksSupported: boolean;
   folderLooksEnabled: boolean;
   onToggleFolderLooks: (enabled: boolean) => void;
-  /** false = copy (originals stay), true = move */
-  moveMode: boolean;
-  setMoveMode: (move: boolean) => void;
+  /** "library" = TidyFlow folders only (default), "copy" = originals stay, "move" = originals leave */
+  applyMode: ApplyMode;
+  onApplyModeChange: (mode: ApplyMode) => void;
   outputFolder: string;
   /** Results were produced for a different folder plan; ask the user to sort again */
   isStale: boolean;
@@ -179,7 +183,8 @@ export interface ReviewAiOutcome {
 
 export interface DoneResult {
   count: number;
-  action: "copied" | "moved" | string;
+  /** "sorted" = put into TidyFlow folders only; nothing on disk changed */
+  action: "sorted" | "copied" | "moved" | string;
   outputDir: string;
   folderCount: number;
   /** Files organized per destination folder, largest first */
@@ -189,6 +194,7 @@ export interface DoneResult {
 export interface DoneScreenProps {
   result: DoneResult;
   onOpenFolder: () => void;
+  onOpenLibrary: () => void;
   onUndo: () => void;
   undoState: "idle" | "working" | "done" | "error";
   undoMessage: string | null;

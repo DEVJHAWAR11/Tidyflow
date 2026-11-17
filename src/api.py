@@ -10,7 +10,8 @@ import shutil
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+import sqlite3
+from typing import Any, Callable, Literal, Optional
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
@@ -25,8 +26,14 @@ from .ai_assistant import (
     cluster_unrecognized_files,
     inspect_directory,
 )
-from .applier import apply_decisions, build_auto_approval_decisions, load_decisions, write_copy_manifest
-from . import folder_style
+from .applier import (
+    apply_decisions,
+    build_auto_approval_decisions,
+    decision_category,
+    load_decisions,
+    write_copy_manifest,
+)
+from . import folder_style, library, library_new, library_ops, library_rules, library_tags
 from .config import CategoryConfig, TidyConfig, load_config
 from .database import DatabaseManager
 from .llm_provider import (
@@ -302,10 +309,13 @@ class ApplyDecisionItem(BaseModel):
 
 
 class ApplyDirectRequest(BaseModel):
-    output_dir: str
+    output_dir: str = ""
     decisions: list[ApplyDecisionItem]
     dry_run: bool = False
     move_mode: bool = False
+    # "library": only into TidyFlow folders, nothing on disk changes. "copy" / "move": also into real
+    # folders under output_dir. Left out, ``move_mode`` decides between copy and move (older callers).
+    mode: Optional[Literal["library", "copy", "move"]] = None
     # Finder look per category ({"symbol" | "emoji", "color"}), applied on macOS 26+ to folders this creates.
     folder_looks: dict[str, Any] = Field(default_factory=dict)
 
@@ -1008,21 +1018,42 @@ async def get_latest_pipeline_results():
     }
 
 
+async def _library_call(fn: Callable[[sqlite3.Connection], Any]) -> Any:
+    """Run ``fn`` on its own connection to the database in a worker thread, then commit."""
+    def run():
+        conn = sqlite3.connect(db.db_path, timeout=10)
+        try:
+            result = fn(conn)
+            conn.commit()
+            return result
+        finally:
+            conn.close()
+    return await asyncio.to_thread(run)
+
+
 @app.post("/pipeline/apply-direct")
 async def apply_decisions_direct(req: ApplyDirectRequest):
     """Directly apply decisions from the UI without exporting to CSV."""
+    mode = req.mode or ("move" if req.move_mode else "copy")
+
+    # Load FileRecords from cache or disk
+    records = latest_pipeline_data.get("records")
+    if not records:
+        raise HTTPException(status_code=400, detail="No scan results found. Please scan the folder again.")
+    input_dir = latest_pipeline_data.get("input_dir") or ""
+    id_to_record = {r.file_id: r for r in records}
+
+    if mode == "library":
+        return await _sort_into_library(req, id_to_record, input_dir)
+
+    if not req.output_dir:
+        raise HTTPException(status_code=400, detail="Choose where the organized folders should go.")
     out_dir = Path(req.output_dir).resolve()
     created_out_dir = not out_dir.exists()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     set_allowed_directories([out_dir])
 
-    # Load FileRecords from cache or disk
-    records = latest_pipeline_data.get("records")
-    if not records:
-        raise HTTPException(status_code=400, detail="No scan results found. Please scan the folder again.")
-
-    id_to_record = {r.file_id: r for r in records}
     looks_existed = {(out_dir / c).resolve() for c in req.folder_looks if (out_dir / c).exists()}
 
     # Convert incoming UI decision items to ReviewDecision models
@@ -1059,10 +1090,27 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         records=records,
         output_dir=out_dir,
         dry_run=req.dry_run,
-        move_mode=req.move_mode,
+        move_mode=mode == "move",
         db=db,
         progress_callback=on_progress,
     )
+
+    # The real folders double as TidyFlow folders, so the Library shows what was organized.
+    library_info: dict = {}
+    if not req.dry_run and manifest:
+        placed = [(str(m.original_path), m.category) for m in manifest]
+
+        changed = _corrections(req, id_to_record)
+
+        def link(conn: sqlite3.Connection) -> dict:
+            if input_dir:
+                library.add_scan_root(conn, input_dir)
+            info = library.sort_into_folders(conn, placed, disk_root=out_dir)
+            library_rules.record_by_path(conn, [(p, changed[p], c) for p, c in placed if p in changed])
+            _sync_tags(conn)
+            return info
+
+        library_info = await _library_call(link)
 
     if not req.dry_run and manifest and req.folder_looks:
         folder_style.style_new_folders(out_dir, req.folder_looks, looks_existed)
@@ -1075,7 +1123,7 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
             write_copy_manifest(manifest, out_dir)
 
     if not req.dry_run:
-        _save_last_apply(manifest, out_dir, created_out_dir)
+        _save_last_apply(manifest, out_dir, created_out_dir, library_info=library_info)
         # These results are used up; a restart must not offer them for review again.
         latest_pipeline_data.update(records=[], summary=None, input_dir="", output_dir="", categories=[])
         shutil.rmtree(_latest_run_dir(), ignore_errors=True)
@@ -1086,7 +1134,7 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
         except OSError:
             pass
 
-    action_label = "simulated" if req.dry_run else ("moved" if req.move_mode else "copied")
+    action_label = "simulated" if req.dry_run else ("moved" if mode == "move" else "copied")
     return {
         "status": "success",
         "action": action_label,
@@ -1096,15 +1144,66 @@ async def apply_decisions_direct(req: ApplyDirectRequest):
     }
 
 
+async def _sort_into_library(req: ApplyDirectRequest, id_to_record: dict, input_dir: str) -> dict:
+    """The default way to apply a plan: put each approved file into its TidyFlow folder.
+
+    No file is copied, moved or renamed. The undo information says which links to take away.
+    """
+    items: list[tuple[str, str]] = []
+    for item in req.decisions:
+        rec = id_to_record.get(item.file_id)
+        if not item.approved or rec is None or rec.skipped:
+            continue
+        decision = ReviewDecision(
+            file_id=item.file_id,
+            approved=True,
+            override_category=item.override_category,
+            original_category=rec.classification.category if rec.classification else "Unknown",
+            original_confidence=rec.classification.confidence if rec.classification else 0.0,
+        )
+        category = decision_category(decision, rec)
+        if category == "Unknown" and item.override_category is None:
+            continue  # Same rule as copying: an unrecognized file is left where it is.
+        items.append((str(rec.abs_path), category))
+
+    if req.dry_run:
+        return {"status": "success", "action": "simulated", "applied_count": len(items), "manifest": [], "output_dir": ""}
+
+    changed = _corrections(req, id_to_record)
+
+    def sort(conn: sqlite3.Connection) -> dict:
+        if input_dir:
+            library.add_scan_root(conn, input_dir)
+        info = library.sort_into_folders(conn, items)
+        library_rules.record_by_path(conn, [(p, changed[p], c) for p, c in items if p in changed])
+        _sync_tags(conn)
+        return info
+
+    info = await _library_call(sort)
+    _save_last_apply([], None, library_info=info)
+    # These results are used up; a restart must not offer them for review again.
+    latest_pipeline_data.update(records=[], summary=None, input_dir="", output_dir="", categories=[])
+    shutil.rmtree(_latest_run_dir(), ignore_errors=True)
+    return {"status": "success", "action": "sorted", "applied_count": info["sorted"], "manifest": [], "output_dir": ""}
+
+
 def _last_apply_file() -> Path:
     return get_app_data_dir() / "last_apply.json"
 
 
-def _save_last_apply(manifest: list, output_dir: Path, created_output_dir: bool = False) -> None:
+def _save_last_apply(
+    manifest: list,
+    output_dir: Optional[Path],
+    created_output_dir: bool = False,
+    *,
+    library_info: Optional[dict] = None,
+) -> None:
     data = {
-        "output_dir": str(output_dir),
+        "output_dir": str(output_dir) if output_dir else "",
         "created_output_dir": created_output_dir,
         "entries": [m.model_dump(mode="json") for m in manifest],
+        # The TidyFlow folder links this organize made, so undo can take them away too.
+        "library": library_info or {},
     }
     try:
         _last_apply_file().write_text(json.dumps(data), encoding="utf-8")
@@ -1119,10 +1218,13 @@ async def get_undo_last():
     if not f.exists():
         return {"available": False, "count": 0}
     try:
-        entries = json.loads(f.read_text(encoding="utf-8"))["entries"]
+        data = json.loads(f.read_text(encoding="utf-8"))
+        entries = data["entries"]
     except Exception:
         return {"available": False, "count": 0}
-    return {"available": bool(entries), "count": len(entries)}
+    # Sorting into TidyFlow folders only leaves links behind, no file entries.
+    count = len(entries) or (data.get("library") or {}).get("sorted", 0)
+    return {"available": bool(count), "count": count}
 
 
 @app.post("/pipeline/undo-last")
@@ -1136,6 +1238,13 @@ async def undo_last_apply():
     data = json.loads(f.read_text(encoding="utf-8"))
     entries = data.get("entries", [])
     output_root = Path(data["output_dir"]) if data.get("output_dir") else None
+    library_info = data.get("library") or {}
+    if library_info:
+        unlinked = await _library_call(lambda conn: library.undo_sort(conn, library_info))
+        if not entries:
+            # Only TidyFlow folders were touched: nothing on disk to put back.
+            f.unlink(missing_ok=True)
+            return {"status": "success", "restored": library_info.get("sorted", unlinked), "skipped": 0}
 
     restored, skipped = 0, 0
     touched_dirs: set[Path] = set()
@@ -1193,6 +1302,33 @@ def _current_path(row: dict) -> Path | None:
     return None
 
 
+def _folder_param(folder: Optional[str]) -> int | str | None:
+    """A search's folder filter: a folder id, "unsorted", or None for every folder."""
+    if not folder:
+        return None
+    if folder == "unsorted":
+        return folder
+    try:
+        return int(folder)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="folder must be a folder id or 'unsorted'")
+
+
+@app.get("/search/ids")
+async def search_ids(
+    q: str,
+    kind: Optional[str] = None,
+    folder: Optional[str] = None,
+    subfolders: bool = True,
+):
+    """Every file matching a search and its filters (up to 5000), to act on all of them at once."""
+    if not q or not q.strip():
+        return {"ids": [], "total": 0}
+    return await db.search_page(
+        q.strip(), kind=kind or None, folder=_folder_param(folder), include_subfolders=subfolders, ids_only=True
+    )
+
+
 @app.get("/search")
 async def search_files(
     q: str,
@@ -1201,12 +1337,19 @@ async def search_files(
     category: Optional[str] = None,
     kind: Optional[str] = None,
     organized: Optional[bool] = None,
+    folder: Optional[str] = None,
+    subfolders: bool = True,
 ):
-    """One page of files matching ``q``, with counts for the filters and a corrected spelling if one was used."""
+    """One page of files matching ``q``, with counts for the filters and a corrected spelling if one was used.
+
+    ``folder`` is a TidyFlow folder id (searched with its subfolders unless ``subfolders`` is false)
+    or ``unsorted`` for files in no folder.
+    """
     if not q or not q.strip():
         return {"results": [], "total": 0, "facets": None, "corrected": None}
     page = await db.search_page(
-        q.strip(), limit=limit, offset=offset, category=category or None, kind=kind or None, organized=organized
+        q.strip(), limit=limit, offset=offset, category=category or None, kind=kind or None, organized=organized,
+        folder=_folder_param(folder), include_subfolders=subfolders,
     )
     live, gone = [], []
     for r in page["results"]:
@@ -1222,19 +1365,436 @@ async def search_files(
             continue
         row["current_path"] = str(current)
         row["name"] = current.name
+        row["lives_in"] = library.display_dir(current.parent)
         try:
             row["modified"] = current.stat().st_mtime
         except OSError:
             row["modified"] = None
         live.append(row)
     for row_id in gone:
-        await db.execute_write("DELETE FROM files WHERE id = ?", (row_id,))
+        # Keep the row: the file may have been renamed or moved, and it still belongs to its
+        # TidyFlow folders. A later check follows it or the user removes it from the Library.
+        await db.execute_write(
+            "UPDATE files SET missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP) WHERE id = ?", (row_id,)
+        )
     return {
         "results": live,
         "total": max(page.get("total", len(live)) - len(gone), len(live)),
         "facets": page.get("facets"),
         "corrected": page.get("corrected"),
     }
+
+
+@app.get("/library/folders")
+async def library_folders():
+    """Every TidyFlow folder with its file count, plus how many files are in no folder yet."""
+    return await _library_call(lambda conn: {
+        "folders": library.folder_rows(conn),
+        "unsorted_count": library.unsorted_count(conn),
+        "total_files": library.listed_count(conn),
+    })
+
+
+@app.get("/library/folders/{folder_id}/files")
+async def library_folder_files(folder_id: str, offset: int = 0, limit: int = 50):
+    """One page of the files in a TidyFlow folder; ``unsorted`` lists the files in no folder."""
+    if folder_id == "unsorted":
+        fid: Optional[int] = None
+    else:
+        try:
+            fid = int(folder_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="That folder doesn't exist.")
+
+    def page(conn: sqlite3.Connection) -> Optional[dict]:
+        folder = None
+        if fid is not None:
+            rows = library.folder_rows(conn, only_id=fid)
+            if not rows:
+                return None
+            folder = rows[0]
+        total, files = library.folder_files_page(conn, fid, offset=offset, limit=limit)
+        return {"folder": folder, "total": total, "files": files}
+
+    result = await _library_call(page)
+    if result is None:
+        raise HTTPException(status_code=404, detail="That folder doesn't exist any more.")
+    return result
+
+
+# --- Library actions --------------------------------------------------------
+
+# Library actions run one at a time, so two moves can never race for the same file.
+_library_lock = asyncio.Lock()
+
+
+class NewFolderRequest(BaseModel):
+    name: str = Field(max_length=255)
+    parent_id: Optional[int] = None
+
+
+class FolderUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=255)
+    # Sent (even as null, meaning top level) only when the folder moves to another parent.
+    parent_id: Optional[int] = None
+
+
+class FileIdsRequest(BaseModel):
+    file_ids: list[int] = Field(min_length=1, max_length=5000)
+
+
+class PasteRequest(FileIdsRequest):
+    to_folder_id: int
+    op: Literal["cut", "copy"] = "copy"
+    from_folder_id: Optional[int] = None
+
+
+class RemoveRequest(FileIdsRequest):
+    folder_id: int
+
+
+class RenameFileRequest(BaseModel):
+    file_id: int
+    new_name: str = Field(max_length=255)
+
+
+class MoveOnDiskRequest(FileIdsRequest):
+    dest_dir: str
+    to_folder_id: Optional[int] = None
+    from_folder_id: Optional[int] = None
+    op: Literal["cut", "copy"] = "cut"
+
+
+class MakeRealRequest(BaseModel):
+    parent_dir: str
+
+
+def _sync_tags(conn: sqlite3.Connection) -> None:
+    """Bring Finder tags in step with the folders, when the person turned them on. Never fails an action."""
+    try:
+        if library_tags.enabled(conn):
+            library_tags.sync(conn)
+    except (sqlite3.Error, OSError) as exc:
+        logger.info("Finder tags were not updated: %s", exc)
+
+
+def _corrections(req: "ApplyDirectRequest", id_to_record: dict) -> dict[str, Optional[str]]:
+    """Files whose folder was changed on the review screen: path -> what TidyFlow had suggested."""
+    out: dict[str, Optional[str]] = {}
+    for item in req.decisions:
+        rec = id_to_record.get(item.file_id)
+        if not item.approved or rec is None or rec.skipped or not item.override_category:
+            continue
+        suggested = rec.classification.category if rec.classification else None
+        if suggested == "Unknown":
+            suggested = None
+        if suggested is None or suggested.lower() != item.override_category.lower():
+            out[str(rec.abs_path)] = suggested
+    return out
+
+
+async def _library_action(fn: Callable[[sqlite3.Connection], Any], *, touches_disk: bool = False) -> Any:
+    """Run a Library action: one at a time, never while a sort is moving files, errors shown as they are."""
+    if touches_disk and active_cancel_event is not None:
+        raise HTTPException(status_code=409, detail="TidyFlow is sorting right now. Try again in a moment.")
+    def run(conn: sqlite3.Connection) -> Any:
+        result = fn(conn)
+        _sync_tags(conn)
+        return result
+
+    async with _library_lock:
+        try:
+            return await _library_call(run)
+        except library_ops.LibraryError as err:
+            raise HTTPException(status_code=err.status, detail=err.message)
+        except OSError as err:
+            raise HTTPException(status_code=409, detail=f"Couldn't change that on disk: {err.strerror or err}.")
+
+
+@app.post("/library/folders")
+async def library_new_folder(req: NewFolderRequest):
+    return await _library_action(lambda conn: library_ops.create_folder(conn, req.name, req.parent_id))
+
+
+@app.patch("/library/folders/{folder_id}")
+async def library_update_folder(folder_id: int, req: FolderUpdateRequest):
+    """Rename a folder (a real one is renamed on disk too) or move it into another folder."""
+    return await _library_action(
+        lambda conn: library_ops.update_folder(
+            conn, folder_id, name=req.name, parent_id=req.parent_id,
+            change_parent="parent_id" in req.model_fields_set,
+        ),
+        touches_disk=req.name is not None,
+    )
+
+
+@app.delete("/library/folders/{folder_id}")
+async def library_delete_folder(folder_id: int):
+    """Delete a folder from TidyFlow; its files go back to "Not sorted yet" and nothing on disk changes."""
+    return await _library_action(lambda conn: library_ops.delete_folder(conn, folder_id))
+
+
+@app.post("/library/folders/{folder_id}/make-real")
+async def library_make_real(folder_id: int, req: MakeRealRequest):
+    return await _library_action(
+        lambda conn: library_ops.make_real(conn, folder_id, req.parent_dir), touches_disk=True
+    )
+
+
+@app.post("/library/paste")
+async def library_paste(req: PasteRequest):
+    return await _library_action(lambda conn: library_ops.paste(
+        conn, req.file_ids, req.to_folder_id, op=req.op, from_folder_id=req.from_folder_id
+    ))
+
+
+@app.post("/library/remove")
+async def library_remove(req: RemoveRequest):
+    return await _library_action(lambda conn: library_ops.remove_from_folder(conn, req.file_ids, req.folder_id))
+
+
+@app.post("/library/rename-file")
+async def library_rename_file(req: RenameFileRequest):
+    return await _library_action(
+        lambda conn: library_ops.rename_file(conn, req.file_id, req.new_name), touches_disk=True
+    )
+
+
+@app.post("/library/move-on-disk")
+async def library_move_on_disk(req: MoveOnDiskRequest):
+    return await _library_action(lambda conn: library_ops.move_on_disk(
+        conn, req.file_ids, req.dest_dir, to_folder_id=req.to_folder_id,
+        from_folder_id=req.from_folder_id, op=req.op,
+    ), touches_disk=True)
+
+
+@app.post("/library/trash")
+async def library_trash(req: FileIdsRequest):
+    return await _library_action(lambda conn: library_ops.trash(conn, req.file_ids), touches_disk=True)
+
+
+# --- New since last time ---------------------------------------------------
+
+# The last check's answer, so the Library can show it without walking the folders again.
+_new_check: dict[str, Any] = {}
+
+
+class SuggestNewRequest(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=2000)
+
+
+class SortNewItem(BaseModel):
+    id: int
+    # A folder path like "Finance/Bills" (made if it doesn't exist), or null to leave it unsorted.
+    folder: Optional[str] = Field(default=None, max_length=1000)
+    # The folder TidyFlow suggested, so choosing another one teaches it.
+    suggested: Optional[str] = Field(default=None, max_length=1000)
+
+
+class SortNewRequest(BaseModel):
+    items: list[SortNewItem] = Field(min_length=1, max_length=5000)
+
+
+async def _check_new(*, reuse: bool = False) -> dict:
+    async with _library_lock:
+        # Another request may have checked while this one waited: one check is enough.
+        if reuse and _new_check:
+            return dict(_new_check)
+        result = await _library_call(library_new.check_new)
+        _new_check.clear()
+        _new_check.update(result)
+    return result
+
+
+@app.post("/library/check-new")
+async def library_check_new():
+    """Look in the scanned folders for new files now (the app does this when it opens)."""
+    return await _check_new()
+
+
+@app.get("/library/new")
+async def library_new_files():
+    """The last check's new files; checks first if there hasn't been one since the app opened."""
+    return await _check_new(reuse=True)
+
+
+@app.post("/library/new/suggest")
+async def library_suggest_new(req: SuggestNewRequest):
+    """Read the given new files and suggest a TidyFlow folder for each.
+
+    Runs the usual pipeline on just these files, with the person's own folders as the choices.
+    The files are indexed by this, so they're no longer new: until sorted they're "Not sorted yet".
+    """
+    global active_cancel_event
+    if active_cancel_event is not None:
+        raise HTTPException(status_code=409, detail="TidyFlow is sorting right now. Try again in a moment.")
+
+    roots = [r["path"] for r in await db.execute_read("SELECT path FROM scan_roots")]
+    by_root: dict[str, list[Path]] = {}
+    for raw in dict.fromkeys(req.paths):
+        p = Path(raw)
+        root = next((r for r in roots if raw.startswith(r.rstrip(os.sep) + os.sep)), None)
+        if root is not None and p.is_file():
+            by_root.setdefault(root, []).append(p)
+    if not by_root:
+        raise HTTPException(status_code=400, detail="Those files aren't in a folder TidyFlow has scanned.")
+
+    use_llm = ai_enabled()
+    active_cancel_event = threading.Event()
+    cancel = active_cancel_event
+    records: list[FileRecord] = []
+    choices: set[str] = set()
+    try:
+        for root, paths in by_root.items():
+            try:
+                plan = json.loads(_plan_file(root).read_text(encoding="utf-8")).get("categories", {})
+            except (OSError, ValueError):
+                plan = {}
+            folder_cats = await _library_call(lambda conn: library_new.folder_categories(conn, plan))
+            cfg = load_config()
+            root_path = Path(root)
+            cfg.input_dir = root_path
+            cfg.output_dir = root_path / "Organized_Output"
+            cfg.staging_dir = cfg.output_dir / "Staging"
+            cfg.llm.enabled = use_llm
+            if folder_cats:
+                cfg.categories = {k: CategoryConfig(**v) for k, v in folder_cats.items()}
+            choices.update(cfg.categories.keys())
+            set_allowed_directories([root_path])
+            found, _summary = await asyncio.to_thread(
+                run_pipeline, cfg, use_llm=use_llm, db=db, strict_mode=bool(folder_cats),
+                cancellation_token=cancel, only_paths=paths,
+            )
+            records.extend(found)
+    except PipelineCancelledException:
+        return {"status": "cancelled", "files": [], "folders": []}
+    except Exception as e:
+        logger.exception("Suggesting folders for new files failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Couldn't read the new files: {e}")
+    finally:
+        active_cancel_event = None
+
+    by_lower = {c.lower(): c for c in choices}
+    paths = [str(r.abs_path) for r in records]
+    ids = {
+        row["path"]: row["id"]
+        for start in range(0, len(paths), 900)
+        for row in await db.execute_read(
+            f"SELECT id, path FROM files WHERE path IN ({','.join('?' * len(paths[start:start + 900]))})",
+            tuple(paths[start:start + 900]),
+        )
+    }
+    files = []
+    for r in records:
+        if r.skipped or str(r.abs_path) not in ids:
+            continue
+        cat = r.classification.category if r.classification else None
+        suggestion = None if not cat or cat == "Unknown" else by_lower.get(cat.lower(), cat)
+        reason = (r.classification.reason if r.classification and suggestion else "") or ""
+        if suggestion is None:
+            suggestion = library_new.exact_keyword_folder(r.keyword_scores)
+            if suggestion:
+                reason = f"It mentions {suggestion.rsplit('/', 1)[-1]}"
+        files.append({
+            "id": ids[str(r.abs_path)],
+            "name": r.filename,
+            "path": str(r.abs_path),
+            "lives_in": library.display_dir(r.abs_path.parent),
+            "extension": r.extension,
+            "file_size_bytes": r.file_size_bytes,
+            "suggestion": suggestion,
+            "confidence": r.classification.confidence if r.classification and suggestion else None,
+            "reason": reason,
+            "thumbnail_b64": getattr(r, "thumbnail_b64", None),
+        })
+    done = {f["path"] for f in files} | {str(r.abs_path) for r in records}
+    if _new_check:
+        listed = _new_check.get("new", [])
+        _new_check["new"] = [f for f in listed if f["path"] not in done]
+        _new_check["total_new"] = max(0, _new_check.get("total_new", 0) - (len(listed) - len(_new_check["new"])))
+    return {"status": "success", "files": files, "folders": sorted(choices, key=str.lower), "used_ai": use_llm}
+
+
+@app.post("/library/new/sort")
+async def library_sort_new(req: SortNewRequest):
+    """Put new files into the folders chosen for them; files with no folder stay "Not sorted yet"."""
+    def run(conn: sqlite3.Connection) -> dict:
+        chosen = [i for i in req.items if i.folder and library.category_parts(i.folder)]
+        if not chosen:
+            return {"sorted": 0}
+        marks = ",".join("?" * len(chosen))
+        paths = dict(conn.execute(f"SELECT id, path FROM files WHERE id IN ({marks})", [i.id for i in chosen]))
+        info = library.sort_into_folders(conn, [(paths[i.id], i.folder) for i in chosen if i.id in paths])
+        n = info["sorted"]
+        library_ops.log_sort(conn, info, f"Sorted {n} new {'file' if n == 1 else 'files'}")
+        library_rules.record_by_path(conn, [(paths[i.id], i.suggested, i.folder) for i in chosen if i.id in paths])
+        return {"sorted": n}
+
+    return await _library_action(run)
+
+
+class RuleRequest(BaseModel):
+    folder_id: int
+    contains: str = Field(min_length=1, max_length=60)
+
+
+@app.get("/library/rules")
+async def library_rules_list():
+    """The rules TidyFlow uses, and the ones it could learn from where you put files."""
+    def run(conn: sqlite3.Connection) -> dict:
+        return {"rules": library_rules.rules(conn), "suggestions": library_rules.suggestions(conn)}
+    return await _library_call(run)
+
+
+@app.post("/library/rules")
+async def library_rules_add(req: RuleRequest):
+    return await _library_action(lambda conn: library_rules.add_rule(conn, req.folder_id, req.contains))
+
+
+@app.delete("/library/rules/{rule_id}")
+async def library_rules_remove(rule_id: int):
+    return await _library_action(lambda conn: library_rules.remove_rule(conn, rule_id))
+
+
+@app.post("/library/rules/dismiss")
+async def library_rules_dismiss(req: RuleRequest):
+    """Don't offer this rule again."""
+    return await _library_action(lambda conn: library_rules.dismiss(conn, req.folder_id, req.contains))
+
+
+class LibrarySettingsRequest(BaseModel):
+    finder_tags: Optional[bool] = None
+
+
+@app.get("/library/settings")
+async def library_settings():
+    def run(conn: sqlite3.Connection) -> dict:
+        return {
+            "finder_tags": bool(library_tags.setting(conn, library_tags.SETTING, False)),
+            "finder_tags_supported": library_tags.supported(),
+        }
+    return await _library_call(run)
+
+
+@app.post("/library/settings")
+async def library_settings_update(req: LibrarySettingsRequest):
+    """Turn Finder tags on (every file in a folder is tagged now) or off (TidyFlow's tags are taken back)."""
+    if req.finder_tags is None:
+        return await library_settings()
+    if req.finder_tags and not library_tags.supported():
+        raise HTTPException(status_code=400, detail="Finder tags are only on macOS.")
+    async with _library_lock:
+        return await _library_call(lambda conn: library_tags.set_enabled(conn, req.finder_tags))
+
+
+@app.get("/library/history")
+async def library_history():
+    return {"actions": await _library_call(library_ops.history)}
+
+
+@app.post("/library/undo")
+async def library_undo():
+    return await _library_action(library_ops.undo_last, touches_disk=True)
 
 
 @app.get("/search/stats")

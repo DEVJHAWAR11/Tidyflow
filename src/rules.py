@@ -123,10 +123,17 @@ def identify_heuristic_candidates(
 class RuleEngine:
     """Evaluates user rules, keyword scoring heuristics, and extension fallbacks."""
 
-    def __init__(self, rules_file: str | Path = "rules.yaml", categories: dict[str, CategoryConfig] | None = None):
+    def __init__(
+        self,
+        rules_file: str | Path = "rules.yaml",
+        categories: dict[str, CategoryConfig] | None = None,
+        extra_rules: list[dict[str, Any]] | None = None,
+    ):
         self.rules_file = Path(rules_file)
-        self.user_rules = self._load_rules()
+        # Rules from rules.yaml first, then the ones TidyFlow learned from the person (library_rules).
+        self.user_rules = self._load_rules() + list(extra_rules or [])
         self.categories = categories or {}
+        self._category_keys = {c.lower(): c for c in self.categories}
 
     def _load_rules(self) -> list[dict[str, Any]]:
         target_path: Path | None = None
@@ -192,8 +199,11 @@ class RuleEngine:
         # User Rules
         for rule in self.user_rules:
             cat = rule.get("category", "Unknown")
-            if self.categories and cat not in self.categories:
-                continue
+            if self.categories:
+                # Folder names are matched ignoring case, as the Library does.
+                cat = self._category_keys.get(str(cat).lower())
+                if cat is None:
+                    continue
             if "extensions" in rule and rec.extension.lower() in [e.lower() for e in rule["extensions"]]:
                 return ClassificationResult(
                     category=cat,
@@ -217,7 +227,11 @@ class RuleEngine:
                     category=cat,
                     confidence=1.0,
                     file_type=rec.file_category,
-                    reason=f"User rule matched keyword '{rule['contains']}' in filename",
+                    reason=(
+                        f"You put files with “{rule['contains']}” in the name here before"
+                        if rule.get("learned")
+                        else f"User rule matched keyword '{rule['contains']}' in filename"
+                    ),
                     action="copy_to_organized",
                     source="user_rule",
                 )

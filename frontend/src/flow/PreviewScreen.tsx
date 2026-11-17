@@ -22,9 +22,9 @@ import {
 } from "lucide-react";
 import { ReviewAssistant } from "./ReviewAssistant";
 import { SwipeReview } from "./SwipeReview";
-import type { PreviewScreenProps } from "./contracts";
+import type { ApplyMode, PreviewScreenProps } from "./contracts";
 import type { ClassifiedFile } from "../types";
-import { Screen, Button, Card, StepHeader, SectionTitle, ease } from "./ui";
+import { Screen, Button, Card, Pill, StepHeader, SectionTitle, ease } from "./ui";
 import { FolderIcon, FilePreview } from "./icons";
 import {
   prettyFolderName,
@@ -33,7 +33,33 @@ import {
   toFolderName,
 } from "../utils/folderVisuals";
 
+const APPLY_MODES: { id: ApplyMode; title: string; body: string }[] = [
+  {
+    id: "library",
+    title: "Sort into TidyFlow folders",
+    body: "Nothing changes on disk. Files are sorted into folders inside TidyFlow, where you can browse and manage them.",
+  },
+  {
+    id: "copy",
+    title: "Also copy into real folders",
+    body: "Your originals stay where they are. Clean copies go into an Organized folder that Finder and other apps can see.",
+  },
+  {
+    id: "move",
+    title: "Also move into real folders",
+    body: "Files leave this folder and go into real folders on disk. Undo puts them back.",
+  },
+];
+
+const APPLY_VERB: Record<ApplyMode, string> = {
+  library: "Sort",
+  copy: "Sort and copy",
+  move: "Sort and move",
+};
+
 export function PreviewScreen(props: PreviewScreenProps) {
+  // Renames, Finder folder looks and the output folder only matter when files are placed on disk.
+  const onDisk = props.applyMode !== "library";
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [activeMoveFileId, setActiveMoveFileId] = useState<string | null>(null);
   // Unsure files the user explicitly chose to leave where they are.
@@ -966,67 +992,44 @@ export function PreviewScreen(props: PreviewScreenProps) {
         <div className="mt-8 space-y-3">
           <SectionTitle>Options</SectionTitle>
           <Card className="divide-y divide-tf-border overflow-hidden">
-            {/* Row 1: Copy vs Move radio buttons */}
+            {/* Row 1: where the files go. TidyFlow folders change nothing on disk; the other two also make real folders. */}
             <div
-              className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3"
+              className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-3"
               role="radiogroup"
-              aria-label="Organization mode"
+              aria-label="How to organize"
             >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={!props.moveMode}
-                onClick={() => props.setMoveMode(false)}
-                className={`rounded-[10px] border p-3.5 text-left transition-colors cursor-pointer ${
-                  !props.moveMode
-                    ? "border-tf-ink/70 ring-1 ring-tf-ink/70 bg-tf-surface"
-                    : "border-tf-border hover:border-tf-border-strong bg-tf-surface"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-4 h-4 rounded-full bg-tf-surface shrink-0 ${
-                      !props.moveMode
-                        ? "border-[5px] border-tf-primary"
-                        : "border-[1.5px] border-tf-border-strong"
+              {APPLY_MODES.map((m) => {
+                const checked = props.applyMode === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={checked}
+                    onClick={() => props.onApplyModeChange(m.id)}
+                    className={`rounded-[10px] border p-3.5 text-left transition-colors cursor-pointer ${
+                      checked
+                        ? "border-tf-ink/70 ring-1 ring-tf-ink/70 bg-tf-surface"
+                        : "border-tf-border hover:border-tf-border-strong bg-tf-surface"
                     }`}
-                  />
-                  <span className="text-[13.5px] font-medium text-tf-ink">Copy files</span>
-                </div>
-                <p className="text-[12.5px] text-tf-muted mt-1 leading-relaxed pl-[26px]">
-                  Originals stay where they are. Safest.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                role="radio"
-                aria-checked={props.moveMode}
-                onClick={() => props.setMoveMode(true)}
-                className={`rounded-[10px] border p-3.5 text-left transition-colors cursor-pointer ${
-                  props.moveMode
-                    ? "border-tf-ink/70 ring-1 ring-tf-ink/70 bg-tf-surface"
-                    : "border-tf-border hover:border-tf-border-strong bg-tf-surface"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-4 h-4 rounded-full bg-tf-surface shrink-0 ${
-                      props.moveMode
-                        ? "border-[5px] border-tf-primary"
-                        : "border-[1.5px] border-tf-border-strong"
-                    }`}
-                  />
-                  <span className="text-[13.5px] font-medium text-tf-ink">Move files</span>
-                </div>
-                <p className="text-[12.5px] text-tf-muted mt-1 leading-relaxed pl-[26px]">
-                  Files leave the original folder. Undo is still available.
-                </p>
-              </button>
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`w-4 h-4 rounded-full bg-tf-surface shrink-0 ${
+                          checked ? "border-[5px] border-tf-primary" : "border-[1.5px] border-tf-border-strong"
+                        }`}
+                      />
+                      <span className="text-[13.5px] font-medium text-tf-ink">{m.title}</span>
+                      {m.id === "library" && <Pill tone="neutral">Default</Pill>}
+                    </div>
+                    <p className="text-[12.5px] text-tf-muted mt-1 leading-relaxed pl-[26px]">{m.body}</p>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Row 2: Clearer file names switch */}
-            {props.renameSuggestionCount > 0 && (
+            {/* Row 2: Clearer file names switch (only when files are placed on disk) */}
+            {onDisk && props.renameSuggestionCount > 0 && (
               <div className="px-4 py-3.5 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-[13.5px] font-medium text-tf-ink">
@@ -1060,8 +1063,8 @@ export function PreviewScreen(props: PreviewScreenProps) {
               </div>
             )}
 
-            {/* Folder looks in Finder (macOS 26+) */}
-            {props.folderLooksSupported && (
+            {/* Folder looks in Finder (macOS 26+), for real folders only */}
+            {onDisk && props.folderLooksSupported && (
               <div className="px-4 py-3.5 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-[13.5px] font-medium text-tf-ink">Folder symbols in Finder</div>
@@ -1089,6 +1092,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
             )}
 
             {/* Row 3: Destination output folder */}
+            {onDisk && (
             <div className="px-4 py-3 text-[12.5px] text-tf-muted flex items-center gap-1.5 min-w-0">
               <span className="shrink-0">Saving to</span>
               <span className="font-medium text-tf-ink-2 shrink-0">
@@ -1101,6 +1105,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                 {props.outputFolder}
               </span>
             </div>
+            )}
           </Card>
         </div>
       </div>
@@ -1155,7 +1160,7 @@ export function PreviewScreen(props: PreviewScreenProps) {
                 ? props.applyProgress && props.applyProgress.total > 0
                   ? `Organizing ${props.applyProgress.done} of ${props.applyProgress.total}…`
                   : "Organizing…"
-                : `Organize ${includedCount} ${includedCount === 1 ? "file" : "files"}`}
+                : `${APPLY_VERB[props.applyMode]} ${includedCount} ${includedCount === 1 ? "file" : "files"}`}
             </Button>
           </div>
         </Card>

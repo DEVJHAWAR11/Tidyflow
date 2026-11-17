@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, List, Tuple
 
+from . import library
 from .utils import get_app_data_dir
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,8 @@ _FTS_COLUMNS = ("path", "new_path", "suggested_filename", "extracted_text", "cat
 # How much a match in each of those columns counts: a file's name beats the text inside it.
 _FTS_WEIGHTS = (4.0, 6.0, 6.0, 1.0, 3.0)
 _MARK_OPEN, _MARK_CLOSE = "\x02", "\x03"
+# Rows search looks at: not the bare rows kept for files the scan skipped.
+_SEARCHABLE = "COALESCE(files.status, '') != 'skipped'"
 
 # File kinds offered as a filter on the search page.
 SEARCH_KINDS: dict[str, frozenset[str]] = {
@@ -31,6 +34,15 @@ SEARCH_KINDS: dict[str, frozenset[str]] = {
     "media": frozenset({".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}),
     "archives": frozenset({".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".dmg", ".iso"}),
 }
+
+
+def _disk_identity(path: str) -> tuple[int | None, int | None]:
+    """The (device, inode) pair that names a file on disk however it is renamed, or Nones."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None, None
+    return st.st_dev, st.st_ino
 
 
 def file_kind(extension: str | None) -> str:
@@ -87,6 +99,11 @@ class DatabaseManager:
                 ("extension", "TEXT"),
                 ("suggested_filename", "TEXT"),
                 ("reason", "TEXT"),
+                # Which file this is on disk, so a rename or move in Finder can be followed.
+                ("dev", "INTEGER"),
+                ("inode", "INTEGER"),
+                # Set while the file can't be found anywhere; cleared when it turns up again.
+                ("missing_since", "TIMESTAMP"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE files ADD COLUMN {col} {col_type}")
@@ -153,6 +170,10 @@ class DatabaseManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fingerprint ON files(fingerprint)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON files(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_category ON files(category)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dev_inode ON files(dev, inode)")
+
+            # TidyFlow folders, the folders TidyFlow scans, and the Library's undo log.
+            library.ensure_schema(conn)
 
             # Crash recovery
             conn.execute("UPDATE files SET status='pending' WHERE status='processing'")
@@ -212,19 +233,28 @@ class DatabaseManager:
             pass
 
     def sync_index_records(self, records: Any) -> int:
-        """Synchronously batch insert or update FileRecord items into SQLite and sync FTS5."""
+        """Synchronously batch insert or update FileRecord items into SQLite and sync FTS5.
+
+        A rescan keeps what organizing did: a file that was copied or moved, and whose contents
+        haven't changed, keeps its ``new_path`` and status. Skipped files get a bare ``skipped`` row,
+        so a later look for new files doesn't offer them again; search and the Library hide them.
+        """
         if not records:
             return 0
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
             batch = []
+            skipped_rows = []
             for r in records:
-                if getattr(r, "skipped", False):
-                    continue
                 file_id = getattr(r, "file_id", "")
                 path = str(getattr(r, "abs_path", getattr(r, "path", "")))
                 if not path:
+                    continue
+                dev, inode = _disk_identity(path)
+                if getattr(r, "skipped", False):
+                    skipped_rows.append((file_id, path, getattr(r, "extension", "") or Path(path).suffix.lower(),
+                                         getattr(r, "file_size_bytes", 0) or 0, dev, inode))
                     continue
                 fingerprint = getattr(r, "sha256", "")
                 status = "scanned"
@@ -257,23 +287,28 @@ class DatabaseManager:
                 batch.append((
                     file_id, path, fingerprint, status, category, new_path,
                     confidence, extracted_text, thumbnail_b64, file_size_bytes,
-                    extension, suggested_filename, reason
+                    extension, suggested_filename, reason, dev, inode
                 ))
 
             if batch:
-                cursor.executemany("""
+                # Organizing results survive a rescan while the file is unchanged.
+                kept = "files.status IN ('copied', 'moved') AND files.fingerprint = excluded.fingerprint"
+                cursor.executemany(f"""
                     INSERT INTO files (
                         file_id, path, fingerprint, status, category, new_path,
                         confidence_score, extracted_text, thumbnail_b64, file_size_bytes,
-                        extension, suggested_filename, reason
+                        extension, suggested_filename, reason, dev, inode
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(path) DO UPDATE SET
                         file_id = excluded.file_id,
                         fingerprint = excluded.fingerprint,
-                        status = excluded.status,
+                        status = CASE WHEN {kept} THEN files.status ELSE excluded.status END,
                         category = excluded.category,
-                        new_path = excluded.new_path,
+                        new_path = CASE WHEN {kept} THEN files.new_path ELSE excluded.new_path END,
+                        dev = excluded.dev,
+                        inode = excluded.inode,
+                        missing_since = NULL,
                         confidence_score = excluded.confidence_score,
                         extracted_text = excluded.extracted_text,
                         thumbnail_b64 = COALESCE(excluded.thumbnail_b64, files.thumbnail_b64),
@@ -283,7 +318,14 @@ class DatabaseManager:
                         reason = excluded.reason,
                         last_updated = CURRENT_TIMESTAMP
                 """, batch)
-                conn.commit()
+            if skipped_rows:
+                # A file seen before keeps its row; only a new one gets a "skipped" row.
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO files (file_id, path, status, extension, file_size_bytes, dev, inode) "
+                    "VALUES (?, ?, 'skipped', ?, ?, ?, ?)",
+                    skipped_rows,
+                )
+            conn.commit()
             return len(batch)
         except Exception as e:
             logger.error("Failed to batch index records: %s", e)
@@ -353,8 +395,17 @@ class DatabaseManager:
         category: str | None = None,
         kind: str | None = None,
         organized: bool | None = None,
+        folder: int | str | None = None,
+        include_subfolders: bool = True,
+        ids_only: bool = False,
     ) -> dict:
         """One page of files matching ``query``, best first, with counts for the filters.
+
+        ``folder`` keeps files in that TidyFlow folder (and its subfolders, unless
+        ``include_subfolders`` is false), or with ``"unsorted"`` files in no folder. Each result
+        lists the TidyFlow folders it is in; ``facets["folders"]`` counts matches per top-level
+        folder and ``facets["unsorted"]`` those in none. ``ids_only`` returns just
+        ``{"ids", "total"}``: every match after the filters, for acting on all of them.
 
         Whole words and word beginnings are matched through the full-text index, with names ranked
         above the text inside a file. Names are also matched anywhere inside a word, and a search
@@ -365,9 +416,12 @@ class DatabaseManager:
         Snippets are HTML-escaped and wrap matches in ``<mark>``.
         """
         clean_query = query.strip()
-        empty = {"results": [], "total": 0, "facets": {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0}, "corrected": None}
+        empty = {
+            "results": [], "total": 0, "corrected": None,
+            "facets": {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0, "folders": [], "unsorted": 0},
+        }
         if not clean_query:
-            return empty
+            return {"ids": [], "total": 0} if ids_only else empty
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
 
@@ -387,7 +441,7 @@ class DatabaseManager:
                     try:
                         rows = conn.execute(
                             f"SELECT {light} FROM files_fts JOIN files ON files.id = files_fts.rowid "
-                            f"WHERE files_fts MATCH ? ORDER BY bm25(files_fts, {weights}) LIMIT 2000",
+                            f"WHERE files_fts MATCH ? AND {_SEARCHABLE} ORDER BY bm25(files_fts, {weights}) LIMIT 2000",
                             (fts_expr(toks),),
                         ).fetchall()
                     except sqlite3.OperationalError as e:
@@ -400,7 +454,7 @@ class DatabaseManager:
                     like = "%" + clean_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
                     where = " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in columns)
                     rows = conn.execute(
-                        f"SELECT {light} FROM files WHERE {where} ORDER BY id DESC LIMIT 500",
+                        f"SELECT {light} FROM files WHERE ({where}) AND {_SEARCHABLE} ORDER BY id DESC LIMIT 500",
                         (like,) * len(columns),
                     ).fetchall()
                     for row in rows:
@@ -421,10 +475,52 @@ class DatabaseManager:
                         if matches:
                             used_tokens, corrected = fixed, " ".join(fixed)
 
+                # TidyFlow folders: the tree, and which folders each match is in.
+                tree = {
+                    r[0]: {"id": r[0], "name": r[1], "parent_id": r[2], "is_real": bool(r[3])}
+                    for r in conn.execute("SELECT id, name, parent_id, disk_path FROM folders")
+                }
+
+                def trail(fid: int) -> list[dict]:
+                    out: list[dict] = []
+                    node = tree.get(fid)
+                    while node is not None and len(out) < 32:
+                        out.insert(0, node)
+                        node = tree.get(node["parent_id"]) if node["parent_id"] is not None else None
+                    return out
+
+                member: dict[int, list[int]] = {}
+                match_ids = list(matches)
+                for start in range(0, len(match_ids), 900):
+                    part = match_ids[start:start + 900]
+                    marks = ",".join("?" * len(part))
+                    for file_row_id, folder_id in conn.execute(
+                        f"SELECT file_row_id, folder_id FROM folder_files WHERE file_row_id IN ({marks})", part
+                    ):
+                        if folder_id in tree:
+                            member.setdefault(file_row_id, []).append(folder_id)
+
+                scope: set[int] | None = None
+                if isinstance(folder, int):
+                    scope = {folder}
+                    if include_subfolders:
+                        frontier = [folder]
+                        while frontier:
+                            frontier = [f["id"] for f in tree.values() if f["parent_id"] in frontier and f["id"] not in scope]
+                            scope.update(frontier)
+
                 # Counts for the filter chips, over every match.
                 facets = {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0}
+                top_counts: dict[int, int] = {}
+                unsorted = 0
                 kept: list[int] = []
                 for row_id, row in matches.items():
+                    in_folders = member.get(row_id, [])
+                    tops = {t[0]["id"] for t in (trail(f) for f in in_folders) if t}
+                    for top in tops:
+                        top_counts[top] = top_counts.get(top, 0) + 1
+                    if not in_folders:
+                        unsorted += 1
                     cat = row["category"] or "Unknown"
                     row_kind = file_kind(row["extension"])
                     is_organized = bool(row["new_path"]) and row["status"] in ("copied", "moved")
@@ -437,7 +533,21 @@ class DatabaseManager:
                         continue
                     if organized is not None and is_organized != organized:
                         continue
+                    if folder == "unsorted" and in_folders:
+                        continue
+                    if scope is not None and not scope.intersection(in_folders):
+                        continue
                     kept.append(row_id)
+
+                facets["folders"] = sorted(
+                    ({**tree[fid], "count": n} for fid, n in top_counts.items()),
+                    key=lambda f: (-f["count"], f["name"].lower()),
+                )
+                for f in facets["folders"]:
+                    f.pop("parent_id", None)
+                facets["unsorted"] = unsorted
+                if ids_only:
+                    return {"ids": kept[:5000], "total": len(kept)}
 
                 page_ids = kept[offset:offset + limit]
                 if not page_ids:
@@ -478,6 +588,19 @@ class DatabaseManager:
                     else:
                         d["snippet"] = _make_like_snippet(text, " ".join(used_tokens) or clean_query)
                     d["has_text"] = bool(text.strip())
+                    d["folders"] = sorted(
+                        (
+                            {
+                                "id": fid,
+                                "name": tree[fid]["name"],
+                                "is_real": tree[fid]["is_real"],
+                                # Where it sits in the tree, e.g. "Finance / Bills".
+                                "label": " / ".join(n["name"] for n in trail(fid)),
+                            }
+                            for fid in member.get(row_id, [])
+                        ),
+                        key=lambda f: f["label"].lower(),
+                    )
                     results.append(d)
                 return {"results": results, "total": len(kept), "facets": facets, "corrected": corrected}
             finally:
@@ -491,7 +614,8 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             try:
                 files, with_text = conn.execute(
-                    "SELECT count(*), coalesce(sum(extracted_text IS NOT NULL AND trim(extracted_text) != ''), 0) FROM files"
+                    "SELECT count(*), coalesce(sum(extracted_text IS NOT NULL AND trim(extracted_text) != ''), 0) "
+                    f"FROM files WHERE {_SEARCHABLE}"
                 ).fetchone()
                 cats = conn.execute(
                     "SELECT category, count(*) FROM files WHERE category IS NOT NULL AND category NOT IN ('', 'Unknown') "

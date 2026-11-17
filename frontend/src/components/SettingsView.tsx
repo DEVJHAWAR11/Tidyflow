@@ -5,6 +5,7 @@ import type { CategoryItem } from "../types";
 import { API_BASE } from "../config";
 import { Screen, Card, Button, StepHeader, SectionTitle, ease } from "../flow/ui";
 import { CategoriesView } from "./CategoriesView";
+import { LibrarySettingsSection } from "./library/LibrarySettingsSection";
 import { AiSetup, AiStatusPill, providerName, useAiSettings } from "./AiSetup";
 
 /** Models worth suggesting for each service. The full list is loaded from the service itself. */
@@ -327,6 +328,8 @@ export function SettingsView({
             </div>
           </Card>
         </div>
+
+        <LibrarySettingsSection />
 
         {/* Section 3: Advanced */}
         <div>

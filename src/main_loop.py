@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from . import library_rules
 from .applier import apply_decisions, build_auto_approval_decisions, write_copy_manifest
 from .config import TidyConfig, load_config
 from .database import DatabaseManager
@@ -86,6 +88,18 @@ def promote_by_folder_agreement(
     return promoted
 
 
+def _learned_rules(db: Optional[DatabaseManager]) -> list[dict]:
+    """The rules the person accepted in the Library (none without a database)."""
+    if db is None:
+        return []
+    try:
+        with sqlite3.connect(db.db_path) as conn:
+            return library_rules.rule_dicts(conn)
+    except sqlite3.Error as exc:
+        logger.warning("Could not read learned rules: %s", exc)
+        return []
+
+
 def run_pipeline(
     config: TidyConfig,
     *,
@@ -97,6 +111,7 @@ def run_pipeline(
     strict_mode: bool = False,
     progress_callback: Optional[Any] = None,
     cancellation_token: Optional[Any] = None,
+    only_paths: Optional[Any] = None,
 ) -> tuple[list[FileRecord], RunSummary]:
     """
     Execute the complete universal file organization pipeline.
@@ -123,7 +138,7 @@ def run_pipeline(
     logger.info("=== STEP 1: Scanning directory: %s ===", config.input_dir)
     if progress_callback:
         progress_callback("scan", f"Looking for files in {config.input_dir.name}…")
-    records = scan_directory(config)
+    records = scan_directory(config, only_paths=only_paths)
     summary.total_scanned = sum(1 for r in records if not r.skipped)
     summary.total_skipped = sum(1 for r in records if r.skipped)
     check_cancelled()
@@ -167,7 +182,7 @@ def run_pipeline(
     logger.info("=== STEP 6: Keyword scoring & rules evaluation ===")
     if progress_callback:
         progress_callback("classify", "Matching files to your folders…")
-    rule_engine = RuleEngine(categories=config.categories)
+    rule_engine = RuleEngine(categories=config.categories, extra_rules=_learned_rules(db))
     for rec in records:
         if not rec.skipped:
             res = rule_engine.evaluate_record(rec)
