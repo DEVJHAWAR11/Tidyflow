@@ -129,3 +129,20 @@ async def test_restarts_after_a_crash(fake_server, isolated_app_data):
         assert e._proc.pid != first
     finally:
         await e.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_helper_left_by_a_force_quit_is_stopped(fake_server, isolated_app_data):
+    import subprocess
+
+    port = emb._free_port()
+    orphan = subprocess.Popen([str(FAKE), "--embeddings", "--host", "127.0.0.1", "--port", str(port), "--api-key", "k"])
+    try:
+        (isolated_app_data / "llama-server.pid").write_text(str(orphan.pid))
+        emb.kill_stale_helper()
+        # Only processes named llama-server are stopped; the fake one runs as python, so it stays.
+        assert orphan.poll() is None
+        assert not (isolated_app_data / "llama-server.pid").exists()
+    finally:
+        orphan.kill()
+        orphan.wait()

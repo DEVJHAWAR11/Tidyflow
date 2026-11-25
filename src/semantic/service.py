@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable, Optional
 import numpy as np
 
 from . import catalog, download, vectors
-from .embedder import Embedder, EmbedderError, document_text, find_server_binary, query_text
+from .embedder import Embedder, EmbedderError, document_text, find_server_binary, kill_stale_helper, query_text
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,8 @@ class SemanticService:
 
     async def startup(self) -> None:
         """At app start: pick up where the user left off, without starting the engine yet."""
+        # A helper left running by a TidyFlow that was force-quit.
+        await asyncio.to_thread(kill_stale_helper)
         prefs = self.prefs
         if not prefs["enabled"]:
             self._set("off")

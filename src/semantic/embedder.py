@@ -76,7 +76,7 @@ def _pid_file() -> Path:
     return utils.get_app_data_dir() / "llama-server.pid"
 
 
-def _kill_stale_helper() -> None:
+def kill_stale_helper() -> None:
     """Stop a helper left running by a TidyFlow that quit without stopping it."""
     path = _pid_file()
     try:
@@ -133,7 +133,7 @@ class Embedder:
                 raise EmbedderError("The search-by-meaning engine (llama-server) isn't installed with this copy of TidyFlow.")
             if not self.model_file.is_file():
                 raise EmbedderError("The model file is missing. Download it again in Settings.")
-            _kill_stale_helper()
+            kill_stale_helper()
             port = _free_port()
             self._key = secrets.token_urlsafe(24)
             self._base = f"http://127.0.0.1:{port}"
