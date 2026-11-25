@@ -30,6 +30,10 @@ class ModelChoice:
     sha256: str
     blurb: str
     recommended: bool = False
+    # Lowest similarity that counts as a meaning match. Measured with the Q8_0 model on a real
+    # library of 514 files: related files scored 0.67 to 0.85, the best unrelated ones 0.63 to 0.66.
+    # BF16 has the same weights without rounding, so it scores the same to about 0.01.
+    min_score: float = 0.67
 
     @property
     def url(self) -> str:

@@ -26,7 +26,9 @@ async def env(isolated_app_data, monkeypatch, tmp_path):
     monkeypatch.setattr(emb, "work_data_dir", lambda: tmp_path)
     # Tiny stand-in models, served by a fake download server.
     fakes = {
-        key: replace(c, size_bytes=len(MODEL_BYTES) + i, sha256=hashlib.sha256(MODEL_BYTES + b"x" * i).hexdigest())
+        # min_score: the fake server's word-hash vectors aren't on the real model's similarity scale.
+        key: replace(c, size_bytes=len(MODEL_BYTES) + i, sha256=hashlib.sha256(MODEL_BYTES + b"x" * i).hexdigest(),
+                     min_score=0.3)
         for i, (key, c) in enumerate(catalog.MODELS.items())
     }
     monkeypatch.setattr(catalog, "MODELS", fakes)
@@ -47,8 +49,6 @@ async def env(isolated_app_data, monkeypatch, tmp_path):
             return await real(choice, on_progress, client=c)
 
     monkeypatch.setattr(download, "download_model", fake_download)
-    # The fake server's word-hash vectors aren't on the real model's similarity scale.
-    monkeypatch.setattr(vectors, "MIN_SCORE", 0.3)
 
     db_path = str(tmp_path / "t.db")
     DatabaseManager(db_path=db_path)

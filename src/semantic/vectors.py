@@ -7,6 +7,7 @@ A library holds at most tens of thousands of files with text, so comparing a que
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -14,17 +15,21 @@ from dataclasses import dataclass
 import numpy as np
 
 # Same rows keyword search covers: not the bare rows kept for files the scan skipped.
+logger = logging.getLogger(__name__)
+
 _SEARCHABLE = "COALESCE(files.status, '') != 'skipped'"
 
 # A file counts as a meaning match only when it stands out from the rest of the library: its
-# score is at least Z_GATE standard deviations above the mean, and close to the best score.
-# Every file has some similarity to every query, so without a gate every file would "match".
+# score is at least Z_GATE spreads above the typical score, and close to the best score. Every file
+# has some similarity to every query, so without a gate every file would "match". "Typical" and
+# "spread" are the median and the median absolute deviation, not the mean and standard deviation:
+# when a topic makes up a large part of the library (most files are tax papers, the search is
+# "taxes"), those files would pull the mean up and hide each other.
 Z_GATE = 2.0
 MIN_SPREAD = 0.02
 NEAR_BEST = 0.10
-# ...and it must also be similar enough on its own. Standing out from a library that holds nothing
-# relevant isn't a match. Measured with EmbeddingGemma 2 on a real library: related files scored
-# 0.67 to 0.85, and the best unrelated ones 0.63 to 0.66.
+# ...and it must also be similar enough on its own (see ModelChoice.min_score): standing out from
+# a library that holds nothing relevant isn't a match.
 MIN_SCORE = 0.67
 # With too few files for a spread to mean anything, use a plain similarity floor instead.
 SMALL_LIBRARY = 20
@@ -56,17 +61,20 @@ def from_blob(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob, dtype=np.float16)
 
 
-def gate(scores: np.ndarray, *, max_hits: int = MAX_HITS) -> list[int]:
+def gate(scores: np.ndarray, *, max_hits: int = MAX_HITS, min_score: float | None = None) -> list[int]:
     """Positions of the scores that count as matches, best first."""
     n = len(scores)
     if n == 0:
         return []
+    floor = MIN_SCORE if min_score is None else min_score
     best = float(scores.max())
     if n < SMALL_LIBRARY:
-        keep = np.where(scores >= SMALL_LIBRARY_FLOOR)[0]
+        keep = np.where(scores >= max(SMALL_LIBRARY_FLOOR, floor))[0]
     else:
-        z = (scores - scores.mean()) / max(float(scores.std()), MIN_SPREAD)
-        keep = np.where((z >= Z_GATE) & (scores >= best - NEAR_BEST) & (scores >= MIN_SCORE))[0]
+        median = float(np.median(scores))
+        spread = 1.4826 * float(np.median(np.abs(scores - median)))  # equals the std for a normal spread
+        z = (scores - median) / max(spread, MIN_SPREAD)
+        keep = np.where((z >= Z_GATE) & (scores >= best - NEAR_BEST) & (scores >= floor))[0]
     order = keep[np.argsort(-scores[keep], kind="stable")]
     return [int(i) for i in order[:max_hits]]
 
@@ -219,11 +227,16 @@ class VectorMatrix:
         if gone:
             self.remove(gone)
 
-    def search(self, query_vec: np.ndarray, *, max_hits: int = MAX_HITS) -> list[tuple[int, float]]:
+    def search(self, query_vec: np.ndarray, *, max_hits: int = MAX_HITS,
+               min_score: float | None = None) -> list[tuple[int, float]]:
         """``(file row id, similarity)`` for the files that match ``query_vec`` by meaning, best first."""
         with self._lock:
             ids, mat = self._ids, self._mat
         if len(ids) == 0:
             return []
         scores = mat @ np.asarray(query_vec, dtype=np.float32)
-        return [(int(ids[i]), float(scores[i])) for i in gate(scores, max_hits=max_hits)]
+        hits = gate(scores, max_hits=max_hits, min_score=min_score)
+        # For tuning the gate: what the best file scored, and how many got through.
+        logger.debug("meaning search: best %.3f, median %.3f, %d hits", float(scores.max()),
+                     float(np.median(scores)), len(hits))
+        return [(int(ids[i]), float(scores[i])) for i in hits]

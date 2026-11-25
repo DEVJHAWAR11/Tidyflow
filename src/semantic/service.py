@@ -20,13 +20,14 @@ from .embedder import Embedder, EmbedderError, document_text, find_server_binary
 logger = logging.getLogger(__name__)
 
 # Small batches keep a search's wait short: the engine handles one request at a time.
-BATCH = 8
+BATCH = 4
 # Give the scanner and the UI room between batches; indexing is background work.
 PAUSE_BETWEEN_BATCHES = 0.05
 MIN_QUERY_CHARS = 3
 QUERY_CACHE = 128
 # How long a search waits for a query vector before answering with keyword results only.
-QUERY_WAIT = 3.0
+# Indexing pauses for searches, so this is at most one small batch plus the query itself.
+QUERY_WAIT = 1.5
 NOTIFY_EVERY = 0.25
 
 Notify = Callable[[dict], Awaitable[None]]
@@ -423,7 +424,7 @@ class SemanticService:
                 return None, "failed"
         else:
             self._queries.move_to_end(key)
-        return self.matrix.search(vec), "ok"
+        return self.matrix.search(vec, min_score=self.choice.min_score), "ok"
 
     def _query_done(self, key: str, task: asyncio.Task) -> None:
         """Keep a finished query vector, even when the search that asked for it stopped waiting."""

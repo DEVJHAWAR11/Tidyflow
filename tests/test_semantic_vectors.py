@@ -138,3 +138,20 @@ def test_plan_work_skips_and_drops_text_too_thin_to_mean_anything(db_path):
     work = vx.plan_work(db_path, "m1")
     assert sorted(r[0] for r in work.todo) == [1, 2]
     assert work.drop == [6]
+
+
+def test_gate_still_finds_a_topic_that_fills_much_of_the_library():
+    # Most files are about the topic searched for: the median and MAD stay with the rest.
+    for share in (0.1, 0.2, 0.3, 0.4):
+        n_rel = int(500 * share)
+        rng = np.random.default_rng(int(share * 10))
+        scores = np.concatenate([rng.normal(0.76, 0.01, n_rel), rng.normal(0.50, 0.03, 500 - n_rel)])
+        assert len(vx.gate(scores, max_hits=500)) >= 0.9 * n_rel, share
+
+
+def test_gate_uses_the_given_floor():
+    rng = np.random.default_rng(2)
+    scores = rng.normal(0.40, 0.03, 300)
+    scores[0] = 0.62
+    assert vx.gate(scores) == []
+    assert vx.gate(scores, min_score=0.6) == [0]
