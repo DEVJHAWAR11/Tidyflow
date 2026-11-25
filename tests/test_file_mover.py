@@ -40,6 +40,24 @@ async def test_safe_copy_and_move():
         await db.stop()
 
 
+@pytest.mark.asyncio
+async def test_safe_copy_never_replaces_a_file_already_at_the_target(tmp_path):
+    set_allowed_directories([tmp_path])
+    src = tmp_path / "invoice.pdf"
+    src.write_text("new invoice")
+    existing = tmp_path / "Finance" / "invoice.pdf"
+    existing.parent.mkdir()
+    existing.write_text("an older, different invoice")
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        await FileMover(None).safe_copy(str(src), str(existing))
+    with pytest.raises(RuntimeError, match="already exists"):
+        await FileMover(None).safe_move(str(src), str(existing))
+
+    assert existing.read_text() == "an older, different invoice"
+    assert src.read_text() == "new invoice"
+
+
 def test_target_path_collision(tmp_path):
     src_file = tmp_path / "test.txt"
     src_file.write_text("content")

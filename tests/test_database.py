@@ -53,3 +53,29 @@ async def test_single_writer_coroutine():
     # Read the data back
     rows = await db.execute_read("SELECT COUNT(*) as count FROM files")
     assert rows[0]['count'] == 50
+
+
+@pytest.mark.asyncio
+async def test_one_failed_write_does_not_lose_the_rest_of_its_batch(tmp_path):
+    db = DatabaseManager(db_path=tmp_path / "t.db")
+    await db.start()
+    await db.execute_write("INSERT INTO files (path) VALUES (?)", ("a.txt",))
+    await db.execute_write("INSERT INTO files (path) VALUES (?)", ("a.txt",))  # breaks UNIQUE(path)
+    await db.execute_write("INSERT INTO files (path) VALUES (?)", ("b.txt",))
+    await db.stop()
+
+    rows = await db.execute_read("SELECT path FROM files ORDER BY path")
+    assert [r["path"] for r in rows] == ["a.txt", "b.txt"]
+
+
+@pytest.mark.asyncio
+async def test_writes_queued_behind_a_failed_one_are_still_saved(tmp_path):
+    db = DatabaseManager(db_path=tmp_path / "t.db")
+    await db.start()
+    await db.execute_write("INSERT INTO no_such_table VALUES (1)")
+    await asyncio.sleep(0)  # the writer takes that write and starts saving it
+    await db.execute_write("INSERT INTO files (path) VALUES (?)", ("later.txt",))
+    await db.stop()
+
+    rows = await db.execute_read("SELECT path FROM files")
+    assert [r["path"] for r in rows] == ["later.txt"]

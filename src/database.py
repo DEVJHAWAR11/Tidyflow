@@ -206,7 +206,7 @@ class DatabaseManager:
                 item = await self.write_queue.get()
                 if item is None:
                     if batch:
-                        await asyncio.to_thread(self._execute_batch, self.db_path, batch)
+                        await self._flush(batch)
                     self.write_queue.task_done()
                     break
 
@@ -227,10 +227,17 @@ class DatabaseManager:
                         break
 
                 if batch:
-                    await asyncio.to_thread(self._execute_batch, self.db_path, batch)
+                    await self._flush(batch)
                     batch.clear()
         finally:
             pass
+
+    async def _flush(self, batch: List[Tuple[str, tuple]]) -> None:
+        """Save ``batch``. The writer has to outlive any write that fails, or the ones queued after it are lost."""
+        try:
+            await asyncio.to_thread(self._execute_batch, self.db_path, batch)
+        except Exception as e:
+            logger.error("Database writer could not save %d writes: %s", len(batch), e)
 
     def sync_index_records(self, records: Any) -> int:
         """Synchronously batch insert or update FileRecord items into SQLite and sync FTS5.
@@ -340,16 +347,31 @@ class DatabaseManager:
 
     @staticmethod
     def _execute_batch(db_path: str, batch: List[Tuple[str, tuple]]):
+        """Run the queued writes in one transaction.
+
+        Each write was queued on its own, so one that fails must not take the others with it: the
+        batch is then rolled back and run again one write at a time, and only the failing one is dropped.
+        """
         conn = sqlite3.connect(db_path)
         try:
-            cursor = conn.cursor()
+            try:
+                for query, params in batch:
+                    conn.execute(query, params)
+                conn.commit()
+                return
+            except sqlite3.Error as e:
+                conn.rollback()
+                if len(batch) == 1:
+                    logger.error("Database write failed and was dropped: %s", e)
+                    return
+                logger.warning("A batch of %d database writes failed (%s); retrying them one at a time", len(batch), e)
             for query, params in batch:
-                cursor.execute(query, params)
-            conn.commit()
-        except sqlite3.Error as e:
-            logger.error("Database batch write error: %s", e)
-            conn.rollback()
-            raise
+                try:
+                    conn.execute(query, params)
+                    conn.commit()
+                except sqlite3.Error as e:
+                    conn.rollback()
+                    logger.error("Database write failed and was dropped: %s", e)
         finally:
             conn.close()
 

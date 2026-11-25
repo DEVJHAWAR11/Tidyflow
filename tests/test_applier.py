@@ -186,3 +186,22 @@ def test_organize_clones_or_renames_when_it_can_and_copies_and_verifies_otherwis
     assert hashed == []
     assert (tmp_path / "moved" / "Docs" / "b.txt").read_text() == "bravo"
     assert not (src_dir / "b.txt").exists()
+
+
+def test_the_top_level_file_keeps_its_name_whatever_case_the_names_use(tmp_path):
+    """Same-named files used to be placed in path order, which sorts by case on macOS and Linux but not on Windows."""
+    from src.config import TidyConfig
+    from src.scanner import scan_directory
+
+    src_dir = tmp_path / "in"
+    (src_dir / "aryan ppt").mkdir(parents=True)
+    (src_dir / "img-0025.jpg").write_text("top level")
+    (src_dir / "aryan ppt" / "img-0025.jpg").write_text("from a folder")
+
+    records = scan_directory(TidyConfig(input_dir=src_dir))
+    decisions = [ReviewDecision(file_id=r.file_id, approved=True, override_category="Images") for r in records]
+    apply_decisions(decisions, records, tmp_path / "out", dry_run=False)
+
+    images = tmp_path / "out" / "Images"
+    assert (images / "img-0025.jpg").read_text() == "top level"
+    assert (images / "img-0025 (aryan ppt).jpg").read_text() == "from a folder"
