@@ -87,6 +87,8 @@
   --color-tf-warn-soft: #fbf3e6;
   --color-tf-danger: #c93c3f;
   --color-tf-danger-soft: #fdf0f0;
+  --color-tf-meaning: #8145b5;         /* accent-preview: files found by meaning */
+  --color-tf-meaning-soft: #f4eefa;
 
   --radius-tf-card: 12px;            /* rounded.lg */
   --radius-tf-btn: 8px;              /* rounded.md */
@@ -122,6 +124,8 @@ html.dark {
   --color-tf-warn-soft: rgba(240, 166, 64, 0.1);
   --color-tf-danger: #eb8e90;        /* semantic-error */
   --color-tf-danger-soft: rgba(235, 142, 144, 0.1);
+  --color-tf-meaning: #c39bea;
+  --color-tf-meaning-soft: rgba(195, 155, 234, 0.12);
   --shadow-tf-card: none;
   --shadow-tf-lift: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-tf-float: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.6);
