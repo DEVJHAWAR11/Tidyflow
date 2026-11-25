@@ -171,3 +171,26 @@ def test_rename_suggestions_must_add_meaning():
     assert not rename_adds_meaning("WhatsApp Image 2026-10-06 at 08.38.53.jpeg", "whatsapp_image_2026-10-06_08-38-53.jpeg")
     assert not rename_adds_meaning("ChatGPT Image Aug 17, 2026, 02_22_17 PM.png", "chatgpt_image_2026_08_17_142217.png")
     assert not rename_adds_meaning("881133195532564_signed.pdf", "signed_document_881133195532564.pdf")
+
+
+def test_write_text_atomic_keeps_the_old_file_whole_when_saving_fails(tmp_path, monkeypatch):
+    import pytest
+    import src.utils as utils
+
+    target = tmp_path / "config.yaml"
+    target.write_text("categories: {Bills: {}}\n", encoding="utf-8")
+
+    def disk_error(fd):
+        raise OSError(5, "Input/output error")
+
+    with monkeypatch.context() as m:
+        m.setattr(utils.os, "fsync", disk_error)
+        with pytest.raises(OSError):
+            utils.write_text_atomic(target, "categories: {Photos: {}}\n")
+
+    assert target.read_text(encoding="utf-8") == "categories: {Bills: {}}\n"
+    assert list(tmp_path.iterdir()) == [target]  # no temporary file left behind
+
+    utils.write_text_atomic(target, "categories: {Photos: {}}\n")
+    assert target.read_text(encoding="utf-8") == "categories: {Photos: {}}\n"
+    assert list(tmp_path.iterdir()) == [target]

@@ -1,0 +1,485 @@
+"""Search by meaning, start to finish: the user's choice, the download, indexing, and query lookups.
+
+One ``SemanticService`` lives in the API process. Its ``status()`` is what the Settings card and the
+Search page show, and every change to it is sent to the app over the existing SSE stream.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections import OrderedDict
+from typing import Any, Awaitable, Callable, Optional
+
+import numpy as np
+
+from . import catalog, download, vectors
+from .embedder import Embedder, EmbedderError, document_text, find_server_binary, kill_stale_helper, query_text
+
+logger = logging.getLogger(__name__)
+
+# Small batches keep a search's wait short: the engine handles one request at a time.
+BATCH = 4
+# Give the scanner and the UI room between batches; indexing is background work.
+PAUSE_BETWEEN_BATCHES = 0.05
+MIN_QUERY_CHARS = 3
+QUERY_CACHE = 128
+# How long a search waits for a query vector before answering with keyword results only.
+# Indexing pauses for searches, so this is at most one small batch plus the query itself.
+QUERY_WAIT = 1.5
+NOTIFY_EVERY = 0.25
+
+Notify = Callable[[dict], Awaitable[None]]
+
+
+class SemanticService:
+    def __init__(self, db_path: str, notify: Optional[Notify] = None):
+        self.db_path = db_path
+        self.notify = notify
+        self.matrix = vectors.VectorMatrix()
+        self.embedder: Optional[Embedder] = None
+        self.phase = "off"  # off, needs_download, downloading, indexing, ready, error
+        self.error: Optional[str] = None
+        self.download_done = 0
+        self.download_total = 0
+        self.index_done = 0
+        self.index_total = 0
+        self._download_task: Optional[asyncio.Task] = None
+        self._index_task: Optional[asyncio.Task] = None
+        self._index_again = False
+        self._warm_task: Optional[asyncio.Task] = None
+        self._queries: OrderedDict[str, np.ndarray] = OrderedDict()
+        # Query vectors being made. A search that gives up waiting leaves its query here, and the
+        # retry that follows picks up the finished vector instead of asking again.
+        self._pending: dict[str, asyncio.Task] = {}
+        # Indexing waits while a search is waiting for its query vector.
+        self._queries_idle = asyncio.Event()
+        self._queries_idle.set()
+        self._query_busy = 0
+        # Files whose text the engine couldn't embed, as (row id, text hash): skipped until their
+        # text changes, so one bad file can't stop indexing every time.
+        self._unembeddable: set[tuple[int, str]] = set()
+        # The model in use before a switch, to go back to if the new download is cancelled.
+        self._switched_from: Optional[str] = None
+        self._last_notify = 0.0
+        self._notify_pending: Optional[asyncio.Task] = None
+
+    # ------------------------------------------------------------------
+    # State
+    # ------------------------------------------------------------------
+
+    @property
+    def prefs(self) -> dict:
+        return catalog.load_prefs()
+
+    @property
+    def choice(self) -> catalog.ModelChoice:
+        return catalog.MODELS[self.prefs["model"]]
+
+    def status(self) -> dict[str, Any]:
+        prefs = self.prefs
+        models = []
+        for c in catalog.MODELS.values():
+            models.append({
+                "key": c.key, "label": c.label, "filename": c.filename, "size_bytes": c.size_bytes,
+                "blurb": c.blurb, "recommended": c.recommended, "downloaded": catalog.is_downloaded(c),
+            })
+        return {
+            "enabled": prefs["enabled"],
+            "model": prefs["model"],
+            "phase": self.phase,
+            "error": self.error,
+            "engine_available": find_server_binary() is not None,
+            "download": {"done": self.download_done, "total": self.download_total},
+            "index": {"done": self.index_done, "total": self.index_total, "vectors": len(self.matrix)},
+            "engine_running": bool(self.embedder and self.embedder.running),
+            "models": models,
+        }
+
+    def _set(self, phase: str, error: Optional[str] = None) -> None:
+        self.phase = phase
+        self.error = error
+
+    async def _changed(self, force: bool = False) -> None:
+        """Tell the app; progress updates are spaced out so a fast download doesn't flood it."""
+        if self.notify is None:
+            return
+        now = time.monotonic()
+        if force or now - self._last_notify >= NOTIFY_EVERY:
+            self._last_notify = now
+            try:
+                await self.notify(self.status())
+            except Exception as e:  # a closed client must not stop the work
+                logger.debug("Could not send semantic status: %s", e)
+        elif self._notify_pending is None or self._notify_pending.done():
+            async def later():
+                await asyncio.sleep(NOTIFY_EVERY)
+                await self._changed(force=True)
+            self._notify_pending = asyncio.create_task(later())
+
+    def _embedder_for(self, choice: catalog.ModelChoice) -> Embedder:
+        path = catalog.model_path(choice)
+        if self.embedder is None or self.embedder.model_file != path:
+            old = self.embedder
+            self.embedder = Embedder(path)
+            if old is not None:
+                asyncio.create_task(old.stop())
+        return self.embedder
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def startup(self) -> None:
+        """At app start: pick up where the user left off, without starting the engine yet."""
+        # A helper left running by a TidyFlow that was force-quit.
+        await asyncio.to_thread(kill_stale_helper)
+        prefs = self.prefs
+        if not prefs["enabled"]:
+            self._set("off")
+            return
+        choice = self.choice
+        if not catalog.is_downloaded(choice):
+            # A download was interrupted by quitting: carry on.
+            self._start_download(choice)
+            return
+        await asyncio.to_thread(self.matrix.load, self.db_path, choice.fingerprint)
+        self._set("ready")
+        self.kick()
+
+    async def shutdown(self) -> None:
+        for task in (self._download_task, self._index_task, self._warm_task):
+            if task is not None and not task.done():
+                task.cancel()
+        for task in (self._download_task, self._index_task, self._warm_task):
+            if task is not None:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        if self.embedder is not None:
+            await self.embedder.stop()
+
+    async def enable(self, model: Optional[str] = None) -> dict:
+        model = model or self.prefs["model"]
+        if model not in catalog.MODELS:
+            raise ValueError(f"Unknown model: {model}")
+        before = self.prefs
+        switching = model != before["model"]
+        if switching:
+            previous = catalog.MODELS[before["model"]]
+            self._switched_from = before["model"] if before["enabled"] and catalog.is_downloaded(previous) else None
+        catalog.save_prefs(enabled=True, model=model)
+        choice = catalog.MODELS[model]
+        if switching:
+            # A download of the other model would otherwise keep this one from starting.
+            await self._cancel_download()
+            await self._cancel_index()
+            # Its helper holds the old model file open, and Windows can't delete an open file.
+            if self.embedder is not None:
+                await self.embedder.stop()
+                self.embedder = None
+            self.matrix.clear()
+            self._queries.clear()
+        if not catalog.is_downloaded(choice):
+            self._start_download(choice)
+        else:
+            if self.matrix.loaded_key != choice.fingerprint:
+                await asyncio.to_thread(self.matrix.load, self.db_path, choice.fingerprint)
+            self._set("ready")
+            self.kick()
+        await self._changed(force=True)
+        return self.status()
+
+    async def disable(self) -> dict:
+        """Turn it off. The model and the index stay, so turning it back on is instant."""
+        catalog.save_prefs(enabled=False)
+        await self._cancel_download()
+        await self._cancel_index()
+        if self.embedder is not None:
+            await self.embedder.stop()
+        self._set("off")
+        await self._changed(force=True)
+        return self.status()
+
+    async def remove(self) -> dict:
+        """Turn it off and delete every model file and every vector."""
+        await self.disable()
+        freed = sum(download.remove_model_files(c) for c in catalog.MODELS.values())
+        await asyncio.to_thread(vectors.delete_vectors, self.db_path, None)
+        self.matrix.clear()
+        self._queries.clear()
+        self.embedder = None
+        self.index_done = self.index_total = 0
+        await self._changed(force=True)
+        return {**self.status(), "freed_bytes": freed}
+
+    # ------------------------------------------------------------------
+    # Download
+    # ------------------------------------------------------------------
+
+    def _start_download(self, choice: catalog.ModelChoice) -> None:
+        if self._download_task is not None and not self._download_task.done():
+            return
+        self._set("downloading")
+        self.download_done = download.part_path(choice).stat().st_size if download.part_path(choice).exists() else 0
+        self.download_total = choice.size_bytes
+        self._download_task = asyncio.create_task(self._download(choice))
+
+    async def _download(self, choice: catalog.ModelChoice) -> None:
+        async def progress(done: int, total: int) -> None:
+            self.download_done, self.download_total = done, total
+            await self._changed()
+
+        try:
+            await download.download_model(choice, progress)
+        except asyncio.CancelledError:
+            raise
+        except download.DownloadError as e:
+            self._set("error", str(e))
+            await self._changed(force=True)
+            return
+        except Exception as e:
+            logger.exception("Model download failed")
+            self._set("error", f"The download failed: {e}")
+            await self._changed(force=True)
+            return
+        # The model in use changed only if the user didn't pick another meanwhile.
+        if self.prefs["model"] != choice.key or not self.prefs["enabled"]:
+            return
+        # Free the space of a model the user moved away from.
+        for other in catalog.MODELS.values():
+            if other.key != choice.key:
+                download.remove_model_files(other)
+        await asyncio.to_thread(self.matrix.load, self.db_path, choice.fingerprint)
+        self._set("ready")
+        await self._changed(force=True)
+        self.kick()
+
+    async def _cancel_download(self) -> None:
+        task, self._download_task = self._download_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def cancel_download(self) -> dict:
+        """Stop downloading; the part already fetched is kept for later.
+
+        When the download was a switch to another model, go back to the model used before it.
+        Otherwise turn the feature off.
+        """
+        previous, self._switched_from = self._switched_from, None
+        if previous in catalog.MODELS and catalog.is_downloaded(catalog.MODELS[previous]):
+            await self._cancel_download()
+            return await self.enable(previous)
+        return await self.disable()
+
+    # ------------------------------------------------------------------
+    # Indexing
+    # ------------------------------------------------------------------
+
+    def kick(self) -> None:
+        """Bring the index up to date with the files' text, now or right after the current pass."""
+        prefs = self.prefs
+        if not prefs["enabled"] or not catalog.is_downloaded(self.choice):
+            return
+        if self._index_task is not None and not self._index_task.done():
+            self._index_again = True
+            return
+        self._index_again = False
+        self._index_task = asyncio.create_task(self._index_loop())
+
+    async def _cancel_index(self) -> None:
+        task, self._index_task = self._index_task, None
+        self._index_again = False
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def wait_for_index(self) -> None:
+        """For tests and the CLI: wait until indexing is finished."""
+        while self._index_task is not None and not self._index_task.done():
+            await asyncio.gather(self._index_task, return_exceptions=True)
+
+    async def _index_loop(self) -> None:
+        while True:
+            await self._index_pass()
+            if not self._index_again:
+                return
+            self._index_again = False
+
+    async def _index_pass(self) -> None:
+        choice = self.choice
+        key = choice.fingerprint
+        try:
+            if self.matrix.loaded_key != key:
+                await asyncio.to_thread(self.matrix.load, self.db_path, key)
+            work = await asyncio.to_thread(vectors.plan_work, self.db_path, key)
+            if work.drop:
+                await asyncio.to_thread(vectors.delete_vectors, self.db_path, work.drop)
+                self.matrix.remove(work.drop)
+            self.matrix.keep_only(work.wanted)
+            todo = [t for t in work.todo if (t[0], t[2]) not in self._unembeddable]
+            self.index_total = work.total - (len(work.todo) - len(todo))
+            self.index_done = self.index_total - len(todo)
+            work.todo = todo
+            if not work.todo:
+                await asyncio.to_thread(_drop_other_models, self.db_path, key)
+                self._set("ready")
+                await self._changed(force=True)
+                return
+            self._set("indexing")
+            await self._changed(force=True)
+            embedder = self._embedder_for(choice)
+            async with embedder.hold():
+                for start in range(0, len(work.todo), BATCH):
+                    batch = work.todo[start:start + BATCH]
+                    await self._queries_idle.wait()  # a search goes first
+                    rows = await self._embed_batch(embedder, batch)
+                    await asyncio.to_thread(vectors.save_vectors, self.db_path, key, rows)
+                    self.matrix.upsert([(row_id, v) for row_id, _, v in rows])
+                    self.index_done += len(rows)
+                    self.index_total -= len(batch) - len(rows)  # skipped files
+                    await self._changed()
+                    await asyncio.sleep(PAUSE_BETWEEN_BATCHES)
+            await asyncio.to_thread(_drop_other_models, self.db_path, key)
+            self._set("ready")
+            await self._changed(force=True)
+        except asyncio.CancelledError:
+            raise
+        except EmbedderError as e:
+            logger.warning("Indexing for search by meaning stopped: %s", e)
+            self._set("error", str(e))
+            await self._changed(force=True)
+        except Exception as e:
+            logger.exception("Indexing for search by meaning failed")
+            self._set("error", f"Indexing failed: {e}")
+            await self._changed(force=True)
+
+    async def _embed_batch(self, embedder: Embedder, batch: list[tuple[int, str, str]]) -> list[tuple[int, str, np.ndarray]]:
+        """Embed a batch; if it fails, embed its files one by one and skip the ones that fail."""
+        try:
+            vecs = await embedder.embed([document_text(text) for _, text, _ in batch])
+            return [(row_id, h, v) for (row_id, _, h), v in zip(batch, vecs)]
+        except EmbedderError:
+            if len(batch) == 1 and not embedder.running:
+                raise
+        rows = []
+        crashes = 0
+        for row_id, text, h in batch:
+            try:
+                rows.append((row_id, h, (await embedder.embed([document_text(text)]))[0]))
+            except EmbedderError as e:
+                if not embedder.running:
+                    crashes += 1
+                    if crashes >= 3:  # the engine itself is failing, not this file
+                        raise
+                logger.warning("Skipping file %s for search by meaning: %s", row_id, e)
+                self._unembeddable.add((row_id, h))
+        return rows
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    @property
+    def searchable(self) -> bool:
+        prefs = self.prefs
+        return (
+            prefs["enabled"] and len(self.matrix) > 0 and self.matrix.loaded_key == self.choice.fingerprint
+            and catalog.is_downloaded(self.choice)
+        )
+
+    def warm(self) -> None:
+        """Start the engine ahead of a search, e.g. when the Search page opens."""
+        # After a failure, wait for the user's Try again in Settings rather than retrying per search.
+        if not self.searchable or self.phase == "error":
+            return
+        embedder = self._embedder_for(self.choice)
+        if embedder.running or (self._warm_task is not None and not self._warm_task.done()):
+            return
+
+        async def go():
+            try:
+                await embedder.start()
+            except EmbedderError as e:
+                logger.warning("Could not start the search-by-meaning engine: %s", e)
+                self._set("error", str(e))
+            await self._changed(force=True)
+
+        self._warm_task = asyncio.create_task(go())
+
+    async def lookup(self, query: str) -> tuple[Optional[list[tuple[int, float]]], str]:
+        """Files matching ``query`` by meaning, and what happened.
+
+        The second value is ``"ok"``, ``"off"`` (not turned on or no index yet), ``"short"``
+        (query too short to mean much), ``"warming"`` (the engine is starting; ask again
+        shortly) or ``"failed"``. Only ``"ok"`` comes with hits.
+        """
+        q = " ".join(query.split())
+        if not self.searchable:
+            return None, "off"
+        if self.phase == "error":
+            return None, "failed"
+        if len(q) < MIN_QUERY_CHARS:
+            return None, "short"
+        key = q.lower()
+        vec = self._queries.get(key)
+        if vec is None:
+            embedder = self._embedder_for(self.choice)
+            if not embedder.running and key not in self._pending:
+                self.warm()
+                return None, "warming"
+            task = self._pending.get(key)
+            if task is None:
+                task = asyncio.create_task(self._embed_query(embedder, q))
+                self._pending[key] = task
+                task.add_done_callback(lambda t, k=key: self._query_done(k, t))
+            try:
+                vec = await asyncio.wait_for(asyncio.shield(task), QUERY_WAIT)
+            except asyncio.TimeoutError:
+                return None, "warming"
+            except EmbedderError as e:
+                logger.warning("Meaning lookup failed: %s", e)
+                return None, "failed"
+        else:
+            self._queries.move_to_end(key)
+        return self.matrix.search(vec, min_score=self.choice.min_score), "ok"
+
+    def _query_done(self, key: str, task: asyncio.Task) -> None:
+        """Keep a finished query vector, even when the search that asked for it stopped waiting."""
+        self._pending.pop(key, None)
+        if task.cancelled() or task.exception() is not None:
+            return
+        self._queries[key] = task.result()
+        while len(self._queries) > QUERY_CACHE:
+            self._queries.popitem(last=False)
+
+
+    async def _embed_query(self, embedder: Embedder, q: str) -> np.ndarray:
+        self._query_busy += 1
+        self._queries_idle.clear()
+        try:
+            return (await embedder.embed([query_text(q)]))[0]
+        finally:
+            self._query_busy -= 1
+            if self._query_busy == 0:
+                self._queries_idle.set()
+
+
+def _drop_other_models(db_path: str, key: str) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        with conn:
+            conn.execute("DELETE FROM file_vectors WHERE model_key != ?", (key,))
+    finally:
+        conn.close()

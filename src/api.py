@@ -60,12 +60,15 @@ from .main_loop import PipelineCancelledException, Processor, load_records_jsonl
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
 from .scanner import scan_files
-from .utils import get_app_data_dir, get_resource_path, work_data_dir
+from .semantic.service import SemanticService
+from .utils import get_app_data_dir, get_resource_path, work_data_dir, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
 db = DatabaseManager()
 processor = Processor(max_concurrent=5, db=db)
+# Search by meaning; its status changes go to the app as "semantic" events.
+semantic = SemanticService(db.db_path, notify=lambda status: broadcast_event("semantic", status))
 clients: set[asyncio.Queue] = set()
 active_cancel_event: Optional[threading.Event] = None
 
@@ -90,6 +93,9 @@ def _save_latest_run() -> None:
     run_dir = _latest_run_dir()
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
+        # meta.json is what makes a saved run count, so it goes first and comes back last: a run
+        # interrupted while saving is then not restored at all, rather than mixed with the one before.
+        (run_dir / "meta.json").unlink(missing_ok=True)
         _save_records_jsonl(latest_pipeline_data["records"], run_dir / "records.jsonl")
         summary = latest_pipeline_data.get("summary")
         meta = {
@@ -98,7 +104,7 @@ def _save_latest_run() -> None:
             "categories": latest_pipeline_data.get("categories", []),
             "summary": summary.model_dump(mode="json") if summary else None,
         }
-        (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        write_text_atomic(run_dir / "meta.json", json.dumps(meta))
     except Exception as e:
         logger.warning("Failed to persist latest run: %s", e)
 
@@ -165,8 +171,13 @@ async def lifespan(app: FastAPI):
 
     _load_latest_run()
     asyncio.get_running_loop().run_in_executor(None, verify_llm_key)
+    try:
+        await semantic.startup()
+    except Exception as e:  # search by words must keep working whatever happens here
+        logger.warning("Search by meaning could not start: %s", e)
 
     yield
+    await semantic.shutdown()
     await processor.stop()
     await db.stop()
 
@@ -391,30 +402,15 @@ async def save_categories(req: CategoriesUpdateRequest):
         plan = _plan_file(req.folder)
         try:
             plan.parent.mkdir(parents=True, exist_ok=True)
-            plan.write_text(json.dumps({"folder": req.folder, "categories": req.categories}), encoding="utf-8")
+            write_text_atomic(plan, json.dumps({"folder": req.folder, "categories": req.categories}))
         except OSError as e:
             logger.warning("Could not save the folder plan: %s", e)
         return {"status": "success", "categories": req.categories}
 
-    cfg_file = get_app_data_dir() / "config.yaml"
-    raw: dict[str, Any] = {}
-    if cfg_file.exists():
-        try:
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-        except Exception:
-            raw = {}
-    elif Path("config.yaml").exists():
-        try:
-            with open("config.yaml", "r", encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-        except Exception:
-            raw = {}
-
-    raw["categories"] = req.categories
     try:
-        with open(cfg_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(raw, f, sort_keys=False)
+        cfg_file, raw = _read_user_config()
+        raw["categories"] = req.categories
+        write_text_atomic(cfg_file, yaml.safe_dump(raw, sort_keys=False))
     except Exception as e:
         logger.warning("Could not write categories to config.yaml: %s", e)
 
@@ -456,25 +452,41 @@ def _settings_snapshot() -> dict:
     }
 
 
+def _read_user_config() -> tuple[Path, dict[str, Any]]:
+    """Where the user's config.yaml is saved, and what it holds now (the bundled defaults before the first save).
+
+    A saved file that can't be read is first kept as config.yaml.bak, so saving one setting doesn't
+    silently wipe every other one because of, say, a typo made by hand. If even that copy fails, the
+    error stops the save and the file is left alone.
+    """
+    cfg_file = get_app_data_dir() / "config.yaml"
+    source = cfg_file if cfg_file.exists() else Path("config.yaml")
+    if not source.exists():
+        return cfg_file, {}
+    try:
+        data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict):
+            return cfg_file, data
+        problem = "it doesn't hold settings"
+    except Exception as e:
+        problem = str(e)
+    if source == cfg_file:
+        backup = cfg_file.with_name("config.yaml.bak")
+        shutil.copy2(cfg_file, backup)
+        logger.warning("Could not read config.yaml (%s); kept it as %s", problem, backup)
+    return cfg_file, {}
+
+
 def _update_config_yaml(changes: dict[str, Any]) -> None:
     """Merge ``changes`` (nested like config.yaml) into the user's config file."""
     try:
-        cfg_file = get_app_data_dir() / "config.yaml"
-        data: dict[str, Any] = {}
-        source = cfg_file if cfg_file.exists() else Path("config.yaml")
-        if source.exists():
-            try:
-                with open(source, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except Exception:
-                data = {}
+        cfg_file, data = _read_user_config()
         for section, value in changes.items():
             if isinstance(value, dict):
                 data.setdefault(section, {}).update(value)
             else:
                 data[section] = value
-        with open(cfg_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False)
+        write_text_atomic(cfg_file, yaml.safe_dump(data, sort_keys=False))
     except Exception as e:
         logger.warning("Could not persist config.yaml: %s", e)
 
@@ -961,6 +973,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
         "total_scanned": summary.total_scanned,
         "output_dir": str(out_path),
     })
+    semantic.kick()  # embed the text this run found
 
     return {
         "status": "success",
@@ -1199,7 +1212,7 @@ def _save_last_apply(
         "library": library_info or {},
     }
     try:
-        _last_apply_file().write_text(json.dumps(data), encoding="utf-8")
+        write_text_atomic(_last_apply_file(), json.dumps(data))
     except Exception as e:
         logger.warning("Failed to save undo information: %s", e)
 
@@ -1339,12 +1352,14 @@ async def search_files(
     or ``unsorted`` for files in no folder.
     """
     if not q or not q.strip():
-        return {"results": [], "total": 0, "facets": None, "corrected": None}
+        return {"results": [], "total": 0, "facets": None, "corrected": None, "meaning": "off", "meaning_total": 0}
+    hits, meaning_state = await semantic.lookup(q)
     page = await db.search_page(
         q.strip(), limit=limit, offset=offset, category=category or None, kind=kind or None, organized=organized,
-        folder=_folder_param(folder), include_subfolders=subfolders,
+        folder=_folder_param(folder), include_subfolders=subfolders, meaning=hits,
     )
     live, gone = [], []
+    gone_by_meaning = 0
     for r in page["results"]:
         # Point at wherever the file is now (organized copy, or back at its original place after an
         # undo) and drop rows whose file is gone everywhere.
@@ -1355,6 +1370,7 @@ async def search_files(
         current = _current_path(row)
         if current is None:
             gone.append(row["id"])
+            gone_by_meaning += row.get("match") == "meaning"
             continue
         row["current_path"] = str(current)
         row["name"] = current.name
@@ -1375,6 +1391,9 @@ async def search_files(
         "total": max(page.get("total", len(live)) - len(gone), len(live)),
         "facets": page.get("facets"),
         "corrected": page.get("corrected"),
+        # "ok", "off", "short", "warming" (ask again shortly) or "failed": see SemanticService.lookup.
+        "meaning": meaning_state,
+        "meaning_total": max(0, page.get("meaning_total", 0) - gone_by_meaning),
     }
 
 
@@ -1659,6 +1678,7 @@ async def library_suggest_new(req: SuggestNewRequest):
                 cancellation_token=cancel, only_paths=paths,
             )
             records.extend(found)
+        semantic.kick()
     except PipelineCancelledException:
         return {"status": "cancelled", "files": [], "folders": []}
     except Exception as e:
@@ -1790,6 +1810,56 @@ async def library_undo():
     return await _library_action(library_ops.undo_last, touches_disk=True)
 
 
+class SemanticEnableRequest(BaseModel):
+    model: Optional[str] = None
+
+
+@app.get("/semantic/status")
+async def semantic_status():
+    """Search by meaning: on or off, the models and which is downloaded, and download or indexing progress."""
+    return semantic.status()
+
+
+@app.post("/semantic/enable")
+async def semantic_enable(req: SemanticEnableRequest):
+    """Turn search by meaning on with a model, downloading it first if needed."""
+    try:
+        return await semantic.enable(req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.post("/semantic/disable")
+async def semantic_disable():
+    """Turn it off; the model and the index are kept."""
+    return await semantic.disable()
+
+
+@app.post("/semantic/cancel")
+async def semantic_cancel():
+    """Stop a download; what was fetched is kept and the next download carries on from it."""
+    return await semantic.cancel_download()
+
+
+@app.post("/semantic/retry")
+async def semantic_retry():
+    """Try again after an error."""
+    return await semantic.enable()
+
+
+@app.delete("/semantic")
+async def semantic_remove():
+    """Turn it off and delete the downloaded model and every meaning vector."""
+    return await semantic.remove()
+
+
+@app.post("/semantic/warm")
+async def semantic_warm():
+    """Start the engine before the first search (the Search page calls this when it opens)."""
+    semantic.warm()
+    return {"phase": semantic.phase}
+
+
 @app.get("/search/stats")
 async def search_stats():
     """How many files the search covers, and the folders holding the most of them."""
@@ -1873,8 +1943,7 @@ async def get_files(limit: int = 50, offset: int = 0):
 async def update_rules(rules_req: dict[str, Any]):
     rules_path = get_app_data_dir() / "rules.yaml"
     rules_list = rules_req.get("rules", [])
-    with open(rules_path, "w", encoding="utf-8") as f:
-        yaml.dump({"rules": rules_list}, f)
+    write_text_atomic(rules_path, yaml.dump({"rules": rules_list}))
     return {"message": "Rules updated successfully", "count": len(rules_list)}
 
 

@@ -263,6 +263,16 @@ Search looks through file names and the text inside documents, receipts and scre
 - **Add all to a folder…** puts every result into a TidyFlow folder in one go.
 - The search box at the top of a Library folder searches just that folder.
 
+### Search by meaning
+
+Turn on **Settings › Search by meaning** and search also finds files that are about what you typed, even when they don't contain the words. "rent agreement" finds a tenancy contract, and "train ticket" finds a booking screenshot.
+
+- It's off until you turn it on. Then you pick a model to download: **Standard** (EmbeddingGemma 2, 8-bit, 310 MB, recommended) or **Full precision** (558 MB). Downloads resume if they're interrupted and are checked against a SHA-256 before use.
+- TidyFlow then builds a meaning index from the same text keyword search uses, one vector per file. A library of about 500 files with text takes about a minute on an Apple M4. After that, only files whose text changed are read again.
+- Files found by meaning are listed after the files that contain your words, under **Related by meaning**. Only files that clearly stand out are shown, so a search for something you don't have shows none. **Add all to a folder…** only takes the files with your words.
+- It runs on your computer: the model runs in a llama.cpp helper process that listens only on this machine with a fresh key, and stops after five idle minutes. On Windows it runs on the CPU, and the model is kept in `%LOCALAPPDATA%\TidyFlow\models`. **Remove model** deletes the model and the index.
+- It reads the first few thousand characters of each file, like keyword search. Files with no text, like most photos, are still found by name.
+
 ## What makes it different
 
 - **It reads the files, not just the names.** It reads text from PDFs, Office documents, code and spreadsheets, and uses on-device OCR for scans and screenshots (Apple Vision on macOS, PaddleOCR on Windows). So `scan_0412.pdf` ends up next to your other invoices.
@@ -275,7 +285,7 @@ Search looks through file names and the text inside documents, receipts and scre
 
 ## Privacy
 
-Your files stay on your computer, and so do the OCR and text extraction. If you connect an AI provider, only file names and short text excerpts are sent to classify them. Passwords, API keys and tokens are scrubbed from that text before it leaves. Without a key, nothing is sent anywhere.
+Your files stay on your computer, and so do the OCR and text extraction. If you connect an AI provider, only file names and short text excerpts are sent to classify them. Passwords, API keys and tokens are scrubbed from that text before it leaves. Without a key, nothing is sent anywhere. Search by meaning runs entirely on your computer too; its one network request is the model download from Hugging Face when you turn it on.
 
 The Library, your learned rules and the undo history are kept in a local SQLite database. Finder tags are written to the files' own metadata on your Mac and nowhere else. Settings and keys live in your user data folder (`~/Library/Application Support/TidyFlow` or `%APPDATA%\TidyFlow`) and are readable only by you.
 
@@ -294,9 +304,11 @@ flowchart TB
         NW["<b>New-file check</b><br/>library_new.py"]
         RL["<b>Learned rules</b><br/>library_rules.py"]
         TG["<b>Finder tags</b><br/>library_tags.py"]
+        SM["<b>Search by meaning</b><br/>semantic/"]
     end
     P -. "names + short excerpts" .-> AI(["AI provider<br/>(optional)"])
-    API --> DB[("<b>SQLite</b><br/>files · folders · folder_files<br/>corrections · learned_rules<br/>library_ops (undo history)")]
+    SM -- "127.0.0.1 + key" --> LL(["llama-server<br/>EmbeddingGemma 2 (optional)"])
+    API --> DB[("<b>SQLite</b><br/>files · folders · folder_files<br/>corrections · learned_rules<br/>library_ops (undo history)<br/>file_vectors")]
     API -- "reads; changes only after you confirm" --> FS[("💽 Your files")]
 ```
 
@@ -338,7 +350,7 @@ npm --prefix frontend install && npm --prefix frontend run build
 python3 desktop.py
 ```
 
-`desktop.py` starts the local server and opens TidyFlow in a native window. To work on the UI with hot reload, run the backend and the Vite dev server side by side:
+`desktop.py` starts the local server and opens TidyFlow in a native window. Search by meaning needs llama.cpp's `llama-server`: run `python3 build/fetch_llama_server.py` to put the pinned build in `bin/llama/`, or have one on your `PATH` (for example `brew install llama.cpp`). To work on the UI with hot reload, run the backend and the Vite dev server side by side:
 
 ```bash
 python3 -m uvicorn src.api:app --port 8000
@@ -351,7 +363,8 @@ Everything needed to package the desktop app is in [`build/`](build):
 
 ```
 build/
-├── build.py          shared build script (frontend → OCR helper → PyInstaller → installer)
+├── build.py          shared build script (frontend → OCR helper → llama-server → PyInstaller → installer)
+├── fetch_llama_server.py   pinned llama.cpp release for search by meaning, put in bin/llama/
 ├── tidyflow.spec     PyInstaller spec
 ├── macos/build.sh    → dist/TidyFlow.app, dist/TidyFlow.dmg
 └── windows/
@@ -400,6 +413,7 @@ src/              FastAPI server, classification pipeline, CLI
   library_new.py    "new since last time" and following moved files
   library_rules.py  rules learned from your corrections
   library_tags.py   Finder tags (macOS)
+  semantic/         search by meaning: model download, llama-server helper, vectors, indexing
 frontend/         React + TypeScript + Tailwind UI
   src/flow/         the Tidy up wizard
   src/components/   Library, Search, Settings

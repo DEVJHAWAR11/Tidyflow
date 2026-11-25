@@ -71,6 +71,9 @@ export interface FtsResultItem {
   confidence?: number;
   extracted_text?: string;
   snippet?: string;
+  /** How /search found it: by the words typed, or by meaning (search by meaning). */
+  match?: "words" | "meaning";
+  meaning_score?: number;
   thumbnail_b64?: string;
   file_size_bytes?: number;
   extension?: string;

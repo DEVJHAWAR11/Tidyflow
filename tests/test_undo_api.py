@@ -201,3 +201,34 @@ def test_folder_plans_are_kept_apart_and_never_touch_config(client, tmp_path):
     client.post("/pipeline/clear", params={"folder": a})
     assert client.get("/categories", params={"folder": a}).json()["categories"] == {}
     assert list(client.get("/categories", params={"folder": b}).json()["categories"]) == ["Photos"]
+
+
+def test_a_run_interrupted_while_saving_is_not_restored_mixed_with_the_one_before(tmp_path, monkeypatch):
+    import src.main_loop as main_loop
+    from src.models import FileRecord
+
+    def record(name):
+        return FileRecord(file_id=name, abs_path=tmp_path / name, rel_path=name, filename=name,
+                          extension=".txt", file_size_bytes=1)
+
+    monkeypatch.setattr(api, "latest_pipeline_data", {})
+    api.latest_pipeline_data.update(records=[record("old.txt")], input_dir=str(tmp_path / "Old"),
+                                    output_dir="", summary=None, categories=[])
+    api._save_latest_run()
+
+    # The next run's save dies part-way through writing its records.
+    real_save = main_loop._save_records_jsonl
+
+    def dies_part_way(records, path):
+        real_save(records, path)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(main_loop, "_save_records_jsonl", dies_part_way)
+    api.latest_pipeline_data.update(records=[record("new.txt")], input_dir=str(tmp_path / "New"))
+    api._save_latest_run()
+
+    # After a restart, the new files are never shown as if they came from the old folder.
+    monkeypatch.setattr(api, "latest_pipeline_data", {})
+    api._load_latest_run()
+    assert api.latest_pipeline_data.get("input_dir") != str(tmp_path / "Old")
+    assert not api.latest_pipeline_data.get("records")

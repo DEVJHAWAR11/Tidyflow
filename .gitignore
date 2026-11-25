@@ -24,6 +24,8 @@ interview-prep/
 data/
 *.exe
 dist/
+# llama-server for search by meaning; build/fetch_llama_server.py puts it here
+bin/llama/
 .pyinstaller/
 *.spec
 !build/tidyflow.spec
