@@ -110,6 +110,19 @@ def decision_category(dec: ReviewDecision, rec: FileRecord) -> str:
     return dec.override_category or (rec_cat if rec_cat != "Unknown" else dec.original_category)
 
 
+def _placing_order(rec: Optional[FileRecord]) -> tuple[int, str]:
+    """Files nearest the top of the scanned folder first, then by path, ignoring case.
+
+    When files with one name land in one folder, the first placed keeps the name and the rest are
+    labelled with the folder they came from. Going by depth makes that the top-level file on every
+    system, instead of whichever file the system happened to list first.
+    """
+    if rec is None or not rec.rel_path:
+        return (0, "")
+    rel = Path(rec.rel_path)
+    return (len(rel.parts), rel.as_posix().lower())
+
+
 def apply_decisions(
     decisions: list[ReviewDecision],
     records: list[FileRecord],
@@ -127,7 +140,7 @@ def apply_decisions(
     Returns manifest list of performed operations.
     """
     id_map = {r.file_id: r for r in records if not r.skipped}
-    approved = [d for d in decisions if d.approved]
+    approved = sorted((d for d in decisions if d.approved), key=lambda d: _placing_order(id_map.get(d.file_id)))
 
     if not approved:
         logger.info("No approved files to organize")
