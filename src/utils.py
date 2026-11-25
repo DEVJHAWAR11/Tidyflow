@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -359,4 +360,26 @@ def get_app_data_dir() -> Path:
 
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def write_text_atomic(path: Path | str, text: str) -> None:
+    """Replace the file at ``path`` with ``text`` in one step.
+
+    The text is written to a temporary file next to it, which then takes the old file's place, so a
+    crash or a full disk part-way through leaves the old file as it was instead of half a file.
+    """
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 

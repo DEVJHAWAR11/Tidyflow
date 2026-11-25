@@ -133,3 +133,24 @@ def test_only_the_app_may_call_the_api(client):
         res = client.get("/settings", headers={"Origin": origin})
         assert res.status_code == 200 and res.headers["access-control-allow-origin"] == origin
     assert client.get("/settings").status_code == 200  # the app's own page sends no Origin on a GET
+
+
+def test_saving_over_an_unreadable_config_keeps_a_copy_of_it(client, isolated_app_data):
+    import yaml
+
+    cfg = isolated_app_data / "config.yaml"
+    broken = (
+        "classification:\n  auto_copy_threshold: 0.9\nmax_file_size_mb: 50\n"
+        "categories:\n  Bills: {description: [unclosed\n"
+    )
+    cfg.write_text(broken, encoding="utf-8")
+
+    client.post("/categories", json={"categories": {"Photos": {"description": "pics"}}})
+
+    # The hand-edited settings aren't lost: the file that couldn't be read is kept beside the new one.
+    assert (isolated_app_data / "config.yaml.bak").read_text(encoding="utf-8") == broken
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8")) == {"categories": {"Photos": {"description": "pics"}}}
+
+    # Once the file reads fine again, saving doesn't touch the copy.
+    client.post("/categories", json={"categories": {"Bills": {"description": "bills"}}})
+    assert (isolated_app_data / "config.yaml.bak").read_text(encoding="utf-8") == broken
