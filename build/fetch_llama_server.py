@@ -64,7 +64,10 @@ def _extract(name: str, data: bytes, dest: Path) -> Path:
             z.extractall(dest)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
-            t.extractall(dest, filter="data")
+            if hasattr(tarfile, "data_filter"):
+                t.extractall(dest, filter="data")
+            else:  # Python before 3.10.12 / 3.11.4: the archive is pinned by its SHA-256 anyway
+                t.extractall(dest)
     exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
     found = next(dest.rglob(exe), None)
     if found is None:

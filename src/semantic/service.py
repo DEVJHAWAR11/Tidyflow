@@ -19,7 +19,8 @@ from .embedder import Embedder, EmbedderError, document_text, find_server_binary
 
 logger = logging.getLogger(__name__)
 
-BATCH = 16
+# Small batches keep a search's wait short: the engine handles one request at a time.
+BATCH = 8
 # Give the scanner and the UI room between batches; indexing is background work.
 PAUSE_BETWEEN_BATCHES = 0.05
 MIN_QUERY_CHARS = 3
@@ -48,6 +49,15 @@ class SemanticService:
         self._index_again = False
         self._warm_task: Optional[asyncio.Task] = None
         self._queries: OrderedDict[str, np.ndarray] = OrderedDict()
+        # Query vectors being made. A search that gives up waiting leaves its query here, and the
+        # retry that follows picks up the finished vector instead of asking again.
+        self._pending: dict[str, asyncio.Task] = {}
+        # Indexing waits while a search is waiting for its query vector.
+        self._queries_idle = asyncio.Event()
+        self._queries_idle.set()
+        self._query_busy = 0
+        # The model in use before a switch, to go back to if the new download is cancelled.
+        self._switched_from: Optional[str] = None
         self._last_notify = 0.0
         self._notify_pending: Optional[asyncio.Task] = None
 
@@ -151,13 +161,21 @@ class SemanticService:
         model = model or self.prefs["model"]
         if model not in catalog.MODELS:
             raise ValueError(f"Unknown model: {model}")
-        switching = model != self.prefs["model"]
+        before = self.prefs
+        switching = model != before["model"]
+        if switching:
+            previous = catalog.MODELS[before["model"]]
+            self._switched_from = before["model"] if before["enabled"] and catalog.is_downloaded(previous) else None
         catalog.save_prefs(enabled=True, model=model)
         choice = catalog.MODELS[model]
         if switching:
             # A download of the other model would otherwise keep this one from starting.
             await self._cancel_download()
             await self._cancel_index()
+            # Its helper holds the old model file open, and Windows can't delete an open file.
+            if self.embedder is not None:
+                await self.embedder.stop()
+                self.embedder = None
             self.matrix.clear()
             self._queries.clear()
         if not catalog.is_downloaded(choice):
@@ -245,7 +263,15 @@ class SemanticService:
                 pass
 
     async def cancel_download(self) -> dict:
-        """Stop downloading (the part already fetched is kept for later) and turn the feature off."""
+        """Stop downloading; the part already fetched is kept for later.
+
+        When the download was a switch to another model, go back to the model used before it.
+        Otherwise turn the feature off.
+        """
+        previous, self._switched_from = self._switched_from, None
+        if previous in catalog.MODELS and catalog.is_downloaded(catalog.MODELS[previous]):
+            await self._cancel_download()
+            return await self.enable(previous)
         return await self.disable()
 
     # ------------------------------------------------------------------
@@ -309,6 +335,7 @@ class SemanticService:
             async with embedder.hold():
                 for start in range(0, len(work.todo), BATCH):
                     batch = work.todo[start:start + BATCH]
+                    await self._queries_idle.wait()  # a search goes first
                     vecs = await embedder.embed([document_text(text) for _, text, _ in batch])
                     rows = [(row_id, h, v) for (row_id, _, h), v in zip(batch, vecs)]
                     await asyncio.to_thread(vectors.save_vectors, self.db_path, key, rows)
@@ -344,7 +371,8 @@ class SemanticService:
 
     def warm(self) -> None:
         """Start the engine ahead of a search, e.g. when the Search page opens."""
-        if not self.searchable:
+        # After a failure, wait for the user's Try again in Settings rather than retrying per search.
+        if not self.searchable or self.phase == "error":
             return
         embedder = self._embedder_for(self.choice)
         if embedder.running or (self._warm_task is not None and not self._warm_task.done()):
@@ -355,6 +383,7 @@ class SemanticService:
                 await embedder.start()
             except EmbedderError as e:
                 logger.warning("Could not start the search-by-meaning engine: %s", e)
+                self._set("error", str(e))
             await self._changed(force=True)
 
         self._warm_task = asyncio.create_task(go())
@@ -369,28 +398,52 @@ class SemanticService:
         q = " ".join(query.split())
         if not self.searchable:
             return None, "off"
+        if self.phase == "error":
+            return None, "failed"
         if len(q) < MIN_QUERY_CHARS:
             return None, "short"
         key = q.lower()
         vec = self._queries.get(key)
         if vec is None:
             embedder = self._embedder_for(self.choice)
-            if not embedder.running:
+            if not embedder.running and key not in self._pending:
                 self.warm()
                 return None, "warming"
+            task = self._pending.get(key)
+            if task is None:
+                task = asyncio.create_task(self._embed_query(embedder, q))
+                self._pending[key] = task
+                task.add_done_callback(lambda t, k=key: self._query_done(k, t))
             try:
-                vec = (await asyncio.wait_for(embedder.embed([query_text(q)]), QUERY_WAIT))[0]
+                vec = await asyncio.wait_for(asyncio.shield(task), QUERY_WAIT)
             except asyncio.TimeoutError:
                 return None, "warming"
             except EmbedderError as e:
                 logger.warning("Meaning lookup failed: %s", e)
                 return None, "failed"
-            self._queries[key] = vec
-            while len(self._queries) > QUERY_CACHE:
-                self._queries.popitem(last=False)
         else:
             self._queries.move_to_end(key)
         return self.matrix.search(vec), "ok"
+
+    def _query_done(self, key: str, task: asyncio.Task) -> None:
+        """Keep a finished query vector, even when the search that asked for it stopped waiting."""
+        self._pending.pop(key, None)
+        if task.cancelled() or task.exception() is not None:
+            return
+        self._queries[key] = task.result()
+        while len(self._queries) > QUERY_CACHE:
+            self._queries.popitem(last=False)
+
+
+    async def _embed_query(self, embedder: Embedder, q: str) -> np.ndarray:
+        self._query_busy += 1
+        self._queries_idle.clear()
+        try:
+            return (await embedder.embed([query_text(q)]))[0]
+        finally:
+            self._query_busy -= 1
+            if self._query_busy == 0:
+                self._queries_idle.set()
 
 
 def _drop_other_models(db_path: str, key: str) -> None:

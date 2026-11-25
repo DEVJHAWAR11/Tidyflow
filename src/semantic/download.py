@@ -20,7 +20,7 @@ CHUNK = 1 << 20
 # Room to leave on the disk beyond the model itself.
 SPARE_BYTES = 200 * 1024 * 1024
 
-Progress = Callable[[int, int], Awaitable[None] | None]
+Progress = Callable[[int, int], Optional[Awaitable[None]]]
 
 
 class DownloadError(Exception):
@@ -113,8 +113,11 @@ def remove_model_files(choice: ModelChoice) -> int:
     freed = 0
     for path in (model_path(choice), part_path(choice)):
         try:
-            freed += path.stat().st_size
+            size = path.stat().st_size
             path.unlink()
+            freed += size
         except FileNotFoundError:
             pass
+        except OSError as e:  # e.g. still open in a helper on Windows; it goes next time
+            logger.warning("Could not delete %s: %s", path, e)
     return freed

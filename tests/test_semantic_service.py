@@ -220,3 +220,78 @@ async def test_switching_model_during_a_download(env):
     assert st["phase"] == "ready" and st["model"] == "bf16"
     assert catalog.is_downloaded(catalog.MODELS["bf16"])
     assert not catalog.is_downloaded(catalog.MODELS["q8_0"])
+
+
+@pytest.mark.asyncio
+async def test_engine_that_cannot_start_is_reported_once(env, monkeypatch):
+    s, *_ = env
+    await s.enable("q8_0")
+    await _settle(s)
+    await s.embedder.stop()
+    monkeypatch.setenv("FAKE_LLAMA_FAIL", "start")
+    assert await s.lookup("lease rent") == (None, "warming")
+    await s._warm_task
+    st = s.status()
+    assert st["phase"] == "error" and "stopped while starting" in st["error"]
+    # Searches now say it failed and don't start the engine again on every query.
+    assert await s.lookup("lease rent") == (None, "failed")
+    s.warm()
+    assert s._warm_task.done()
+    # Try again in Settings clears it.
+    monkeypatch.delenv("FAKE_LLAMA_FAIL")
+    await s.enable()
+    assert s.status()["phase"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_switch_goes_back_to_the_old_model(env):
+    s, _, _, gate = env
+    await s.enable("q8_0")
+    await _settle(s)
+    gate.clear()
+    await s.enable("bf16")
+    assert s.status()["phase"] == "downloading"
+    st = await s.cancel_download()
+    gate.set()
+    assert st["enabled"] and st["model"] == "q8_0" and st["phase"] == "ready"
+    await _settle(s)
+    assert len(s.matrix) == 40
+
+
+@pytest.mark.asyncio
+async def test_a_slow_query_is_finished_for_the_retry(env, monkeypatch):
+    s, *_ = env
+    await s.enable("q8_0")
+    await _settle(s)
+    real_embed = emb.Embedder.embed
+
+    async def slow(self, texts):
+        await asyncio.sleep(0.3)
+        return await real_embed(self, texts)
+
+    monkeypatch.setattr(emb.Embedder, "embed", slow)
+    monkeypatch.setattr(svc_mod, "QUERY_WAIT", 0.05)
+    assert await s.lookup("lease rent") == (None, "warming")
+    await asyncio.sleep(0.4)
+    hits, why = await s.lookup("lease rent")
+    assert why == "ok" and hits[0][0] == 100
+
+
+@pytest.mark.asyncio
+async def test_indexing_waits_while_a_search_is_waiting(env):
+    s, *_ = env
+    await s.enable("q8_0")
+    await _settle(s)
+    s._queries_idle.clear()
+    import sqlite3 as _sq
+
+    conn = _sq.connect(s.db_path)
+    conn.execute("UPDATE files SET extracted_text = 'a brand new invoice text here' WHERE id = 3")
+    conn.commit()
+    conn.close()
+    s.kick()
+    await asyncio.sleep(0.3)
+    assert s.status()["phase"] == "indexing" and s.status()["index"]["done"] == 39
+    s._queries_idle.set()
+    await s.wait_for_index()
+    assert s.status()["phase"] == "ready"

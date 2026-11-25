@@ -162,21 +162,26 @@ class Embedder:
                 timeout=httpx.Timeout(10.0, read=300.0),
             )
             deadline = time.monotonic() + START_TIMEOUT
-            while True:
-                if self._proc.poll() is not None:
-                    code = self._proc.returncode
-                    await self._stop_locked()
-                    raise EmbedderError(f"The search-by-meaning engine stopped while starting (exit code {code}).")
-                try:
-                    r = await self._client.get("/health")
-                    if r.status_code == 200 and r.json().get("status") == "ok":
-                        break
-                except (httpx.HTTPError, ValueError):
-                    pass
-                if time.monotonic() > deadline:
-                    await self._stop_locked()
-                    raise EmbedderError("The search-by-meaning engine took too long to start.")
-                await asyncio.sleep(0.2)
+            try:
+                while True:
+                    if self._proc.poll() is not None:
+                        code = self._proc.returncode
+                        await self._stop_locked()
+                        raise EmbedderError(f"The search-by-meaning engine stopped while starting (exit code {code}).")
+                    try:
+                        r = await self._client.get("/health")
+                        if r.status_code == 200 and r.json().get("status") == "ok":
+                            break
+                    except (httpx.HTTPError, ValueError):
+                        pass
+                    if time.monotonic() > deadline:
+                        await self._stop_locked()
+                        raise EmbedderError("The search-by-meaning engine took too long to start.")
+                    await asyncio.sleep(0.2)
+            except asyncio.CancelledError:
+                # Cancelled half-way (e.g. the app is closing): don't leave a helper with nothing to stop it.
+                await self._stop_locked()
+                raise
             self._last_used = time.monotonic()
             if self._idle_task is None or self._idle_task.done():
                 self._idle_task = asyncio.create_task(self._stop_when_idle())
@@ -247,7 +252,13 @@ class Embedder:
                 proc.kill()
                 await asyncio.to_thread(proc.wait)
         if proc is not None:
-            _pid_file().unlink(missing_ok=True)
+            # Another Embedder (after a model switch) may already have written its own pid there.
+            path = _pid_file()
+            try:
+                if path.read_text().strip() == str(proc.pid):
+                    path.unlink()
+            except (OSError, ValueError):
+                pass
         if self._log is not None:
             self._log.close()
             self._log = None
