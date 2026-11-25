@@ -70,7 +70,13 @@ DEFAULT_MODEL = "q8_0"
 
 
 def models_dir() -> Path:
-    path = utils.get_app_data_dir() / "models"
+    import os
+    import sys
+
+    # On Windows the app data folder is the roaming profile, which can be copied between computers
+    # at sign-in; a 300-560 MB model belongs in the local one.
+    local = os.environ.get("LOCALAPPDATA") if sys.platform == "win32" else None
+    path = (Path(local) / "TidyFlow" / "models") if local else utils.get_app_data_dir() / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -270,7 +270,7 @@ Turn on **Settings › Search by meaning** and search also finds files that are 
 - It's off until you turn it on. Then you pick a model to download: **Standard** (EmbeddingGemma 2, 8-bit, 310 MB, recommended) or **Full precision** (558 MB). Downloads resume if they're interrupted and are checked against a SHA-256 before use.
 - TidyFlow then builds a meaning index from the same text keyword search uses, one vector per file. A library of about 500 files with text takes about a minute on an Apple M4. After that, only files whose text changed are read again.
 - Files found by meaning are listed after the files that contain your words, under **Related by meaning**. Only files that clearly stand out are shown, so a search for something you don't have shows none. **Add all to a folder…** only takes the files with your words.
-- It runs on your computer: the model runs in a llama.cpp helper process that listens only on this machine with a fresh key, and stops after five idle minutes. **Remove model** deletes the model and the index.
+- It runs on your computer: the model runs in a llama.cpp helper process that listens only on this machine with a fresh key, and stops after five idle minutes. On Windows it runs on the CPU, and the model is kept in `%LOCALAPPDATA%\TidyFlow\models`. **Remove model** deletes the model and the index.
 - It reads the first few thousand characters of each file, like keyword search. Files with no text, like most photos, are still found by name.
 
 ## What makes it different

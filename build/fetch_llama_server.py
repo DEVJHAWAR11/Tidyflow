@@ -29,9 +29,10 @@ ASSETS = {
                           "82b00abc740160e1b9980e6cc79c117345fa34af058c80e6c0a69aa8ddccde75"),
     ("darwin", "x86_64"): ("llama-b12359-bin-macos-x64.tar.gz",
                            "25320d529077ef5a3d16e7b5da26438f221d88c8c0930a32b0c79457f5eede56"),
-    # Vulkan uses the GPU when its driver is there and falls back to the CPU when it isn't.
-    ("win32", "amd64"): ("llama-b12359-bin-win-vulkan-x64.zip",
-                         "e8d18c6e4210cca87e7307c2ea78363ac8d158e4e1397358ec96ab70b53a0d5e"),
+    # The CPU build, not Vulkan: GPU drivers often compute in float16, which this model can't use
+    # (it gives NaN or quietly wrong vectors), and a model this small is quick enough on the CPU.
+    ("win32", "amd64"): ("llama-b12359-bin-win-cpu-x64.zip",
+                         "837c1655e87df3b66989f4be33a792a1399c785bf259038dc75c900096683e69"),
     ("win32", "arm64"): ("llama-b12359-bin-win-cpu-arm64.zip",
                          "d27564c754478d2832789dfcebfc5ace018e36a224c41d810b7cbc1ba8243ec0"),
 }
@@ -93,7 +94,11 @@ def install(folder: Path) -> list[str]:
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True)
     if sys.platform == "win32":
-        names = ["llama-server.exe"] + sorted(p.name for p in folder.glob("*.dll"))
+        # Every DLL: ggml picks the ggml-cpu-*.dll that suits the processor at run time. The *-impl
+        # DLLs of llama.cpp's other tools aren't needed.
+        names = ["llama-server.exe"] + sorted(
+            p.name for p in folder.glob("*.dll") if not p.name.endswith("-impl.dll") or p.name == "llama-server-impl.dll"
+        )
     else:
         names = ["llama-server"] + _mac_libraries(folder, "llama-server")
     for name in names + ["LICENSE"]:
