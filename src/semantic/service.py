@@ -57,6 +57,9 @@ class SemanticService:
         self._queries_idle = asyncio.Event()
         self._queries_idle.set()
         self._query_busy = 0
+        # Files whose text the engine couldn't embed, as (row id, text hash): skipped until their
+        # text changes, so one bad file can't stop indexing every time.
+        self._unembeddable: set[tuple[int, str]] = set()
         # The model in use before a switch, to go back to if the new download is cancelled.
         self._switched_from: Optional[str] = None
         self._last_notify = 0.0
@@ -323,8 +326,10 @@ class SemanticService:
                 await asyncio.to_thread(vectors.delete_vectors, self.db_path, work.drop)
                 self.matrix.remove(work.drop)
             self.matrix.keep_only(work.wanted)
-            self.index_total = work.total
-            self.index_done = work.total - len(work.todo)
+            todo = [t for t in work.todo if (t[0], t[2]) not in self._unembeddable]
+            self.index_total = work.total - (len(work.todo) - len(todo))
+            self.index_done = self.index_total - len(todo)
+            work.todo = todo
             if not work.todo:
                 await asyncio.to_thread(_drop_other_models, self.db_path, key)
                 self._set("ready")
@@ -337,11 +342,11 @@ class SemanticService:
                 for start in range(0, len(work.todo), BATCH):
                     batch = work.todo[start:start + BATCH]
                     await self._queries_idle.wait()  # a search goes first
-                    vecs = await embedder.embed([document_text(text) for _, text, _ in batch])
-                    rows = [(row_id, h, v) for (row_id, _, h), v in zip(batch, vecs)]
+                    rows = await self._embed_batch(embedder, batch)
                     await asyncio.to_thread(vectors.save_vectors, self.db_path, key, rows)
                     self.matrix.upsert([(row_id, v) for row_id, _, v in rows])
-                    self.index_done += len(batch)
+                    self.index_done += len(rows)
+                    self.index_total -= len(batch) - len(rows)  # skipped files
                     await self._changed()
                     await asyncio.sleep(PAUSE_BETWEEN_BATCHES)
             await asyncio.to_thread(_drop_other_models, self.db_path, key)
@@ -357,6 +362,28 @@ class SemanticService:
             logger.exception("Indexing for search by meaning failed")
             self._set("error", f"Indexing failed: {e}")
             await self._changed(force=True)
+
+    async def _embed_batch(self, embedder: Embedder, batch: list[tuple[int, str, str]]) -> list[tuple[int, str, np.ndarray]]:
+        """Embed a batch; if it fails, embed its files one by one and skip the ones that fail."""
+        try:
+            vecs = await embedder.embed([document_text(text) for _, text, _ in batch])
+            return [(row_id, h, v) for (row_id, _, h), v in zip(batch, vecs)]
+        except EmbedderError:
+            if len(batch) == 1 and not embedder.running:
+                raise
+        rows = []
+        crashes = 0
+        for row_id, text, h in batch:
+            try:
+                rows.append((row_id, h, (await embedder.embed([document_text(text)]))[0]))
+            except EmbedderError as e:
+                if not embedder.running:
+                    crashes += 1
+                    if crashes >= 3:  # the engine itself is failing, not this file
+                        raise
+                logger.warning("Skipping file %s for search by meaning: %s", row_id, e)
+                self._unembeddable.add((row_id, h))
+        return rows
 
     # ------------------------------------------------------------------
     # Search

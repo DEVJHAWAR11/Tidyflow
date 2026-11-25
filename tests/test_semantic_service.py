@@ -295,3 +295,25 @@ async def test_indexing_waits_while_a_search_is_waiting(env):
     s._queries_idle.set()
     await s.wait_for_index()
     assert s.status()["phase"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_file_the_engine_rejects_is_skipped(env, monkeypatch):
+    s, db_path, _, _ = env
+    real_embed = emb.Embedder.embed
+
+    async def picky(self, texts):
+        if any("number 7 " in t for t in texts):
+            raise emb.EmbedderError("The search-by-meaning engine answered 500: bad input")
+        return await real_embed(self, texts)
+
+    monkeypatch.setattr(emb.Embedder, "embed", picky)
+    await s.enable("q8_0")
+    await _settle(s)
+    st = s.status()
+    assert st["phase"] == "ready", st
+    assert st["index"]["vectors"] == 39 and st["index"]["total"] == 39
+    # It isn't tried again on the next pass.
+    s.kick()
+    await s.wait_for_index()
+    assert s.status()["phase"] == "ready"
