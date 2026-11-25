@@ -57,16 +57,35 @@ def list_files(path: str) -> str:
         return f"Error: {e}"
 
 
+def _landing_path(source: str, destination: str) -> Path:
+    """Where a copy or move of ``source`` ends up: ``destination``, or inside it when it is a folder."""
+    dest = Path(destination)
+    return dest / Path(source).name if dest.is_dir() else dest
+
+
+def _remove_partial(path: Path) -> None:
+    """Take away a file this tool started writing but could not finish."""
+    try:
+        if path.is_file():
+            path.unlink()
+    except OSError:
+        pass
+
+
 @app.tool()
 def copy_file(source: str, destination: str) -> str:
-    """Copy a file from source to destination within allowed directories."""
+    """Copy a file from source to destination within allowed directories. An existing file is never replaced."""
     if not is_path_allowed(source) or not is_path_allowed(destination):
         return "Error: One or both paths are not in the allow-list"
+    target = _landing_path(source, destination)
+    if os.path.lexists(target):
+        return f"Error: {target} already exists"
     try:
-        Path(destination).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
         return "Success"
     except Exception as e:
+        _remove_partial(target)
         return f"Error: {e}"
 
 
@@ -85,14 +104,19 @@ def delete_file(path: str) -> str:
 
 @app.tool()
 def move_file(source: str, destination: str) -> str:
-    """Move a file within allowed directories."""
+    """Move a file within allowed directories. An existing file is never replaced."""
     if not is_path_allowed(source) or not is_path_allowed(destination):
         return "Error: One or both paths are not in the allow-list"
+    target = _landing_path(source, destination)
+    if os.path.lexists(target):
+        return f"Error: {target} already exists"
     try:
-        Path(destination).parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(source, destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(source, target)
         return "Success"
     except Exception as e:
+        if os.path.exists(source):  # the move didn't finish, so whatever reached the target is a partial copy
+            _remove_partial(target)
         return f"Error: {e}"
 
 
