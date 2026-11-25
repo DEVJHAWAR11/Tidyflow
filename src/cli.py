@@ -178,7 +178,10 @@ def apply(
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Host address"),
     port: int = typer.Option(8000, "--port", help="Port number"),
-    reload: bool = typer.Option(True, "--reload", help="Enable auto-reload on code changes"),
+    reload: bool = typer.Option(
+        False, "--reload/--no-reload",
+        help="Restart the server when a .py file under the current folder changes (for development)",
+    ),
 ):
     """Launch the TidyFlow FastAPI backend server."""
     console.print(f"[bold green]Launching TidyFlow API Server on http://{host}:{port}...[/bold green]")

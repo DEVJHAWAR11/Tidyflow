@@ -17,3 +17,13 @@ def test_cli_help():
     assert "inventory" in result.stdout
     assert "report" in result.stdout
     assert "apply" in result.stdout
+
+
+def test_serve_only_auto_reloads_when_asked(monkeypatch):
+    import src.cli as cli
+
+    seen = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *args, **kwargs: seen.append(kwargs["reload"]))
+    for args in (["serve"], ["serve", "--reload"], ["serve", "--no-reload"]):
+        assert runner.invoke(app, args).exit_code == 0
+    assert seen == [False, True, False]
