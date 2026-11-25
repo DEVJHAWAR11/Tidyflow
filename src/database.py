@@ -436,6 +436,7 @@ class DatabaseManager:
         folder: int | str | None = None,
         include_subfolders: bool = True,
         ids_only: bool = False,
+        meaning: list[tuple[int, float]] | None = None,
     ) -> dict:
         """One page of files matching ``query``, best first, with counts for the filters.
 
@@ -449,13 +450,20 @@ class DatabaseManager:
         above the text inside a file. Names are also matched anywhere inside a word, and a search
         that finds nothing is tried again with the closest spelling found in the index.
 
-        Returns ``{"results", "total", "facets", "corrected"}``. ``facets`` counts every match
-        before the filters; ``corrected`` is the query that was searched instead, if any.
+        ``meaning`` is ``(row id, similarity)`` for files that match by meaning (see
+        ``src/semantic``). Those not already found by their words come after every word match, in
+        that order, marked ``"match": "meaning"``; filters, counts and paging treat them like any
+        other match. ``ids_only`` leaves them out, so acting on "all matches" only takes files that
+        contain the words.
+
+        Returns ``{"results", "total", "facets", "corrected", "meaning_total"}``. ``facets`` counts
+        every match before the filters; ``corrected`` is the query that was searched instead, if
+        any; ``meaning_total`` is how many of ``total`` matched by meaning alone.
         Snippets are HTML-escaped and wrap matches in ``<mark>``.
         """
         clean_query = query.strip()
         empty = {
-            "results": [], "total": 0, "corrected": None,
+            "results": [], "total": 0, "corrected": None, "meaning_total": 0,
             "facets": {"categories": {}, "kinds": {}, "organized": 0, "unorganized": 0, "folders": [], "unsorted": 0},
         }
         if not clean_query:
@@ -512,6 +520,22 @@ class DatabaseManager:
                         run_fts(fixed)
                         if matches:
                             used_tokens, corrected = fixed, " ".join(fixed)
+
+                # Files that match by meaning but not by their words come after every word match.
+                by_meaning: dict[int, float] = {}
+                extra = [(rid, score) for rid, score in (meaning or []) if rid not in matches]
+                if extra:
+                    marks = ",".join("?" * len(extra))
+                    found = {
+                        r["id"]: r
+                        for r in conn.execute(
+                            f"SELECT {light} FROM files WHERE id IN ({marks}) AND {_SEARCHABLE}", [r for r, _ in extra]
+                        )
+                    }
+                    for rid, score in extra:
+                        if rid in found:
+                            matches[rid] = found[rid]
+                            by_meaning[rid] = score
 
                 # TidyFlow folders: the tree, and which folders each match is in.
                 tree = {
@@ -585,11 +609,14 @@ class DatabaseManager:
                     f.pop("parent_id", None)
                 facets["unsorted"] = unsorted
                 if ids_only:
-                    return {"ids": kept[:5000], "total": len(kept)}
+                    words = [rid for rid in kept if rid not in by_meaning]
+                    return {"ids": words[:5000], "total": len(words)}
+                meaning_total = sum(1 for rid in kept if rid in by_meaning)
 
                 page_ids = kept[offset:offset + limit]
                 if not page_ids:
-                    return {"results": [], "total": len(kept), "facets": facets, "corrected": corrected}
+                    return {"results": [], "total": len(kept), "facets": facets, "corrected": corrected,
+                            "meaning_total": meaning_total}
 
                 marks = ",".join("?" * len(page_ids))
                 rows = {
@@ -621,9 +648,16 @@ class DatabaseManager:
                         continue
                     text = d.pop("extracted_text") or ""
                     raw = snippets.get(row_id)
-                    if raw is not None and _MARK_OPEN in raw:
+                    if row_id in by_meaning:
+                        # No words to point at: show how the file's text begins.
+                        d["match"] = "meaning"
+                        d["meaning_score"] = round(by_meaning[row_id], 4)
+                        d["snippet"] = _make_like_snippet(" ".join(text.split()), "", max_len=200)
+                    elif raw is not None and _MARK_OPEN in raw:
+                        d["match"] = "words"
                         d["snippet"] = _marked_html(raw)
                     else:
+                        d["match"] = "words"
                         d["snippet"] = _make_like_snippet(text, " ".join(used_tokens) or clean_query)
                     d["has_text"] = bool(text.strip())
                     d["folders"] = sorted(
@@ -640,7 +674,8 @@ class DatabaseManager:
                         key=lambda f: f["label"].lower(),
                     )
                     results.append(d)
-                return {"results": results, "total": len(kept), "facets": facets, "corrected": corrected}
+                return {"results": results, "total": len(kept), "facets": facets, "corrected": corrected,
+                        "meaning_total": meaning_total}
             finally:
                 conn.close()
 
