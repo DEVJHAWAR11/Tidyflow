@@ -22,10 +22,26 @@ _SEARCHABLE = "COALESCE(files.status, '') != 'skipped'"
 Z_GATE = 2.0
 MIN_SPREAD = 0.02
 NEAR_BEST = 0.10
+# ...and it must also be similar enough on its own. Standing out from a library that holds nothing
+# relevant isn't a match. Measured with EmbeddingGemma 2 on a real library: related files scored
+# 0.67 to 0.85, and the best unrelated ones 0.63 to 0.66.
+MIN_SCORE = 0.67
 # With too few files for a spread to mean anything, use a plain similarity floor instead.
 SMALL_LIBRARY = 20
 SMALL_LIBRARY_FLOOR = 0.68
 MAX_HITS = 50
+# Text with fewer real words than this (an icon's OCR of "csv", a lone page number) says nothing
+# about what a file is about, and its vector ends up close to every query. Those files are left out.
+MIN_WORDS = 3
+# ...or this many letters in all, for scripts written without spaces (Chinese, Japanese, Thai).
+MIN_LETTERS = 10
+
+
+def worth_embedding(text: str | None) -> bool:
+    if not text:
+        return False
+    letters = [sum(ch.isalpha() for ch in token) for token in text.split()]
+    return sum(n >= 2 for n in letters) >= MIN_WORDS or sum(letters) >= MIN_LETTERS
 
 
 def text_hash(text: str) -> str:
@@ -50,7 +66,7 @@ def gate(scores: np.ndarray, *, max_hits: int = MAX_HITS) -> list[int]:
         keep = np.where(scores >= SMALL_LIBRARY_FLOOR)[0]
     else:
         z = (scores - scores.mean()) / max(float(scores.std()), MIN_SPREAD)
-        keep = np.where((z >= Z_GATE) & (scores >= best - NEAR_BEST))[0]
+        keep = np.where((z >= Z_GATE) & (scores >= best - NEAR_BEST) & (scores >= MIN_SCORE))[0]
     order = keep[np.argsort(-scores[keep], kind="stable")]
     return [int(i) for i in order[:max_hits]]
 
@@ -78,6 +94,8 @@ def plan_work(db_path: str, model_key: str) -> Work:
             f"SELECT id, extracted_text FROM files WHERE {_SEARCHABLE} "
             "AND extracted_text IS NOT NULL AND trim(extracted_text) != '' ORDER BY id DESC"
         ):
+            if not worth_embedding(text):
+                continue
             wanted.add(row_id)
             h = text_hash(text)
             if have.get(row_id) != (model_key, h):

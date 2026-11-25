@@ -85,3 +85,17 @@ def test_disable_and_remove(setup):
     body = client.delete("/semantic").json()
     assert body["enabled"] is False and body["freed_bytes"] == 0
     assert client.post("/semantic/warm").json() == {"phase": "off"}
+
+
+def test_meaning_count_drops_files_gone_from_disk(setup, monkeypatch):
+    db, service, home = setup
+    ids = _ids(db)
+    (home / "tenancy.pdf").unlink()
+
+    async def lookup(q):
+        return [(ids["tenancy.pdf"], 0.81)], "ok"
+
+    monkeypatch.setattr(service, "lookup", lookup)
+    res = TestClient(api.app).get("/search", params={"q": "rent"}).json()
+    assert [r["name"] for r in res["results"]] == ["rent-receipt.pdf"]
+    assert res["total"] == 1 and res["meaning_total"] == 0

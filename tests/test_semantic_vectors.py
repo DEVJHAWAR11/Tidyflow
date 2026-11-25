@@ -26,6 +26,8 @@ def db_path(tmp_path):
             (3, "/c.png", "", "indexed"),
             (4, "/d.txt", "skipped text", "skipped"),
             (5, "/e.txt", None, None),
+            (6, "/icon.png", "csv", "indexed"),
+            (7, "/page.png", "12 / 40 ok", "indexed"),
         ],
     )
     conn.commit()
@@ -47,6 +49,13 @@ def test_gate_keeps_only_outliers_near_the_best():
     assert hits[:2] == [7, 42]
     assert 99 not in hits  # stands out, but is more than 0.10 below the best
     assert len(hits) < 10
+
+
+def test_gate_needs_a_minimum_similarity():
+    rng = np.random.default_rng(1)
+    scores = rng.normal(0.50, 0.03, 500)
+    scores[[3, 4]] = [0.66, 0.65]  # stand out, but nothing in the library is really related
+    assert vx.gate(scores) == []
 
 
 def test_gate_flat_scores_match_nothing():
@@ -112,3 +121,20 @@ def test_matrix_load_search_upsert_remove(db_path):
 def test_float16_round_trip():
     v = unit(0.3, 0.4, 0.5)
     assert np.allclose(vx.from_blob(vx.to_blob(v)), v, atol=1e-3)
+
+
+def test_worth_embedding_needs_a_few_real_words():
+    assert vx.worth_embedding("no. cash bill date.")
+    assert vx.worth_embedding("बिजली का बिल जमा")  # any script counts
+    assert vx.worth_embedding("火车票预订确认单请在出发前打印")  # no spaces
+    assert not vx.worth_embedding("csv")
+    assert not vx.worth_embedding("12 / 40 ok")
+    assert not vx.worth_embedding("")
+    assert not vx.worth_embedding(None)
+
+
+def test_plan_work_skips_and_drops_text_too_thin_to_mean_anything(db_path):
+    vx.save_vectors(db_path, "m1", [(6, "h", unit(1))])
+    work = vx.plan_work(db_path, "m1")
+    assert sorted(r[0] for r in work.todo) == [1, 2]
+    assert work.drop == [6]

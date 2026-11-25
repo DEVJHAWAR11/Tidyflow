@@ -47,6 +47,8 @@ async def env(isolated_app_data, monkeypatch, tmp_path):
             return await real(choice, on_progress, client=c)
 
     monkeypatch.setattr(download, "download_model", fake_download)
+    # The fake server's word-hash vectors aren't on the real model's similarity scale.
+    monkeypatch.setattr(vectors, "MIN_SCORE", 0.3)
 
     db_path = str(tmp_path / "t.db")
     DatabaseManager(db_path=db_path)

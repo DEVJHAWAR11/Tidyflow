@@ -1359,6 +1359,7 @@ async def search_files(
         folder=_folder_param(folder), include_subfolders=subfolders, meaning=hits,
     )
     live, gone = [], []
+    gone_by_meaning = 0
     for r in page["results"]:
         # Point at wherever the file is now (organized copy, or back at its original place after an
         # undo) and drop rows whose file is gone everywhere.
@@ -1369,6 +1370,7 @@ async def search_files(
         current = _current_path(row)
         if current is None:
             gone.append(row["id"])
+            gone_by_meaning += row.get("match") == "meaning"
             continue
         row["current_path"] = str(current)
         row["name"] = current.name
@@ -1391,7 +1393,7 @@ async def search_files(
         "corrected": page.get("corrected"),
         # "ok", "off", "short", "warming" (ask again shortly) or "failed": see SemanticService.lookup.
         "meaning": meaning_state,
-        "meaning_total": page.get("meaning_total", 0),
+        "meaning_total": max(0, page.get("meaning_total", 0) - gone_by_meaning),
     }
 
 
