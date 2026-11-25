@@ -86,6 +86,11 @@ def build_native_ocr() -> None:
         print("swiftc not found; the app will fall back to Python OCR. Run `xcode-select --install` to fix.")
 
 
+def fetch_llama_server() -> None:
+    step("Fetching llama-server for search by meaning")
+    run([sys.executable, str(BUILD_DIR / "fetch_llama_server.py")])
+
+
 def package_app() -> None:
     step("Packaging with PyInstaller")
     run([
@@ -129,6 +134,7 @@ def main() -> None:
             install_python_deps()
         build_frontend()
         build_native_ocr()
+        fetch_llama_server()
         package_app()
         if IS_MAC:
             outputs = [DIST_DIR / "TidyFlow.app", make_dmg()]
