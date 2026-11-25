@@ -146,3 +146,65 @@ async def test_a_helper_left_by_a_force_quit_is_stopped(fake_server, isolated_ap
     finally:
         orphan.kill()
         orphan.wait()
+
+
+@pytest.mark.asyncio
+async def test_key_is_not_on_the_command_line(fake_server, isolated_app_data):
+    import subprocess
+
+    e = emb.Embedder(fake_server)
+    try:
+        await e.start()
+        cmd = subprocess.run(["ps", "-p", str(e._proc.pid), "-o", "args="], capture_output=True, text=True).stdout
+        assert e._key not in cmd and "--api-key-file" in cmd
+        key_file = isolated_app_data / "llama-server.key"
+        assert key_file.read_text().strip() == e._key
+        assert key_file.stat().st_mode & 0o077 == 0
+        owner = (isolated_app_data / "llama-server.pid").read_text().split()
+        assert owner == [str(e._proc.pid), str(__import__("os").getpid())]
+    finally:
+        await e.stop()
+
+
+def test_a_helper_of_another_open_tidyflow_is_left_alone(isolated_app_data, tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import time
+
+    # A real program named llama-server (a copied system binary is killed by macOS on launch).
+    cc = shutil.which("cc")
+    if cc is None:
+        pytest.skip("needs a C compiler")
+    src = tmp_path / "wait.c"
+    src.write_text("#include <unistd.h>\nint main(void){sleep(30);return 0;}\n")
+    fake = tmp_path / "llama-server"
+    subprocess.run([cc, str(src), "-o", str(fake)], check=True)
+    helper = subprocess.Popen([str(fake)])
+    other_app = subprocess.Popen(["/bin/sleep", "30"])  # stands in for another running TidyFlow
+    try:
+        (isolated_app_data / "llama-server.pid").write_text(f"{helper.pid} {other_app.pid}")
+        emb.kill_stale_helper()
+        time.sleep(0.2)
+        assert helper.poll() is None
+        # Once that TidyFlow is gone, its helper is a leftover and is stopped.
+        other_app.kill()
+        other_app.wait()
+        emb.kill_stale_helper()
+        assert helper.wait(timeout=5) == -15  # stopped by us, with SIGTERM
+        assert not (isolated_app_data / "llama-server.pid").exists()
+    finally:
+        for proc in (helper, other_app):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_helpers_are_stopped_when_the_app_exits(fake_server, isolated_app_data):
+    e = emb.Embedder(fake_server)
+    await e.start()
+    proc = e._proc
+    emb._stop_helpers_at_exit()  # what atexit runs
+    assert proc.poll() is not None
+    await e.stop()

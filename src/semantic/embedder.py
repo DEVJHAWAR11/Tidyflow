@@ -9,6 +9,7 @@ It is started when indexing or searching needs it and stops after a few idle min
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import os
 import secrets
@@ -76,27 +77,76 @@ def _pid_file() -> Path:
     return utils.get_app_data_dir() / "llama-server.pid"
 
 
+def _key_file() -> Path:
+    return utils.get_app_data_dir() / "llama-server.key"
+
+
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if sys.platform == "win32" else {}
+
+
+def _process_name(pid: int) -> str:
+    """The program name of a running process, or "" if there is none."""
+    if sys.platform == "win32":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=10, **_NO_WINDOW).stdout
+        return out.split(",")[0].strip('" \r\n') if f'"{pid}"' in out else ""
+    return subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True,
+                          timeout=10).stdout.strip()
+
+
 def kill_stale_helper() -> None:
-    """Stop a helper left running by a TidyFlow that quit without stopping it."""
+    """Stop a helper left running by a TidyFlow that was force-quit or crashed.
+
+    The pid file holds the helper's pid and the pid of the TidyFlow that started it. A helper whose
+    TidyFlow is still running belongs to another open copy of the app and is left alone.
+    """
     path = _pid_file()
     try:
-        pid = int(path.read_text().strip())
-    except (OSError, ValueError):
+        parts = path.read_text().split()
+        helper = int(parts[0])
+        owner = int(parts[1]) if len(parts) > 1 else None
+    except (OSError, ValueError, IndexError):
         return
-    path.unlink(missing_ok=True)
     try:
+        if owner == os.getpid():
+            return
+        if owner is not None and _process_name(owner):
+            return  # its TidyFlow is still open
+        path.unlink(missing_ok=True)
+        if not _process_name(helper).lower().endswith(EXE.lower()):
+            return  # that pid is now some other program
         if sys.platform == "win32":
-            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                                 capture_output=True, text=True, timeout=10).stdout
-            if EXE.lower() in out.lower():
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10)
+            subprocess.run(["taskkill", "/PID", str(helper), "/F"], capture_output=True, timeout=10, **_NO_WINDOW)
         else:
-            name = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True,
-                                  timeout=10).stdout.strip()
-            if name.endswith("llama-server"):
-                os.kill(pid, 15)
+            os.kill(helper, 15)
     except Exception as e:  # never block startup on this
         logger.debug("Could not check for a stale llama-server: %s", e)
+
+
+# Helpers started by this process, stopped when it exits even if the server's shutdown never ran
+# (the desktop window closes the app after a few seconds whether or not the server has stopped).
+_LIVE: set[subprocess.Popen] = set()
+
+
+@atexit.register
+def _stop_helpers_at_exit() -> None:
+    for proc in list(_LIVE):
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    _LIVE.clear()
+
+
+def _child_env() -> dict:
+    env = dict(os.environ)
+    if sys.platform == "win32" and hasattr(sys, "_MEIPASS"):
+        # The helper sits in a subfolder of the packaged app; let it find the Visual C++ runtime
+        # DLLs that PyInstaller placed in the app's own folder.
+        env["PATH"] = sys._MEIPASS + os.pathsep + env.get("PATH", "")
+    return env
 
 
 class Embedder:
@@ -133,28 +183,35 @@ class Embedder:
                 raise EmbedderError("The search-by-meaning engine (llama-server) isn't installed with this copy of TidyFlow.")
             if not self.model_file.is_file():
                 raise EmbedderError("The model file is missing. Download it again in Settings.")
-            kill_stale_helper()
+            await asyncio.to_thread(kill_stale_helper)
             port = _free_port()
             self._key = secrets.token_urlsafe(24)
             self._base = f"http://127.0.0.1:{port}"
+            # The key goes in a file only this user can read, not on the command line where any
+            # program on the computer could see it.
+            key_file = _key_file()
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(self._key + "\n")
             log_dir = work_data_dir() / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             self._log = open(log_dir / "llama-server.log", "w", encoding="utf-8", errors="replace")
             args = [
                 str(binary), "-m", str(self.model_file), "--embeddings",
-                "--host", "127.0.0.1", "--port", str(port), "--api-key", self._key,
+                "--host", "127.0.0.1", "--port", str(port), "--api-key-file", str(key_file),
                 "--no-webui", "--offline",
                 "-c", str(CTX_TOKENS), "-np", "1", "-b", str(CTX_TOKENS), "-ub", str(CTX_TOKENS),
             ]
-            kwargs: dict = {"stdout": self._log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
-            if sys.platform == "win32":
-                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             try:
-                self._proc = subprocess.Popen(args, **kwargs)
+                self._proc = subprocess.Popen(
+                    args, stdout=self._log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                    env=_child_env(), **_NO_WINDOW,
+                )
             except OSError as e:
                 raise EmbedderError(f"Couldn't start the search-by-meaning engine: {e}") from e
+            _LIVE.add(self._proc)
             try:
-                _pid_file().write_text(str(self._proc.pid))
+                _pid_file().write_text(f"{self._proc.pid} {os.getpid()}")
             except OSError:
                 pass
             self._client = httpx.AsyncClient(
@@ -252,12 +309,13 @@ class Embedder:
                 proc.kill()
                 await asyncio.to_thread(proc.wait)
         if proc is not None:
+            _LIVE.discard(proc)
             # Another Embedder (after a model switch) may already have written its own pid there.
             path = _pid_file()
             try:
-                if path.read_text().strip() == str(proc.pid):
+                if path.read_text().split()[0] == str(proc.pid):
                     path.unlink()
-            except (OSError, ValueError):
+            except (OSError, ValueError, IndexError):
                 pass
         if self._log is not None:
             self._log.close()

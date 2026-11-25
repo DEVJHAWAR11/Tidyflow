@@ -49,7 +49,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _authorized(self):
-        return self.headers.get("Authorization") == f"Bearer {arg('--api-key')}"
+        key = arg("--api-key")
+        if arg("--api-key-file"):
+            with open(arg("--api-key-file")) as f:
+                key = f.read().strip()
+        return self.headers.get("Authorization") == f"Bearer {key}"
 
     def do_GET(self):
         if self.path == "/health":
