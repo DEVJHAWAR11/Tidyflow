@@ -60,12 +60,15 @@ from .main_loop import PipelineCancelledException, Processor, load_records_jsonl
 from .mcp_server import set_allowed_directories
 from .models import FileRecord, ReviewDecision
 from .scanner import scan_files
+from .semantic.service import SemanticService
 from .utils import get_app_data_dir, get_resource_path, work_data_dir, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
 db = DatabaseManager()
 processor = Processor(max_concurrent=5, db=db)
+# Search by meaning; its status changes go to the app as "semantic" events.
+semantic = SemanticService(db.db_path, notify=lambda status: broadcast_event("semantic", status))
 clients: set[asyncio.Queue] = set()
 active_cancel_event: Optional[threading.Event] = None
 
@@ -168,8 +171,13 @@ async def lifespan(app: FastAPI):
 
     _load_latest_run()
     asyncio.get_running_loop().run_in_executor(None, verify_llm_key)
+    try:
+        await semantic.startup()
+    except Exception as e:  # search by words must keep working whatever happens here
+        logger.warning("Search by meaning could not start: %s", e)
 
     yield
+    await semantic.shutdown()
     await processor.stop()
     await db.stop()
 
@@ -965,6 +973,7 @@ async def run_pipeline_endpoint(req: PipelineRunRequest):
         "total_scanned": summary.total_scanned,
         "output_dir": str(out_path),
     })
+    semantic.kick()  # embed the text this run found
 
     return {
         "status": "success",
@@ -1343,10 +1352,11 @@ async def search_files(
     or ``unsorted`` for files in no folder.
     """
     if not q or not q.strip():
-        return {"results": [], "total": 0, "facets": None, "corrected": None}
+        return {"results": [], "total": 0, "facets": None, "corrected": None, "meaning": "off", "meaning_total": 0}
+    hits, meaning_state = await semantic.lookup(q)
     page = await db.search_page(
         q.strip(), limit=limit, offset=offset, category=category or None, kind=kind or None, organized=organized,
-        folder=_folder_param(folder), include_subfolders=subfolders,
+        folder=_folder_param(folder), include_subfolders=subfolders, meaning=hits,
     )
     live, gone = [], []
     for r in page["results"]:
@@ -1379,6 +1389,9 @@ async def search_files(
         "total": max(page.get("total", len(live)) - len(gone), len(live)),
         "facets": page.get("facets"),
         "corrected": page.get("corrected"),
+        # "ok", "off", "short", "warming" (ask again shortly) or "failed": see SemanticService.lookup.
+        "meaning": meaning_state,
+        "meaning_total": page.get("meaning_total", 0),
     }
 
 
@@ -1663,6 +1676,7 @@ async def library_suggest_new(req: SuggestNewRequest):
                 cancellation_token=cancel, only_paths=paths,
             )
             records.extend(found)
+        semantic.kick()
     except PipelineCancelledException:
         return {"status": "cancelled", "files": [], "folders": []}
     except Exception as e:
@@ -1792,6 +1806,56 @@ async def library_history():
 @app.post("/library/undo")
 async def library_undo():
     return await _library_action(library_ops.undo_last, touches_disk=True)
+
+
+class SemanticEnableRequest(BaseModel):
+    model: Optional[str] = None
+
+
+@app.get("/semantic/status")
+async def semantic_status():
+    """Search by meaning: on or off, the models and which is downloaded, and download or indexing progress."""
+    return semantic.status()
+
+
+@app.post("/semantic/enable")
+async def semantic_enable(req: SemanticEnableRequest):
+    """Turn search by meaning on with a model, downloading it first if needed."""
+    try:
+        return await semantic.enable(req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.post("/semantic/disable")
+async def semantic_disable():
+    """Turn it off; the model and the index are kept."""
+    return await semantic.disable()
+
+
+@app.post("/semantic/cancel")
+async def semantic_cancel():
+    """Stop a download; what was fetched is kept and the next download carries on from it."""
+    return await semantic.cancel_download()
+
+
+@app.post("/semantic/retry")
+async def semantic_retry():
+    """Try again after an error."""
+    return await semantic.enable()
+
+
+@app.delete("/semantic")
+async def semantic_remove():
+    """Turn it off and delete the downloaded model and every meaning vector."""
+    return await semantic.remove()
+
+
+@app.post("/semantic/warm")
+async def semantic_warm():
+    """Start the engine before the first search (the Search page calls this when it opens)."""
+    semantic.warm()
+    return {"phase": semantic.phase}
 
 
 @app.get("/search/stats")
