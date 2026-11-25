@@ -78,3 +78,12 @@ async def test_filters_facets_and_paging_include_meaning_hits(db):
 async def test_select_all_leaves_meaning_hits_out(db):
     ids = await db.search_page("rent", meaning=[(2, 0.8), (3, 0.7)], ids_only=True)
     assert ids == {"ids": [1], "total": 1}
+
+
+@pytest.mark.asyncio
+async def test_meaning_hits_take_the_place_of_a_spelling_guess(db):
+    guessed = await db.search_page("rentt")
+    assert guessed["corrected"] == "rent"
+    page = await db.search_page("rentt", meaning=[(2, 0.8)])
+    assert page["corrected"] is None
+    assert [r["id"] for r in page["results"]] == [2]

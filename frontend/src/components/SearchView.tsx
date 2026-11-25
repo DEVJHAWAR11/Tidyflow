@@ -247,11 +247,17 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
 
   // The search-by-meaning engine was still starting: search again shortly so its results appear.
   const warmingTries = useRef(0);
+  const [warmingGaveUp, setWarmingGaveUp] = useState(false);
   useEffect(() => {
     warmingTries.current = 0;
+    setWarmingGaveUp(false);
   }, [query, filters]);
   useEffect(() => {
-    if (page?.meaning !== "warming" || warmingTries.current >= WARMING_RETRIES) return;
+    if (page?.meaning !== "warming") return;
+    if (warmingTries.current >= WARMING_RETRIES) {
+      setWarmingGaveUp(true); // stop saying related files are coming
+      return;
+    }
     // Never swap the list under an open preview, or drop rows "Show more" loaded: meaning results
     // come after every word match, so later pages pick them up anyway.
     if (previewIndex !== null || page.results.length > PAGE_SIZE) return;
@@ -703,7 +709,9 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                   {meaningTotal > 0 && (
                     <span className="text-tf-meaning"> · {meaningTotal.toLocaleString()} related by meaning</span>
                   )}
-                  {page!.meaning === "warming" && <span className="text-tf-faint"> · finding related files…</span>}
+                  {page!.meaning === "warming" && !warmingGaveUp && (
+                    <span className="text-tf-faint"> · finding related files…</span>
+                  )}
                   {hasFilters && (
                     <button
                       type="button"

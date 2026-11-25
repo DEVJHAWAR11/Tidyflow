@@ -514,7 +514,9 @@ class DatabaseManager:
                 run_like(("path", "new_path", "suggested_filename"))
                 if not matches:
                     run_like(("extracted_text", "category"))
-                if not matches and tokens:
+                # A guessed spelling is only worth showing when nothing else was found: files that
+                # match by meaning are better than files matching a word nobody typed.
+                if not matches and tokens and not meaning:
                     fixed = [_closest_word(conn, t) or t for t in tokens]
                     if fixed != [t.lower() for t in tokens]:
                         run_fts(fixed)
