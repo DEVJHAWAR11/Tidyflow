@@ -155,6 +155,8 @@ class SemanticService:
         catalog.save_prefs(enabled=True, model=model)
         choice = catalog.MODELS[model]
         if switching:
+            # A download of the other model would otherwise keep this one from starting.
+            await self._cancel_download()
             await self._cancel_index()
             self.matrix.clear()
             self._queries.clear()

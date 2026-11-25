@@ -205,3 +205,18 @@ async def test_missing_engine_is_reported(env, monkeypatch):
     await _settle(s)
     st = s.status()
     assert st["phase"] == "error" and "isn't installed" in st["error"]
+
+
+@pytest.mark.asyncio
+async def test_switching_model_during_a_download(env):
+    s, _, _, gate = env
+    gate.clear()
+    await s.enable("q8_0")
+    assert s.status()["phase"] == "downloading"
+    await s.enable("bf16")
+    gate.set()
+    await _settle(s)
+    st = s.status()
+    assert st["phase"] == "ready" and st["model"] == "bf16"
+    assert catalog.is_downloaded(catalog.MODELS["bf16"])
+    assert not catalog.is_downloaded(catalog.MODELS["q8_0"])
