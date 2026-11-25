@@ -11,6 +11,7 @@ import { FolderGlyph } from "./library/FolderGlyph";
 import { indexFolders } from "./library/FolderTree";
 import { FolderPickerDialog } from "./library/FolderPickerDialog";
 import { fetchFolders, libraryActions, type FolderKey, type LibraryFolder } from "./library/libraryApi";
+import { semanticApi } from "./semanticApi";
 
 const isMac = typeof navigator !== "undefined" && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent);
 const FINDER = isMac ? "Finder" : "File Explorer";
@@ -18,6 +19,9 @@ const PAGE_SIZE = 30;
 const TYPING_PAUSE_MS = 160;
 const RECENTS_KEY = "tidyflow_recent_searches";
 const STATE_KEY = "tidyflow_search_state";
+// While the search-by-meaning engine starts, ask again this often, this many times.
+const WARMING_RETRY_MS = 1500;
+const WARMING_RETRIES = 10;
 
 type Kind = "documents" | "images" | "sheets" | "slides" | "media" | "archives" | "other";
 const KIND_LABELS: Record<Kind, string> = {
@@ -57,6 +61,10 @@ interface SearchPage {
   total: number;
   facets: Facets | null;
   corrected: string | null;
+  /** Whether files that match by meaning were added: "ok", "off", "short", "warming" or "failed". */
+  meaning?: "ok" | "off" | "short" | "warming" | "failed";
+  /** How many of `total` match by meaning only; they come after every word match. */
+  meaning_total?: number;
 }
 
 interface Stats {
@@ -189,6 +197,9 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
   const firstRun = useRef(true);
 
   const results = page?.results ?? [];
+  const meaningTotal = page?.meaning_total ?? 0;
+  // "Add all to a folder" only takes files that contain the words, not ones related by meaning.
+  const wordTotal = Math.max(0, (page?.total ?? 0) - meaningTotal);
   const facets = page?.facets ?? null;
   const hasFilters = filters.kind !== null || filters.folder !== null;
   const words = useMemo(() => ((page?.corrected || searched).match(/[\p{L}\p{N}_]+/gu) ?? []), [page?.corrected, searched]);
@@ -234,6 +245,20 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
     return () => clearTimeout(timer);
   }, [query, filters, fetchPage, refreshTick]);
 
+  // The search-by-meaning engine was still starting: search again shortly so its results appear.
+  const warmingTries = useRef(0);
+  useEffect(() => {
+    warmingTries.current = 0;
+  }, [query, filters]);
+  useEffect(() => {
+    if (page?.meaning !== "warming" || warmingTries.current >= WARMING_RETRIES) return;
+    const timer = setTimeout(() => {
+      warmingTries.current += 1;
+      setRefreshTick((t) => t + 1);
+    }, WARMING_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [page]);
+
   const loadFolders = useCallback(() => {
     fetchFolders()
       .then((lib) => setFolders(lib.folders))
@@ -243,6 +268,7 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
   useEffect(() => {
     inputRef.current?.focus();
     loadFolders();
+    semanticApi.warm(); // start the search-by-meaning engine, if it's on, before the first search
     fetch(`${API_BASE}/search/stats`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setStats)
@@ -662,7 +688,13 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                 </>
               ) : (
                 <>
-                  {page!.total.toLocaleString()} {page!.total === 1 ? "result" : "results"}
+                  {wordTotal === 0 && meaningTotal > 0
+                    ? "No files with these words"
+                    : `${wordTotal.toLocaleString()} ${wordTotal === 1 ? "result" : "results"}`}
+                  {meaningTotal > 0 && (
+                    <span className="text-tf-meaning"> · {meaningTotal.toLocaleString()} related by meaning</span>
+                  )}
+                  {page!.meaning === "warming" && <span className="text-tf-faint"> · finding related files…</span>}
                   {hasFilters && (
                     <button
                       type="button"
@@ -680,7 +712,7 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                 <Kbd>↑</Kbd>
                 <Kbd>↓</Kbd> move <Kbd>↵</Kbd> open <Kbd>Space</Kbd> preview
               </span>
-              {!page!.corrected && (
+              {!page!.corrected && wordTotal > 0 && (
                 <button
                   type="button"
                   onClick={() => {
@@ -690,7 +722,7 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                   className="inline-flex items-center gap-1.5 h-7 px-2 rounded-[7px] text-tf-ink-2 hover:text-tf-ink hover:bg-tf-surface-2 cursor-pointer whitespace-nowrap"
                 >
                   <FolderPlus size={14} strokeWidth={1.75} />
-                  {page!.total === 1 ? "Add to a folder…" : `Add all ${page!.total.toLocaleString()} to a folder…`}
+                  {wordTotal === 1 ? "Add to a folder…" : `Add all ${wordTotal.toLocaleString()} to a folder…`}
                 </button>
               )}
             </span>
@@ -703,10 +735,20 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
               const id = String(item.id);
               const did = done && done.id === id ? done.what : null;
               const meta = [item.file_size_bytes ? formatBytes(item.file_size_bytes) : "", formatDate(item.modified)].filter(Boolean);
+              const byMeaning = item.match === "meaning";
+              const firstByMeaning = byMeaning && (i === 0 || results[i - 1].match !== "meaning");
 
               return (
+                <React.Fragment key={id}>
+                {firstByMeaning && (
+                  <div role="presentation" className="px-4 pt-3 pb-2 bg-tf-surface-2/40 flex items-baseline justify-between gap-3">
+                    <span className="text-[11.5px] font-medium uppercase tracking-[0.06em] text-tf-meaning">
+                      Related by meaning
+                    </span>
+                    <span className="text-[12px] text-tf-faint">Files about the same thing, without the words you typed</span>
+                  </div>
+                )}
                 <div
-                  key={id}
                   ref={(el) => {
                     rowRefs.current[i] = el;
                   }}
@@ -730,6 +772,14 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                       <span className="text-[13.5px] font-medium text-tf-ink truncate">
                         <Highlighted text={name} words={words} />
                       </span>
+                      {byMeaning && (
+                        <span
+                          className="shrink-0 text-[11px] font-medium px-1.5 py-[1px] rounded-full bg-tf-meaning-soft text-tf-meaning"
+                          title="Found by meaning: this file doesn't contain the words you typed"
+                        >
+                          Meaning
+                        </span>
+                      )}
                       {did === "open" && <span className="shrink-0 text-[11.5px] text-tf-success">Opened</span>}
                     </div>
 
@@ -786,6 +836,7 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                     </RowButton>
                   </div>
                 </div>
+                </React.Fragment>
               );
             })}
           </Card>
@@ -805,9 +856,9 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
 
       <FolderPickerDialog
         open={adding !== null}
-        title={page && page.total === 1 ? "Add this file to a folder" : `Add ${page?.total.toLocaleString() ?? ""} files to a folder`}
+        title={wordTotal === 1 ? "Add this file to a folder" : `Add ${wordTotal.toLocaleString()} files to a folder`}
         body={
-          page && page.total === 1
+          wordTotal === 1
             ? "It stays where it is on disk and in any folders it's already in."
             : "They stay where they are on disk and in any folders they're already in."
         }
