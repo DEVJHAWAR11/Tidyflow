@@ -175,6 +175,22 @@ class DatabaseManager:
             # TidyFlow folders, the folders TidyFlow scans, and the Library's undo log.
             library.ensure_schema(conn)
 
+            # Search by meaning: one vector per file, made from its extracted_text (src/semantic).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_vectors (
+                    file_row_id INTEGER PRIMARY KEY,
+                    model_key TEXT NOT NULL,
+                    text_hash TEXT NOT NULL,
+                    vec BLOB NOT NULL,
+                    embedded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS files_vectors_ad AFTER DELETE ON files BEGIN
+                    DELETE FROM file_vectors WHERE file_row_id = old.id;
+                END;
+            """)
+
             # Crash recovery
             conn.execute("UPDATE files SET status='pending' WHERE status='processing'")
             conn.commit()
