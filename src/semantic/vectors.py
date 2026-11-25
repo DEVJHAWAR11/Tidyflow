@@ -61,6 +61,7 @@ class Work:
     todo: list[tuple[int, str, str]]  # (file row id, text, text hash) to embed
     drop: list[int]                    # vectors whose file has no text or isn't searched any more
     total: int                         # files with text that should end up with a vector
+    wanted: set[int]                   # those files' row ids
 
 
 def plan_work(db_path: str, model_key: str) -> Work:
@@ -82,7 +83,7 @@ def plan_work(db_path: str, model_key: str) -> Work:
             if have.get(row_id) != (model_key, h):
                 todo.append((row_id, text, h))
         drop = [row_id for row_id in have if row_id not in wanted]
-        return Work(todo=todo, drop=drop, total=len(wanted))
+        return Work(todo=todo, drop=drop, total=len(wanted), wanted=wanted)
     finally:
         conn.close()
 
@@ -191,6 +192,14 @@ class VectorMatrix:
             keep[gone] = False
             self._ids, self._mat = self._ids[keep], self._mat[keep]
             self._pos = {int(i): n for n, i in enumerate(self._ids)}
+
+    def keep_only(self, row_ids: set[int]) -> None:
+        """Forget vectors of files no longer in the index (deleting a file deletes its row's vector
+        through a trigger, which this in-memory copy doesn't see)."""
+        with self._lock:
+            gone = [int(i) for i in self._ids if int(i) not in row_ids]
+        if gone:
+            self.remove(gone)
 
     def search(self, query_vec: np.ndarray, *, max_hits: int = MAX_HITS) -> list[tuple[int, float]]:
         """``(file row id, similarity)`` for the files that match ``query_vec`` by meaning, best first."""
