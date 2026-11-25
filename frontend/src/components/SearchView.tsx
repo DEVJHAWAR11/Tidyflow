@@ -252,12 +252,15 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
   }, [query, filters]);
   useEffect(() => {
     if (page?.meaning !== "warming" || warmingTries.current >= WARMING_RETRIES) return;
+    // Never swap the list under an open preview, or drop rows "Show more" loaded: meaning results
+    // come after every word match, so later pages pick them up anyway.
+    if (previewIndex !== null || page.results.length > PAGE_SIZE) return;
     const timer = setTimeout(() => {
       warmingTries.current += 1;
       setRefreshTick((t) => t + 1);
     }, WARMING_RETRY_MS);
     return () => clearTimeout(timer);
-  }, [page]);
+  }, [page, previewIndex]);
 
   const loadFolders = useCallback(() => {
     fetchFolders()
@@ -293,7 +296,13 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
       const more = await fetchPage(searched, filters, page.results.length);
       if (id !== requestId.current) return;
       const seen = new Set(page.results.map((r) => r.id));
-      setPage({ ...page, total: more.total, results: [...page.results, ...more.results.filter((r) => !seen.has(r.id))] });
+      setPage({
+        ...page,
+        total: more.total,
+        meaning: more.meaning,
+        meaning_total: more.meaning_total,
+        results: [...page.results, ...more.results.filter((r) => !seen.has(r.id))],
+      });
     } catch {
       // The list stays as it is; the button can be pressed again.
     } finally {
@@ -745,7 +754,7 @@ export function SearchView({ scope = null }: { scope?: SearchScope | null } = {}
                     <span className="text-[11.5px] font-medium uppercase tracking-[0.06em] text-tf-meaning">
                       Related by meaning
                     </span>
-                    <span className="text-[12px] text-tf-faint">Files about the same thing, without the words you typed</span>
+                    <span className="hidden sm:inline text-[12px] text-tf-faint">Files about the same thing, without the words you typed</span>
                   </div>
                 )}
                 <div

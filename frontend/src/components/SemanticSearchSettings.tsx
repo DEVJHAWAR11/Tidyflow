@@ -135,6 +135,7 @@ export function SemanticSearchSettings() {
   const showChoices = choosing || (!status.enabled && picked !== null);
 
   const toggle = () => {
+    setConfirmRemove(false);
     if (status.enabled) {
       setChoosing(false);
       setPicked(null);
@@ -295,7 +296,8 @@ export function SemanticSearchSettings() {
                 Remove model
               </Button>
             ) : (
-              <span className="inline-flex items-center gap-2 shrink-0">
+              <span className="inline-flex items-center gap-2 shrink-0 text-[12.5px] text-tf-ink">
+                Delete the model and the meaning index?
                 <Button variant="danger" size="sm" onClick={remove} disabled={busy}>
                   Delete
                 </Button>
